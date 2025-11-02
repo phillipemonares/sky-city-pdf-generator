@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       const pdfArrayBuffer = pdfBuffer.buffer.slice(
         pdfBuffer.byteOffset,
         pdfBuffer.byteOffset + pdfBuffer.byteLength
-      );
+      ) as ArrayBuffer;
       
       return new NextResponse(pdfArrayBuffer, {
         status: 200,
