@@ -60,12 +60,10 @@ export async function POST(request: NextRequest) {
       const fileName = `skycity-precommitment-${playerData.playerInfo.playerAccount}-${Date.now()}.pdf`;
       
       // Convert Buffer to ArrayBuffer for NextResponse
-      const pdfArrayBuffer = pdfBuffer.buffer.slice(
+      return new NextResponse(pdfBuffer.buffer.slice(
         pdfBuffer.byteOffset,
         pdfBuffer.byteOffset + pdfBuffer.byteLength
-      ) as ArrayBuffer;
-      
-      return new NextResponse(pdfArrayBuffer, {
+      ) as ArrayBuffer, {
         status: 200,
         headers: {
           'Content-Type': 'application/pdf',
