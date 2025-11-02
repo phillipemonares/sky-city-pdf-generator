@@ -103,19 +103,8 @@ export async function POST(request: NextRequest) {
       const pdfArrayBuffer = firstPdfBuffer.buffer.slice(
         firstPdfBuffer.byteOffset,
         firstPdfBuffer.byteOffset + firstPdfBuffer.byteLength
-      );
+      ) as ArrayBuffer;
 
-      if (requestedAccount) {
-        return new NextResponse(pdfArrayBuffer, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/pdf',
-            'Content-Disposition': `attachment; filename="Annotated_Statement_${sanitizedAccount || 'Member'}.pdf"`,
-            'Content-Length': firstPdfBuffer.length.toString(),
-          },
-        });
-      }
-      
       return new NextResponse(pdfArrayBuffer, {
         status: 200,
         headers: {
