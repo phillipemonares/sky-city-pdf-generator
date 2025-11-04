@@ -17,6 +17,13 @@ module.exports = {
       merge_logs: true,
       autorestart: true,
       max_memory_restart: '1G',
+      // Prevent rapid restarts if build doesn't exist
+      min_uptime: '10s',
+      max_restarts: 5,
+      restart_delay: 5000,
+      // Wait before restarting
+      wait_ready: true,
+      listen_timeout: 10000,
     },
   ],
 };

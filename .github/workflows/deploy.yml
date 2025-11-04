@@ -22,8 +22,13 @@ jobs:
           script: |
             cd /var/www/sky-city-pdf-generator
             git pull origin main
-            npm ci --production
+            npm ci
             npm run build
+            # Verify build exists before reloading PM2
+            if [ ! -d ".next" ]; then
+              echo "Error: Build failed - .next directory not found!"
+              exit 1
+            fi
             pm2 reload ecosystem.config.js
             pm2 save
             sudo systemctl reload nginx
