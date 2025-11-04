@@ -3,6 +3,7 @@ import puppeteer from 'puppeteer';
 import { buildAnnotatedPlayers, generateAnnotatedHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { AnnotatedPDFGenerationRequest } from '@/types/player-data';
+import { saveGenerationBatch } from '@/lib/db';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -97,6 +98,22 @@ export async function POST(request: NextRequest) {
       }
 
       await browser.close();
+
+      // Save to database if processing all accounts (not just a single account)
+      // Only save if we processed all annotated players, not just one
+      if (!requestedAccount && annotatedPlayers.length > 0) {
+        try {
+          await saveGenerationBatch(
+            quarterlyData.quarter,
+            quarterlyData.year,
+            annotatedPlayers,
+            quarterlyData
+          );
+        } catch (dbError) {
+          // Log error but don't fail the PDF generation
+          console.error('Error saving batch to database:', dbError);
+        }
+      }
 
       const [{ buffer: firstPdfBuffer, account: firstAccount }] = pdfResults;
       const sanitizedAccount = firstAccount.replace(/[^a-zA-Z0-9_-]/g, '');

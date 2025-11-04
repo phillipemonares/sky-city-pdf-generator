@@ -8,8 +8,8 @@ cd /var/www/sky-city-pdf-generator
 # Pull latest changes
 git pull origin main
 
-# Install dependencies
-npm ci --production
+# Install all dependencies (including dev dependencies needed for build)
+npm ci
 
 # Build the application
 npm run build

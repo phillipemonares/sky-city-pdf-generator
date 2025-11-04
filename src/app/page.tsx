@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navigation from '@/components/Navigation';
 import {
@@ -49,6 +49,16 @@ interface PreCommitmentUpload {
   errors: string[];
 }
 
+interface GenerationBatch {
+  id: string;
+  quarter: number;
+  year: number;
+  generation_date: string;
+  total_accounts: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export default function UploadInterface() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [activityUpload, setActivityUpload] = useState<ActivityUpload | null>(null);
@@ -57,6 +67,13 @@ export default function UploadInterface() {
   const [generatingAccount, setGeneratingAccount] = useState<string | null>(null);
   const [previewingAccount, setPreviewingAccount] = useState<string | null>(null);
   const [generationStatus, setGenerationStatus] = useState<string>('');
+  const [previousBatches, setPreviousBatches] = useState<GenerationBatch[]>([]);
+  const [loadingBatches, setLoadingBatches] = useState<boolean>(false);
+  const [loadingBatch, setLoadingBatch] = useState<string | null>(null);
+  const [savingBatch, setSavingBatch] = useState<boolean>(false);
+  const [deletingBatch, setDeletingBatch] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'generation' | 'history'>('generation');
+  const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
 
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
     if (!activityUpload || !preCommitmentUpload || !quarterlyData) {
@@ -73,7 +90,185 @@ export default function UploadInterface() {
   const isGenerating = generatingAccount !== null;
   const isPreviewing = previewingAccount !== null;
 
+  // Load previous batches on component mount
+  useEffect(() => {
+    loadPreviousBatches();
+  }, []);
+
+  const loadPreviousBatches = async () => {
+    try {
+      setLoadingBatches(true);
+      const response = await fetch('/api/list-batches');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setPreviousBatches(data.batches);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading batches:', error);
+    } finally {
+      setLoadingBatches(false);
+    }
+  };
+
+  const loadBatch = async (batchId: string) => {
+    try {
+      setLoadingBatch(batchId);
+      setGenerationStatus(`Loading batch ${batchId}...`);
+      
+      const response = await fetch(`/api/load-batch?batchId=${batchId}`);
+      if (!response.ok) {
+        throw new Error('Failed to load batch');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        // Set the loaded batch ID to prevent duplicate saves
+        setLoadedBatchId(batchId);
+        
+        // Set the loaded data
+        if (data.activityRows && data.activityRows.length > 0) {
+          setActivityUpload({
+            file: new File([], 'loaded-from-database'),
+            rows: data.activityRows,
+            errors: [],
+          });
+        }
+
+        if (data.preCommitmentPlayers && data.preCommitmentPlayers.length > 0) {
+          setPreCommitmentUpload({
+            file: new File([], 'loaded-from-database'),
+            players: data.preCommitmentPlayers,
+            errors: [],
+          });
+        }
+
+        if (data.quarterlyData) {
+          setQuarterlyData(data.quarterlyData);
+        }
+
+        setGenerationStatus(`Loaded batch: Q${data.batch.quarter} ${data.batch.year} with ${data.batch.total_accounts} accounts`);
+      }
+    } catch (error) {
+      console.error('Error loading batch:', error);
+      setGenerationStatus('Error loading batch');
+    } finally {
+      setLoadingBatch(null);
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const saveBatch = async () => {
+    // Prevent saving if a batch is already loaded (to avoid duplicates)
+    if (loadedBatchId) {
+      alert('This batch is already saved. Loading a batch from history prevents duplicate saves. Upload new files to create a new batch.');
+      return;
+    }
+
+    if (!activityUpload || activityUpload.rows.length === 0) {
+      alert('Upload an activity statement before saving');
+      return;
+    }
+
+    if (!preCommitmentUpload || preCommitmentUpload.players.length === 0) {
+      alert('Upload the pre-commitment workbook before saving');
+      return;
+    }
+
+    if (!quarterlyData || quarterlyData.players.length === 0) {
+      alert('Upload the three monthly cashless CSV files before saving');
+      return;
+    }
+
+    if (annotatedPlayers.length === 0) {
+      alert('No matched accounts to save');
+      return;
+    }
+
+    try {
+      setSavingBatch(true);
+      setGenerationStatus('Saving batch to database...');
+
+      const response = await fetch('/api/save-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          activityRows: activityUpload.rows,
+          preCommitmentPlayers: preCommitmentUpload.players,
+          quarterlyData,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save batch');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        // Set the loaded batch ID to the newly saved batch
+        setLoadedBatchId(data.batchId);
+        setGenerationStatus(
+          `Batch saved successfully! Q${data.quarter} ${data.year} with ${data.totalAccounts} accounts`
+        );
+        // Reload batches list to show the new batch
+        loadPreviousBatches();
+      }
+    } catch (error) {
+      console.error('Error saving batch:', error);
+      setGenerationStatus('Error saving batch to database');
+    } finally {
+      setSavingBatch(false);
+    }
+  };
+
+  const deleteBatch = async (batchId: string) => {
+    if (!confirm('Are you sure you want to delete this batch? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setDeletingBatch(batchId);
+      setGenerationStatus('Deleting batch...');
+
+      const response = await fetch(`/api/delete-batch?batchId=${batchId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete batch');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setGenerationStatus('Batch deleted successfully');
+        // Reload batches list to remove the deleted batch
+        loadPreviousBatches();
+      }
+    } catch (error) {
+      console.error('Error deleting batch:', error);
+      setGenerationStatus('Error deleting batch');
+    } finally {
+      setDeletingBatch(null);
+    }
+  };
+
   const onMonthlyDrop = useCallback((acceptedFiles: File[]) => {
+    // Clear loaded batch ID when new files are uploaded
+    setLoadedBatchId(null);
+    
     const csvFiles = acceptedFiles.filter(file => 
       file.type === 'text/csv' || file.name.endsWith('.csv')
     );
@@ -153,6 +348,9 @@ export default function UploadInterface() {
   }, []);
 
   const onActivityDrop = useCallback((acceptedFiles: File[]) => {
+    // Clear loaded batch ID when new files are uploaded
+    setLoadedBatchId(null);
+    
     const file = acceptedFiles[0];
     if (!file) {
       alert('Please upload the activity statement file');
@@ -189,6 +387,9 @@ export default function UploadInterface() {
   }, []);
 
   const onPreCommitmentDrop = useCallback((acceptedFiles: File[]) => {
+    // Clear loaded batch ID when new files are uploaded
+    setLoadedBatchId(null);
+    
     const file = acceptedFiles[0];
     if (!file) {
       alert('Please upload the pre-commitment workbook');
@@ -373,6 +574,11 @@ export default function UploadInterface() {
       document.body.removeChild(a);
 
       setGenerationStatus(`${noun} generated successfully for ${accountLabel}!`);
+      
+      // Reload batches list if we generated for all accounts (new batch was saved)
+      if (!account) {
+        loadPreviousBatches();
+      }
     } catch (error) {
       console.error('Error generating PDF:', error);
       setGenerationStatus(`Error generating ${noun} for ${accountLabel}`);
@@ -485,9 +691,45 @@ export default function UploadInterface() {
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
             Quarterly Statements PDF Generator
           </h1>
+          
+          {/* Tabs */}
+          <div className="border-b border-gray-200 mb-6">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('generation')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'generation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Generation
+              </button>
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'history'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                History
+              </button>
+            </nav>
+          </div>
         </div>
 
-        {/* Activity Statement Upload */}
+        {/* Generation Status */}
+        {generationStatus && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8">
+            <p className="text-sm text-blue-800">{generationStatus}</p>
+          </div>
+        )}
+
+        {/* Generation Tab */}
+        {activeTab === 'generation' && (
+          <div>
+            {/* Activity Statement Upload */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
           <div className="flex justify-between items-start mb-4">
             <div>
@@ -712,7 +954,7 @@ export default function UploadInterface() {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Total Players</p>
-                <p className="text-lg font-medium">{quarterlyData.players.length}</p>
+                <p className="text-lg font-medium">{annotatedPlayers.length}</p>
               </div>
             </div>
           </div>
@@ -726,9 +968,29 @@ export default function UploadInterface() {
                 <h2 className="text-xl font-semibold">Matched Accounts</h2>
                 <p className="text-sm text-gray-600">Preview or download individual annotated statements.</p>
               </div>
-              <p className="text-sm text-gray-600">
-                {annotatedPlayers.length} {annotatedPlayers.length === 1 ? 'account' : 'accounts'} matched across uploads
-              </p>
+              <div className="flex flex-col md:flex-row items-center gap-3">
+                <p className="text-sm text-gray-600">
+                  {annotatedPlayers.length} {annotatedPlayers.length === 1 ? 'account' : 'accounts'} matched across uploads
+                </p>
+                {!loadedBatchId && (
+                  <button
+                    onClick={saveBatch}
+                    disabled={savingBatch || isGenerating || isPreviewing}
+                    className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
+                      savingBatch || isGenerating || isPreviewing
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700'
+                    }`}
+                  >
+                    {savingBatch ? 'Saving...' : 'Save Batch'}
+                  </button>
+                )}
+                {loadedBatchId && (
+                  <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm">
+                    Batch already saved (loaded from history)
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
@@ -804,47 +1066,87 @@ export default function UploadInterface() {
             </div>
           </div>
         )}
+          </div>
+        )}
 
-        {/* Preview and Generate PDF Buttons */}
-        {activityUpload && preCommitmentUpload && quarterlyData && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                onClick={() => previewPDF()}
-                disabled={isPreviewing || isGenerating}
-                className={`py-3 px-6 rounded-lg font-medium ${
-                  isPreviewing || isGenerating
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-green-600 hover:bg-green-700'
-                } text-white transition-colors`}
-              >
-                {isPreviewing ? 'Generating Preview...' : 'Preview First Matched Account'}
-              </button>
-              
-              <button
-                onClick={() => generatePDFs()}
-                disabled={isGenerating || isPreviewing}
-                className={`py-3 px-6 rounded-lg font-medium ${
-                  isGenerating || isPreviewing
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700'
-                } text-white transition-colors`}
-              >
-                {isGenerating ? 'Generating PDF...' : 'Download First Matched PDF'}
-              </button>
+        {/* History Tab */}
+        {activeTab === 'history' && (
+          <div>
+            <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Previous Generation Batches</h2>
+                  <p className="text-sm text-gray-600">Load a previous batch to regenerate PDFs</p>
+                </div>
+                <button
+                  onClick={loadPreviousBatches}
+                  disabled={loadingBatches}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                >
+                  {loadingBatches ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </div>
+
+              {previousBatches.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  <p className="text-lg mb-2">No previous batches found</p>
+                  <p className="text-sm">Generate PDFs to create batches that will appear here</p>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {previousBatches.map(batch => {
+                    const isLoading = loadingBatch === batch.id;
+                    const isDeleting = deletingBatch === batch.id;
+                    return (
+                      <div
+                        key={batch.id}
+                        className="border border-gray-200 rounded-lg p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">
+                            Q{batch.quarter} {batch.year} - {batch.total_accounts} {batch.total_accounts === 1 ? 'account' : 'accounts'}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            Generated: {formatDate(batch.generation_date)}
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              loadBatch(batch.id);
+                              setActiveTab('generation');
+                            }}
+                            disabled={isLoading || isDeleting || isGenerating || isPreviewing}
+                            className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
+                              isLoading || isDeleting || isGenerating || isPreviewing
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-purple-600 hover:bg-purple-700'
+                            }`}
+                          >
+                            {isLoading ? 'Loading...' : 'Load & Switch to Generation'}
+                          </button>
+                          <button
+                            onClick={() => deleteBatch(batch.id)}
+                            disabled={isLoading || isDeleting || isGenerating || isPreviewing}
+                            className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
+                              isDeleting || isGenerating || isPreviewing
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-red-600 hover:bg-red-700'
+                            }`}
+                          >
+                            {isDeleting ? 'Deleting...' : 'Delete'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {generationStatus && (
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <p className={`text-center ${
-              generationStatus.includes('Error') ? 'text-red-600' : 'text-green-600'
-            }`}>
-              {generationStatus}
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );

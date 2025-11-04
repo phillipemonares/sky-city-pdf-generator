@@ -315,35 +315,6 @@ ${PRECOMMITMENT_STYLES}
             <p>This information is accurate as of and will not reflect any changes you make in MyPlay after this time.</p>
         </div>
     </div>
-    ${hasSessionSummaries ? `
-    <div class="page-break"></div>
-    <div class="session-page">
-        <div class="logo">
-          ${logoDataUrl ? `<img src="${logoDataUrl}" alt="SkyCity Adelaide" />` : '<div class="text-logo">SKYCITY ADELAIDE</div>'}
-        </div>
-        <div class="member-info">
-          <div>Member Account: ${playerInfo.playerAccount}</div>
-          <div>Member Name: ${displayName}</div>
-        </div>
-        <h2 class="session-title">Session Performance Summary</h2>
-        <table class="session-table">
-          <thead>
-            <tr>
-              <th>Session</th>
-              <th>Session Win</th>
-              <th>Session Loss</th>
-              <th>Session Nett</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${sessionTableRows}
-          </tbody>
-        </table>
-        <p class="session-note">
-          Session information is shown exactly as provided in the uploaded template; review it with the member for accuracy.
-        </p>
-    </div>
-    ` : ''}
   `;
 }
 
