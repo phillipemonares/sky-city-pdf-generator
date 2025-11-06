@@ -239,7 +239,7 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   addPeriod('Sunday', player.sunStart, player.sunEnd);
 
   const consecutiveDaysF = formatAccounting(player.consecutiveDays);
-  const renderList = (items: string[]) => items.length ? items.map(i => `<li>- ${i}</li>`).join('') : '<li>- Nil</li>';
+  const renderList = (items: string[]) => items.length ? items.map(i => `<li>${i}</li>`).join('') : '<li>Nil</li>';
   
   return `
 ${PRECOMMITMENT_STYLES}
