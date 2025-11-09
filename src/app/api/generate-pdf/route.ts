@@ -3,7 +3,7 @@ import puppeteer from 'puppeteer';
 import { buildAnnotatedPlayers, generateAnnotatedHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { AnnotatedPDFGenerationRequest } from '@/types/player-data';
-import { saveGenerationBatch } from '@/lib/db';
+import { saveGenerationBatch, saveMembersFromActivity } from '@/lib/db';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -31,6 +31,15 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'No cashless monthly data provided' },
         { status: 400 }
       );
+    }
+
+    // Save members from activity statement (unique members only)
+    try {
+      const savedMembersCount = await saveMembersFromActivity(activityRows);
+      console.log(`Saved ${savedMembersCount} new members from activity statement`);
+    } catch (memberError) {
+      console.error('Error saving members (continuing anyway):', memberError);
+      // Continue even if member saving fails
     }
 
     const annotatedPlayers = buildAnnotatedPlayers(activityRows, preCommitmentPlayers, quarterlyData);

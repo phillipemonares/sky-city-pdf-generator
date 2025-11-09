@@ -34,6 +34,42 @@ export default function NoPlayPage() {
   const [deletingBatch, setDeletingBatch] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'generation' | 'history'>('generation');
   const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+
+  // Format dates for statement period display
+  const formatStatementPeriod = (start: string, end: string): string => {
+    if (!start || !end) return 'Current Period';
+    
+    try {
+      const startDateObj = new Date(start);
+      const endDateObj = new Date(end);
+      
+      const startMonth = startDateObj.toLocaleDateString('en-US', { month: 'long' });
+      const startDay = startDateObj.getDate();
+      const startYear = startDateObj.getFullYear();
+      
+      const endMonth = endDateObj.toLocaleDateString('en-US', { month: 'long' });
+      const endDay = endDateObj.getDate();
+      const endYear = endDateObj.getFullYear();
+      
+      return `${startDay} ${startMonth} ${startYear} - ${endDay} ${endMonth} ${endYear}`;
+    } catch (error) {
+      return 'Current Period';
+    }
+  };
+
+  // Update players' statementPeriod when dates change
+  const updatePlayersStatementPeriod = (players: PreCommitmentPlayer[], start: string, end: string): PreCommitmentPlayer[] => {
+    const formattedPeriod = formatStatementPeriod(start, end);
+    const statementDate = end ? new Date(end).toLocaleDateString() : new Date().toLocaleDateString();
+    
+    return players.map(player => ({
+      ...player,
+      statementPeriod: formattedPeriod,
+      statementDate: statementDate
+    }));
+  };
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     // Clear loaded batch ID when new files are uploaded
@@ -58,12 +94,17 @@ export default function NoPlayPage() {
     
     parseFile(file)
       .then(players => {
+        // Update statement period if dates are set
+        const updatedPlayers = (startDate && endDate) 
+          ? updatePlayersStatementPeriod(players, startDate, endDate)
+          : players;
+        
         setUploadedFile({
           file,
-          players,
+          players: updatedPlayers,
           errors: []
         });
-        setGenerationStatus(`Successfully parsed ${players.length} players with "No Play" status`);
+        setGenerationStatus(`Successfully parsed ${updatedPlayers.length} players with "No Play" status`);
       })
       .catch(error => {
         console.error('Error parsing file:', error);
@@ -74,7 +115,7 @@ export default function NoPlayPage() {
         });
         setGenerationStatus('Error parsing file');
       });
-  }, []);
+  }, [startDate, endDate]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -84,6 +125,18 @@ export default function NoPlayPage() {
     },
     multiple: false
   });
+
+  // Update players when dates change
+  useEffect(() => {
+    if (uploadedFile && uploadedFile.players.length > 0 && startDate && endDate) {
+      const updatedPlayers = updatePlayersStatementPeriod(uploadedFile.players, startDate, endDate);
+      setUploadedFile({
+        ...uploadedFile,
+        players: updatedPlayers
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
   // Load previous batches on component mount
   useEffect(() => {
@@ -122,6 +175,21 @@ export default function NoPlayPage() {
         setLoadedBatchId(batchId);
         
         if (data.players && data.players.length > 0) {
+          // Extract dates from statement period if possible
+          const statementPeriod = data.batch.statement_period || '';
+          // Try to parse dates from statement period (e.g., "June 30, 2025 - September 2025")
+          const dateMatch = statementPeriod.match(/(\w+)\s+(\d+),\s+(\d+)\s+-\s+(\w+)\s+(\d+)/);
+          if (dateMatch) {
+            // Set dates if we can parse them
+            // Note: This is a simple extraction, might need refinement
+            const [, startMonth, startDay, startYear, endMonth, endYear] = dateMatch;
+            // Create date strings (approximate - using first day of end month)
+            const startDateStr = `${startYear}-${String(new Date(`${startMonth} 1, ${startYear}`).getMonth() + 1).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
+            const endDateStr = `${endYear}-${String(new Date(`${endMonth} 1, ${endYear}`).getMonth() + 1).padStart(2, '0')}-01`;
+            setStartDate(startDateStr);
+            setEndDate(endDateStr);
+          }
+          
           setUploadedFile({
             file: new File([], 'loaded-from-database'),
             players: data.players,
@@ -380,6 +448,8 @@ export default function NoPlayPage() {
   const removeFile = () => {
     setUploadedFile(null);
     setGenerationStatus('');
+    setStartDate('');
+    setEndDate('');
   };
 
   const downloadTemplate = async () => {
@@ -451,6 +521,45 @@ export default function NoPlayPage() {
         {/* Generation Tab */}
         {activeTab === 'generation' && (
           <div>
+
+        {/* Date Input Section */}
+        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-4">Statement Period</h2>
+          <p className="text-sm text-gray-600 mb-4">Enter the start and end dates for the statement period. This will be used in the generated PDFs.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
+                Start Date
+              </label>
+              <input
+                type="date"
+                id="startDate"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
+                End Date
+              </label>
+              <input
+                type="date"
+                id="endDate"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+          </div>
+          {startDate && endDate && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-800">
+                <strong>Statement Period:</strong> {formatStatementPeriod(startDate, endDate)}
+              </p>
+            </div>
+          )}
+        </div>
 
         {/* Upload Area */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">

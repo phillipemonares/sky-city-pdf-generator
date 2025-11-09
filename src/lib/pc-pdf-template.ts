@@ -1,4 +1,5 @@
 import { PreCommitmentPlayer } from '@/types/player-data';
+import { Member } from './db';
 
 const PRECOMMITMENT_STYLES = `
   <style>
@@ -169,6 +170,17 @@ function formatWithUnit(value: unknown, unit: string): string {
   return n === '–' ? '–' : `${n} ${unit}`;
 }
 
+// Check if a value is zero or empty
+function isZeroOrEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  const raw = String(value).trim();
+  if (raw === '') return true;
+  const cleaned = raw.replace(/,/g, '').replace(/\$/g, '');
+  const num = Number(cleaned);
+  if (Number.isNaN(num)) return true;
+  return num === 0;
+}
+
 function formatExcelTime(value: unknown): string {
   if (value === null || value === undefined) return '–';
   const raw = String(value).trim();
@@ -188,9 +200,31 @@ function formatExcelTime(value: unknown): string {
   return `${hh}:${mm}`;
 }
 
-export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUrl?: string): string {
+export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUrl?: string, memberData?: Member | null): string {
   const { playerInfo, statementPeriod, statementDate } = player;
-  const displayName = [playerInfo.firstName, playerInfo.lastName].filter(Boolean).join(' ').trim() || 'Member';
+  
+  // Use member data if available, otherwise fall back to playerInfo
+  const displayName = memberData 
+    ? [memberData.first_name, memberData.last_name].filter(Boolean).join(' ').trim() || 'Member'
+    : [playerInfo.firstName, playerInfo.lastName].filter(Boolean).join(' ').trim() || 'Member';
+  
+  const address = memberData?.address || '';
+  const suburb = memberData?.suburb || '';
+  
+  // Format statement date for footer (last day of the period)
+  const formatFooterDate = (dateStr: string): string => {
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr; // Return original if invalid
+      const day = date.getDate();
+      const month = date.toLocaleDateString('en-US', { month: 'long' });
+      const year = date.getFullYear();
+      return `${day} ${month} ${year}`;
+    } catch (error) {
+      return dateStr;
+    }
+  };
+  const formattedFooterDate = statementDate ? formatFooterDate(statementDate) : '';
   const sessionSummaries = player.sessionSummaries ?? [];
   const sessionTableRows = sessionSummaries.map((summary, index) => {
     const label = (summary.session ?? '').toString().trim() || `Session ${index + 1}`;
@@ -208,21 +242,42 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   // Build lists for the No Play letter format
   const expenditureItems: string[] = [];
   const dailyBudgetF = formatCurrency(player.dailyBudget);
-  if (dailyBudgetF !== '–') expenditureItems.push(`${dailyBudgetF} per day`);
   const weeklyBudgetF = formatCurrency(player.weeklyBudget);
-  if (weeklyBudgetF !== '–') expenditureItems.push(`${weeklyBudgetF} per week`);
+  const hasDailyBudget = dailyBudgetF !== '–' && !isZeroOrEmpty(player.dailyBudget);
+  const hasWeeklyBudget = weeklyBudgetF !== '–' && !isZeroOrEmpty(player.weeklyBudget);
+  
+  if (hasDailyBudget && hasWeeklyBudget) {
+    expenditureItems.push(`${dailyBudgetF} per day`);
+    expenditureItems.push(`${weeklyBudgetF} per week`);
+  } else if (hasDailyBudget) {
+    expenditureItems.push(`${dailyBudgetF} per day`);
+  } else if (hasWeeklyBudget) {
+    expenditureItems.push(`${weeklyBudgetF} per week`);
+  }
+  // If neither has value, expenditureItems stays empty and will show "Nil"
 
   const timeLimitItems: string[] = [];
-  const dailyTimeF = formatWithUnit(player.dailyTime, 'minutes');
-  if (dailyTimeF !== '–') timeLimitItems.push(`${dailyTimeF} per day`);
+  const hasDailyTime = !isZeroOrEmpty(player.dailyTime);
+  if (hasDailyTime) {
+    const dailyTimeF = formatWithUnit(player.dailyTime, 'minutes');
+    if (dailyTimeF !== '–') timeLimitItems.push(`${dailyTimeF} per day`);
+  }
+  // If no time limit, timeLimitItems stays empty and will show "Nil"
 
   const breakItems: string[] = [];
   const minsF = formatWithUnit(player.mins, 'minutes');
   const everyF = (player.every || '').toString().trim();
   const hourF = formatWithUnit(player.hour, 'hours');
-  if (minsF !== '–') breakItems.push(`Mins: ${minsF}`);
-  if (everyF) breakItems.push(`Every: ${everyF}`);
-  if (hourF !== '–') breakItems.push(`Hour: ${hourF}`);
+  const hasMins = minsF !== '–' && !isZeroOrEmpty(player.mins);
+  const hasEvery = everyF !== '';
+  const hasHour = hourF !== '–' && !isZeroOrEmpty(player.hour);
+  
+  if (hasMins || hasEvery || hasHour) {
+    if (hasMins) breakItems.push(`Mins: ${minsF}`);
+    if (hasEvery) breakItems.push(`Every: ${everyF}`);
+    if (hasHour) breakItems.push(`Hour: ${hourF}`);
+  }
+  // If no break items, breakItems stays empty and will show "Nil"
 
   const scheduleItems: string[] = [];
   const addPeriod = (day: string, start: unknown, end: unknown) => {
@@ -250,10 +305,10 @@ ${PRECOMMITMENT_STYLES}
             <td colspan="2">Member Account: ${playerInfo.playerAccount}</td>
           </tr>
           <tr>
-            <td colspan="2">Streets: </td>
+            <td colspan="2">Streets: ${address}</td>
           </tr>
           <tr>
-            <td colspan="2">Suburb: </td>
+            <td colspan="2">Suburb: ${suburb}</td>
           </tr>
           <tr>
             <td>South Australia XXXX</td>
@@ -312,14 +367,14 @@ ${PRECOMMITMENT_STYLES}
         <p><strong>SkyCity Adelaide</strong></p>
         </div>
         <div class="footer-info">
-            <p>This information is accurate as of and will not reflect any changes you make in MyPlay after this time.</p>
+            <p>This information is accurate as of ${formattedFooterDate} and will not reflect any changes you make in MyPlay after this time.</p>
         </div>
     </div>
   `;
 }
 
-export function generatePreCommitmentPDFHTML(player: PreCommitmentPlayer, logoDataUrl?: string): string {
-  const inner = renderPreCommitmentPages(player, logoDataUrl);
+export function generatePreCommitmentPDFHTML(player: PreCommitmentPlayer, logoDataUrl?: string, memberData?: Member | null): string {
+  const inner = renderPreCommitmentPages(player, logoDataUrl, memberData);
   return `
 <!DOCTYPE html>
 <html lang="en">

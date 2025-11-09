@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generatePreCommitmentPDFHTML } from '@/lib/pc-pdf-template';
 import { PreCommitmentPDFRequest, PreCommitmentPlayer } from '@/types/player-data';
+import { getMemberByAccount } from '@/lib/db';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -24,7 +25,17 @@ export async function POST(request: NextRequest) {
     
     // Generate HTML for the first player (single player per request)
     const playerData = players[0];
-    const html = generatePreCommitmentPDFHTML(playerData, logoDataUrl);
+    
+    // Fetch member data from database
+    let memberData = null;
+    try {
+      memberData = await getMemberByAccount(playerData.playerInfo.playerAccount);
+    } catch (error) {
+      console.error('Error fetching member data:', error);
+      // Continue without member data if fetch fails
+    }
+    
+    const html = generatePreCommitmentPDFHTML(playerData, logoDataUrl, memberData);
     
     return new NextResponse(html, {
       status: 200,

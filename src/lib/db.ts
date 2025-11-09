@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
-import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer } from '@/types/player-data';
+import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow } from '@/types/player-data';
+import { normalizeAccount } from './pdf-shared';
 
 // Database connection configuration
 const dbConfig = {
@@ -411,6 +412,234 @@ export async function deleteNoPlayBatch(batchId: string): Promise<boolean> {
     throw error;
   } finally {
     connection.release();
+  }
+}
+
+export interface Member {
+  id: string;
+  account_number: string;
+  title: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  address: string;
+  suburb: string;
+  state: string;
+  post_code: string;
+  country: string;
+  player_type: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Save or update members from activity statement rows
+ * Only saves unique members based on account number
+ * Returns the count of newly saved members
+ */
+export async function saveMembersFromActivity(activityRows: ActivityStatementRow[]): Promise<number> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    let savedCount = 0;
+    
+    for (const row of activityRows) {
+      if (!row.acct) continue; // Skip rows without account number
+      
+      const normalizedAccount = normalizeAccount(row.acct);
+      
+      // Check if member already exists
+      const [existing] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT id FROM members WHERE account_number = ?`,
+        [normalizedAccount]
+      );
+      
+      if (existing.length > 0) {
+        // Update existing member
+        await connection.execute(
+          `UPDATE members 
+           SET title = ?, first_name = ?, last_name = ?, email = ?, 
+               address = ?, suburb = ?, state = ?, post_code = ?, 
+               country = ?, player_type = ?, updated_at = NOW()
+           WHERE account_number = ?`,
+          [
+            row.title || '',
+            row.firstName || '',
+            row.lastName || '',
+            row.email || '',
+            row.address || '',
+            row.suburb || '',
+            row.state || '',
+            row.postCode || '',
+            row.country || '',
+            row.playerType || '',
+            normalizedAccount
+          ]
+        );
+      } else {
+        // Insert new member
+        const memberId = randomUUID();
+        await connection.execute(
+          `INSERT INTO members 
+           (id, account_number, title, first_name, last_name, email, 
+            address, suburb, state, post_code, country, player_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            memberId,
+            normalizedAccount,
+            row.title || '',
+            row.firstName || '',
+            row.lastName || '',
+            row.email || '',
+            row.address || '',
+            row.suburb || '',
+            row.state || '',
+            row.postCode || '',
+            row.country || '',
+            row.playerType || ''
+          ]
+        );
+        savedCount++;
+      }
+    }
+    
+    await connection.commit();
+    return savedCount;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error saving members:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get member by account number
+ */
+export async function getMemberByAccount(accountNumber: string): Promise<Member | null> {
+  const connection = await pool.getConnection();
+  
+  try {
+    const normalizedAccount = normalizeAccount(accountNumber);
+    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT * FROM members WHERE account_number = ? LIMIT 1`,
+      [normalizedAccount]
+    );
+    
+    if (rows.length === 0) {
+      return null;
+    }
+    
+    const memberRow = rows[0];
+    return {
+      id: memberRow.id,
+      account_number: memberRow.account_number,
+      title: memberRow.title || '',
+      first_name: memberRow.first_name || '',
+      last_name: memberRow.last_name || '',
+      email: memberRow.email || '',
+      address: memberRow.address || '',
+      suburb: memberRow.suburb || '',
+      state: memberRow.state || '',
+      post_code: memberRow.post_code || '',
+      country: memberRow.country || '',
+      player_type: memberRow.player_type || '',
+      created_at: memberRow.created_at,
+      updated_at: memberRow.updated_at
+    };
+  } catch (error) {
+    console.error('Error getting member:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get all members from the database with pagination
+ */
+export async function getAllMembers(): Promise<Member[]> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT * FROM members ORDER BY account_number ASC`
+    );
+    
+    return rows.map(row => ({
+      id: row.id,
+      account_number: row.account_number,
+      title: row.title || '',
+      first_name: row.first_name || '',
+      last_name: row.last_name || '',
+      email: row.email || '',
+      address: row.address || '',
+      suburb: row.suburb || '',
+      state: row.state || '',
+      post_code: row.post_code || '',
+      country: row.country || '',
+      player_type: row.player_type || '',
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+  } catch (error) {
+    console.error('Error getting all members:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get paginated members from the database
+ */
+export async function getMembersPaginated(
+  page: number = 1,
+  pageSize: number = 50
+): Promise<{ members: Member[]; total: number; totalPages: number }> {
+  try {
+    // Ensure page and pageSize are integers
+    const validPage = Math.max(1, Math.floor(page));
+    const validPageSize = Math.max(1, Math.floor(pageSize));
+    const offset = (validPage - 1) * validPageSize;
+    
+    // Get total count
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) as total FROM members`
+    );
+    const total = countRows[0]?.total || 0;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Get paginated members - MySQL requires LIMIT and OFFSET to be integers (not placeholders)
+    // Since we've validated and converted to integers, it's safe to use template literals
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT * FROM members ORDER BY account_number ASC LIMIT ${validPageSize} OFFSET ${offset}`
+    );
+    
+    const members = rows.map(row => ({
+      id: row.id,
+      account_number: row.account_number,
+      title: row.title || '',
+      first_name: row.first_name || '',
+      last_name: row.last_name || '',
+      email: row.email || '',
+      address: row.address || '',
+      suburb: row.suburb || '',
+      state: row.state || '',
+      post_code: row.post_code || '',
+      country: row.country || '',
+      player_type: row.player_type || '',
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
+    
+    return {
+      members,
+      total,
+      totalPages
+    };
+  } catch (error) {
+    console.error('Error getting paginated members:', error);
+    throw error;
   }
 }
 

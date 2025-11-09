@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { saveGenerationBatch } from '@/lib/db';
+import { saveGenerationBatch, saveMembersFromActivity } from '@/lib/db';
 import { buildAnnotatedPlayers } from '@/lib/annotated-pdf-template';
 import { AnnotatedPDFGenerationRequest } from '@/types/player-data';
 
@@ -27,6 +27,15 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'No cashless monthly data provided' },
         { status: 400 }
       );
+    }
+
+    // Save members from activity statement (unique members only)
+    try {
+      const savedMembersCount = await saveMembersFromActivity(activityRows);
+      console.log(`Saved ${savedMembersCount} new members from activity statement`);
+    } catch (memberError) {
+      console.error('Error saving members (continuing anyway):', memberError);
+      // Continue even if member saving fails
     }
 
     // Build annotated players
