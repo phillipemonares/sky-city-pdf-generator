@@ -66,6 +66,7 @@ export default function UploadInterface() {
   const [quarterlyData, setQuarterlyData] = useState<QuarterlyData | null>(null);
   const [generatingAccount, setGeneratingAccount] = useState<string | null>(null);
   const [previewingAccount, setPreviewingAccount] = useState<string | null>(null);
+  const [sendingAccount, setSendingAccount] = useState<string | null>(null);
   const [generationStatus, setGenerationStatus] = useState<string>('');
   const [previousBatches, setPreviousBatches] = useState<GenerationBatch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState<boolean>(false);
@@ -89,6 +90,7 @@ export default function UploadInterface() {
 
   const isGenerating = generatingAccount !== null;
   const isPreviewing = previewingAccount !== null;
+  const isSending = sendingAccount !== null;
 
   // Load previous batches on component mount
   useEffect(() => {
@@ -367,13 +369,45 @@ export default function UploadInterface() {
     const parseFile = extension === '.xlsx' ? parseActivityExcel : parseActivityCSV;
 
     parseFile(file)
-      .then(rows => {
+      .then(async rows => {
         setActivityUpload({
           file,
           rows,
           errors: [],
         });
-        setGenerationStatus(`Loaded activity statement for ${rows.length} accounts`);
+        setGenerationStatus(`Loaded activity statement for ${rows.length} accounts. Saving members to database...`);
+        
+        // Automatically save/update members in the database
+        try {
+          const response = await fetch('/api/save-members', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              activityRows: rows,
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+              setGenerationStatus(
+                `Loaded activity statement for ${rows.length} accounts. ` +
+                `Saved ${data.savedCount} new members and updated ${data.updatedCount} existing members.`
+              );
+            } else {
+              console.error('Error saving members:', data.error);
+              setGenerationStatus(`Loaded activity statement for ${rows.length} accounts. Warning: Failed to save members.`);
+            }
+          } else {
+            console.error('Failed to save members:', response.statusText);
+            setGenerationStatus(`Loaded activity statement for ${rows.length} accounts. Warning: Failed to save members.`);
+          }
+        } catch (error) {
+          console.error('Error saving members:', error);
+          setGenerationStatus(`Loaded activity statement for ${rows.length} accounts. Warning: Failed to save members.`);
+        }
       })
       .catch(error => {
         console.error('Error parsing activity statement:', error);
@@ -584,6 +618,71 @@ export default function UploadInterface() {
       setGenerationStatus(`Error generating ${noun} for ${accountLabel}`);
     } finally {
       setGeneratingAccount(null);
+    }
+  };
+
+  const sendPDF = async (account?: string) => {
+    if (!activityUpload || activityUpload.rows.length === 0) {
+      alert('Upload an activity statement before sending PDFs');
+      return;
+    }
+
+    if (!preCommitmentUpload || preCommitmentUpload.players.length === 0) {
+      alert('Upload the pre-commitment workbook before sending PDFs');
+      return;
+    }
+
+    if (!quarterlyData || quarterlyData.players.length === 0) {
+      alert('Upload the three monthly cashless CSV files before sending PDFs');
+      return;
+    }
+
+    const targetAccount = account ?? annotatedPlayers[0]?.account ?? 'ALL';
+    const targetPlayer = annotatedPlayers.find(p => p.account === targetAccount);
+    
+    if (!targetPlayer || !targetPlayer.activity?.email) {
+      alert('No email address found for this account. Cannot send PDF.');
+      return;
+    }
+
+    const accountLabel = account
+      ? `account ${account}`
+      : targetAccount !== 'ALL'
+        ? `account ${targetAccount}`
+        : 'the first matched account';
+    
+    setSendingAccount(targetAccount);
+    setGenerationStatus(`Sending PDF to ${targetPlayer.activity.email} for ${accountLabel}...`);
+
+    try {
+      const response = await fetch('/api/send-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          activityRows: activityUpload.rows,
+          preCommitmentPlayers: preCommitmentUpload.players,
+          quarterlyData,
+          account,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to send PDF');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setGenerationStatus(`PDF sent successfully to ${targetPlayer.activity.email} for ${accountLabel}!`);
+      } else {
+        throw new Error(data.error || 'Failed to send PDF');
+      }
+    } catch (error) {
+      console.error('Error sending PDF:', error);
+      setGenerationStatus(`Error sending PDF for ${accountLabel}`);
+    } finally {
+      setSendingAccount(null);
     }
   };
 
@@ -1005,6 +1104,7 @@ export default function UploadInterface() {
                 const hasCashless = Boolean(player.cashless);
                 const isAccountPreviewing = previewingAccount === player.account || previewingAccount === 'ALL';
                 const isAccountGenerating = generatingAccount === player.account || generatingAccount === 'ALL';
+                const isAccountSending = sendingAccount === player.account || sendingAccount === 'ALL';
 
                 return (
                   <div
@@ -1039,25 +1139,36 @@ export default function UploadInterface() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         onClick={() => previewPDF(player.account)}
-                        disabled={isGenerating || isPreviewing}
+                        disabled={isGenerating || isPreviewing || isSending}
                         className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                          isPreviewing
+                          isPreviewing || isGenerating || isSending
                             ? 'bg-gray-400 cursor-not-allowed'
                             : 'bg-emerald-600 hover:bg-emerald-700'
                         }`}
                       >
-                        {isPreviewing && isAccountPreviewing ? 'Generating Preview...' : 'Preview PDF'}
+                        {isPreviewing && isAccountPreviewing ? 'Generating Preview...' : 'Preview'}
                       </button>
                       <button
                         onClick={() => generatePDFs(player.account)}
-                        disabled={isGenerating || isPreviewing}
+                        disabled={isGenerating || isPreviewing || isSending}
                         className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                          isGenerating
+                          isGenerating || isPreviewing || isSending
                             ? 'bg-gray-400 cursor-not-allowed'
                             : 'bg-blue-600 hover:bg-blue-700'
                         }`}
                       >
-                        {isGenerating && isAccountGenerating ? 'Generating PDF...' : 'Download PDF'}
+                        {isGenerating && isAccountGenerating ? 'Generating PDF...' : 'Export'}
+                      </button>
+                      <button
+                        onClick={() => sendPDF(player.account)}
+                        disabled={isGenerating || isPreviewing || isSending || !email}
+                        className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
+                          isSending || isGenerating || isPreviewing || !email
+                            ? 'bg-gray-400 cursor-not-allowed'
+                            : 'bg-purple-600 hover:bg-purple-700'
+                        }`}
+                      >
+                        {isSending && isAccountSending ? 'Sending...' : 'Send PDF'}
                       </button>
                     </div>
                   </div>

@@ -49,7 +49,7 @@ export default function Navigation() {
                   : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
               }`}
             >
-              Members
+              Member Information
             </Link>
           </div>
         </div>

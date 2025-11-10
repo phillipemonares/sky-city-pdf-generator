@@ -22,10 +22,30 @@ interface NoPlayBatch {
   updated_at: string;
 }
 
+interface MemberInfo {
+  accountNumber: string;
+  member: {
+    id: string;
+    account_number: string;
+    title: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    address: string;
+    suburb: string;
+    state: string;
+    post_code: string;
+    country: string;
+    player_type: string;
+  } | null;
+}
+
 export default function NoPlayPage() {
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [sendingAccount, setSendingAccount] = useState<string | null>(null);
   const [generationStatus, setGenerationStatus] = useState<string>('');
   const [previousBatches, setPreviousBatches] = useState<NoPlayBatch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState<boolean>(false);
@@ -36,6 +56,7 @@ export default function NoPlayPage() {
   const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [memberInfoMap, setMemberInfoMap] = useState<Map<string, MemberInfo['member']>>(new Map());
 
   // Format dates for statement period display
   const formatStatementPeriod = (start: string, end: string): string => {
@@ -137,6 +158,43 @@ export default function NoPlayPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate]);
+
+  // Fetch member info when players are loaded
+  useEffect(() => {
+    const fetchMemberInfo = async () => {
+      if (!uploadedFile || uploadedFile.players.length === 0) {
+        return;
+      }
+
+      try {
+        const accountNumbers = uploadedFile.players.map(p => p.playerInfo.playerAccount);
+        const response = await fetch('/api/get-members-by-accounts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ accountNumbers }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.members) {
+            const newMap = new Map<string, MemberInfo['member']>();
+            data.members.forEach((item: MemberInfo) => {
+              if (item.member) {
+                newMap.set(item.accountNumber, item.member);
+              }
+            });
+            setMemberInfoMap(newMap);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching member info:', error);
+      }
+    };
+
+    fetchMemberInfo();
+  }, [uploadedFile]);
 
   // Load previous batches on component mount
   useEffect(() => {
@@ -365,6 +423,49 @@ export default function NoPlayPage() {
       setGenerationStatus('Error generating PDF');
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const sendEmail = async (player: PreCommitmentPlayer) => {
+    const member = memberInfoMap.get(player.playerInfo.playerAccount);
+    
+    if (!member || !member.email) {
+      alert('No email address found for this account. Cannot send PDF.');
+      return;
+    }
+
+    setIsSending(true);
+    setSendingAccount(player.playerInfo.playerAccount);
+    setGenerationStatus(`Sending PDF to ${member.email}...`);
+
+    try {
+      const response = await fetch('/api/send-pc-pdf', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          players: [player]
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Failed to send PDF' }));
+        throw new Error(errorData.error || 'Failed to send PDF');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setGenerationStatus(`PDF sent successfully to ${member.email}!`);
+      } else {
+        throw new Error(data.error || 'Failed to send PDF');
+      }
+    } catch (error) {
+      console.error('Error sending PDF:', error);
+      setGenerationStatus(`Error sending PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsSending(false);
+      setSendingAccount(null);
     }
   };
 
@@ -664,47 +765,71 @@ export default function NoPlayPage() {
             {uploadedFile.players.length > 0 && (
               <div className="space-y-4">
                 <h3 className="font-medium">Players Found:</h3>
-                {uploadedFile.players.map((player, index) => (
-                  <div key={index} className="border rounded-lg p-4">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-medium">
-                          Account: {player.playerInfo.playerAccount}
-                        </h4>
-                        <p className="text-sm text-gray-600">
-                          Status: {player.noPlayStatus}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          Statement Period: {player.statementPeriod}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => previewPDF(player)}
-                          disabled={isPreviewing || isGenerating}
-                          className={`px-4 py-2 rounded text-sm font-medium ${
-                            isPreviewing || isGenerating
-                              ? 'bg-gray-400 cursor-not-allowed'
-                              : 'bg-green-600 hover:bg-green-700'
-                          } text-white transition-colors`}
-                        >
-                          Preview
-                        </button>
-                        <button
-                          onClick={() => generatePDF(player)}
-                          disabled={isGenerating || isPreviewing}
-                          className={`px-4 py-2 rounded text-sm font-medium ${
-                            isGenerating || isPreviewing
-                              ? 'bg-gray-400 cursor-not-allowed'
-                              : 'bg-blue-600 hover:bg-blue-700'
-                          } text-white transition-colors`}
-                        >
-                          Generate PDF
-                        </button>
+                {uploadedFile.players.map((player, index) => {
+                  const member = memberInfoMap.get(player.playerInfo.playerAccount);
+                  const fullName = member
+                    ? [member.title, member.first_name, member.last_name].filter(Boolean).join(' ').trim()
+                    : '';
+                  const email = member?.email || '';
+                  const isSendingThis = sendingAccount === player.playerInfo.playerAccount;
+                  
+                  return (
+                    <div key={index} className="border rounded-lg p-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4 className="font-medium">
+                            Account No.: {player.playerInfo.playerAccount}
+                          </h4>
+                          <p className="text-sm text-gray-700 mt-1">
+                            {fullName || 'Name unavailable'}
+                            {email ? ` • ${email}` : ''}
+                          </p>
+                          <p className="text-sm text-gray-600 mt-1">
+                            Status: {player.noPlayStatus}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            Statement Period: {player.statementPeriod}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => previewPDF(player)}
+                            disabled={isPreviewing || isGenerating || isSending}
+                            className={`px-4 py-2 rounded text-sm font-medium ${
+                              isPreviewing || isGenerating || isSending
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-green-600 hover:bg-green-700'
+                            } text-white transition-colors`}
+                          >
+                            Preview
+                          </button>
+                          <button
+                            onClick={() => generatePDF(player)}
+                            disabled={isGenerating || isPreviewing || isSending}
+                            className={`px-4 py-2 rounded text-sm font-medium ${
+                              isGenerating || isPreviewing || isSending
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-blue-600 hover:bg-blue-700'
+                            } text-white transition-colors`}
+                          >
+                            Export
+                          </button>
+                          <button
+                            onClick={() => sendEmail(player)}
+                            disabled={isGenerating || isPreviewing || isSending || !email}
+                            className={`px-4 py-2 rounded text-sm font-medium ${
+                              isGenerating || isPreviewing || isSending || !email
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-purple-600 hover:bg-purple-700'
+                            } text-white transition-colors`}
+                          >
+                            {isSendingThis ? 'Sending...' : 'Send Email'}
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -713,14 +838,14 @@ export default function NoPlayPage() {
               <div className="mt-6 pt-6 border-t">
                 <button
                   onClick={generateAllPDFs}
-                  disabled={isGenerating || isPreviewing}
+                  disabled={isGenerating || isPreviewing || isSending}
                   className={`w-full py-3 px-6 rounded-lg font-medium ${
-                    isGenerating || isPreviewing
+                    isGenerating || isPreviewing || isSending
                       ? 'bg-gray-400 cursor-not-allowed'
                       : 'bg-purple-600 hover:bg-purple-700'
                   } text-white transition-colors`}
                 >
-                  {isGenerating ? 'Generating PDFs...' : `Generate All PDFs (${uploadedFile.players.length} players)`}
+                  {isGenerating ? 'Exporting PDFs...' : `Export All (${uploadedFile.players.length} players)`}
                 </button>
               </div>
             )}
