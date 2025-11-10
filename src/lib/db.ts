@@ -643,3 +643,240 @@ export async function getMembersPaginated(
   }
 }
 
+// ============================================
+// User Authentication Functions
+// ============================================
+
+export interface User {
+  id: string;
+  username: string;
+  password_hash: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * Get user by username
+ */
+export async function getUserByUsername(username: string): Promise<User | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT id, username, password_hash, created_at, updated_at
+       FROM users
+       WHERE username = ?`,
+      [username]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      username: row.username,
+      password_hash: row.password_hash,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+    };
+  } catch (error) {
+    console.error('Error getting user by username:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a new user (for admin use only - no registration endpoint)
+ */
+export async function createUser(username: string, passwordHash: string): Promise<string> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // Check if user already exists
+    const existing = await getUserByUsername(username);
+    if (existing) {
+      throw new Error('User already exists');
+    }
+
+    // Generate UUID for user
+    const userId = randomUUID();
+
+    // Insert user
+    await connection.execute(
+      `INSERT INTO users (id, username, password_hash)
+       VALUES (?, ?, ?)`,
+      [userId, username, passwordHash]
+    );
+
+    await connection.commit();
+    return userId;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error creating user:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get all users
+ */
+export async function getAllUsers(): Promise<Omit<User, 'password_hash'>[]> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT id, username, created_at, updated_at
+       FROM users
+       ORDER BY created_at DESC`
+    );
+
+    return rows.map(row => ({
+      id: row.id,
+      username: row.username,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+    }));
+  } catch (error) {
+    console.error('Error getting all users:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a user by ID
+ */
+export async function deleteUser(userId: string): Promise<void> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // Delete user's sessions first
+    await connection.execute(
+      `DELETE FROM sessions WHERE username IN (SELECT username FROM users WHERE id = ?)`,
+      [userId]
+    );
+
+    // Delete user
+    await connection.execute(
+      `DELETE FROM users WHERE id = ?`,
+      [userId]
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error deleting user:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+// ============================================
+// Session Management Functions
+// ============================================
+
+export interface Session {
+  token: string;
+  username: string;
+  expires_at: Date;
+  created_at: Date;
+}
+
+/**
+ * Create a session in the database
+ */
+export async function createSession(token: string, username: string, expiresAt: Date): Promise<void> {
+  try {
+    await pool.execute(
+      `INSERT INTO sessions (token, username, expires_at)
+       VALUES (?, ?, ?)`,
+      [token, username, expiresAt]
+    );
+  } catch (error) {
+    console.error('Error creating session:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get session by token
+ */
+export async function getSessionByToken(token: string): Promise<Session | null> {
+  try {
+    // First, clean up expired sessions
+    await pool.execute(
+      `DELETE FROM sessions WHERE expires_at < NOW()`
+    );
+
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT token, username, expires_at, created_at
+       FROM sessions
+       WHERE token = ? AND expires_at > NOW()`,
+      [token]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      token: row.token,
+      username: row.username,
+      expires_at: new Date(row.expires_at),
+      created_at: new Date(row.created_at),
+    };
+  } catch (error) {
+    console.error('Error getting session:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a session by token
+ */
+export async function deleteSession(token: string): Promise<void> {
+  try {
+    await pool.execute(
+      `DELETE FROM sessions WHERE token = ?`,
+      [token]
+    );
+  } catch (error) {
+    console.error('Error deleting session:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete all sessions for a user
+ */
+export async function deleteUserSessions(username: string): Promise<void> {
+  try {
+    await pool.execute(
+      `DELETE FROM sessions WHERE username = ?`,
+      [username]
+    );
+  } catch (error) {
+    console.error('Error deleting user sessions:', error);
+    throw error;
+  }
+}
+
+/**
+ * Clean up expired sessions
+ */
+export async function cleanupExpiredSessions(): Promise<void> {
+  try {
+    await pool.execute(
+      `DELETE FROM sessions WHERE expires_at < NOW()`
+    );
+  } catch (error) {
+    console.error('Error cleaning up expired sessions:', error);
+    throw error;
+  }
+}
+

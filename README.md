@@ -39,13 +39,30 @@ src/
    npm install
    ```
 
-2. **Start Development Server**:
+2. **Set Up Database**:
+   - Create the database tables by running the SQL migrations:
+     ```bash
+     mysql -u root -p dp-skycity < schema.sql
+     mysql -u root -p dp-skycity < migrations/create_users_table.sql
+     ```
+   - Or run the migrations manually in your MySQL client
+
+3. **Seed Default User**:
+   - After creating the users table, seed the default user by either:
+     - Running the seed script: `node scripts/seed-default-user.js`
+     - Or calling the API endpoint: `POST /api/seed-user`
+   
+   Default credentials:
+   - Username: `stephen@dailypress.com.au`
+   - Password: `Nfx07BoJ83jc`
+
+4. **Start Development Server**:
    ```bash
    npm run dev
    ```
 
-3. **Open Application**:
-   Navigate to `http://localhost:3000`
+5. **Open Application**:
+   Navigate to `http://localhost:3000` - you will be redirected to the login page
 
 ## Usage
 
@@ -62,8 +79,31 @@ The application expects CSV files with the following structure:
 - **Monthly Totals**: Cash to Card, Game Credit to Card, Card Credit to Game, Bets Placed, Device Win, Net Win/Loss
 - **Daily Transactions**: Up to 31 daily transaction records per month
 
+## Authentication
+
+The application uses a login-only authentication system (no registration). Users must be created manually in the database.
+
+### Default User
+- **Username**: `stephen@dailypress.com.au`
+- **Password**: `Nfx07BoJ83jc`
+
+### Creating New Users
+Users can be created programmatically using the `createUser` function in `src/lib/db.ts` or by directly inserting into the `users` table with a bcrypt-hashed password.
+
+### Session Management
+- Sessions are stored in-memory (for development)
+- Session cookies expire after 7 days
+- All routes except `/login` and `/api/*` require authentication
+
 ## API Endpoints
 
+### Authentication
+- `POST /api/login`: Authenticate user and create session
+- `POST /api/logout`: Destroy session and log out
+- `GET /api/check-auth`: Check if user is authenticated
+- `POST /api/seed-user`: Seed the default user (run once after creating users table)
+
+### PDF Generation
 - `POST /api/generate-pdf`: Generates PDF statements from quarterly data
 
 ## Dependencies
