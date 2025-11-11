@@ -7,11 +7,12 @@ import { join } from 'path';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { account: string; batch: string } }
+  { params }: { params: Promise<{ account: string; batch: string }> }
 ) {
   try {
-    const accountNumber = params.account;
-    const batchId = params.batch;
+    const { account, batch } = await params;
+    const accountNumber = account;
+    const batchId = batch;
 
     if (!accountNumber) {
       return NextResponse.json(

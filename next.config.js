@@ -2,7 +2,6 @@
 const nextConfig = {
   serverExternalPackages: ['puppeteer'],
   // Performance optimizations
-  swcMinify: true,
   compress: true,
   poweredByHeader: false,
   // Faster builds
