@@ -725,11 +725,11 @@ export default function NoPlayPage() {
           </div>
         </div>
 
-            {/* Uploaded File Info */}
-            {uploadedFile && (
+            {/* Players List */}
+            {uploadedFile && uploadedFile.players.length > 0 && (
               <div className="bg-white rounded-lg shadow-md p-6 mb-8">
                 <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-xl font-semibold">Uploaded File</h2>
+                  <h2 className="text-xl font-semibold">Players Found</h2>
                   <div className="flex gap-2">
                     {!loadedBatchId && (
                       <button
@@ -751,32 +751,26 @@ export default function NoPlayPage() {
                     )}
                     <button
                       onClick={removeFile}
-                      className="text-red-600 hover:text-red-800"
+                      className="text-red-600 hover:text-red-800 font-medium"
                     >
-                      Remove
+                      Remove All
                     </button>
                   </div>
                 </div>
-            
-            <div className="mb-4">
-              <h3 className="font-medium">{uploadedFile.file.name}</h3>
-              <p className="text-sm text-gray-600">
-                Players with "No Play" status: {uploadedFile.players.length}
-              </p>
-              {uploadedFile.errors.length > 0 && (
-                <div className="text-red-600 text-sm mt-2">
-                  <p>Errors:</p>
-                  <ul className="list-disc list-inside">
-                    {uploadedFile.errors.map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
 
-            {/* Players List */}
-            {uploadedFile.players.length > 0 && (
+                {uploadedFile.errors.length > 0 && (
+                  <div className="text-red-600 text-sm mb-4">
+                    <p>Errors:</p>
+                    <ul className="list-disc list-inside">
+                      {uploadedFile.errors.map((error, i) => (
+                        <li key={i}>{error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Players Table */}
+                {uploadedFile.players.length > 0 && (
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-medium">
@@ -913,10 +907,10 @@ export default function NoPlayPage() {
                     </div>
                   </div>
                 )}
-              </div>
-            )}
-          </div>
-        )}
+                </div>
+              )}
+            </div>
+          )}
 
           </div>
         )}
