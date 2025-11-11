@@ -19,16 +19,21 @@ export default function Navigation() {
         const data = await response.json();
         if (data.authenticated) {
           setUsername(data.username);
+        } else {
+          // Not authenticated - redirect to login
+          window.location.href = `/login?redirect=${encodeURIComponent(pathname)}`;
         }
       } catch (error) {
         console.error('Error checking auth:', error);
+        // On error, redirect to login for security
+        window.location.href = `/login?redirect=${encodeURIComponent(pathname)}`;
       } finally {
         setLoading(false);
       }
     };
 
     checkAuth();
-  }, []);
+  }, [pathname]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

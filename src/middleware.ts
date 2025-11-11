@@ -25,50 +25,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Validate session token by calling the validation API
-  // Note: Middleware runs in Edge Runtime which doesn't support MySQL directly
-  // So we validate by calling an API endpoint that has database access
-  try {
-    const baseUrl = new URL(request.url);
-    const validateUrl = new URL('/api/validate-session', baseUrl.origin);
-    
-    const validateResponse = await fetch(validateUrl.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': request.headers.get('cookie') || '',
-      },
-      body: JSON.stringify({ token: sessionCookie.value }),
-    });
-
-    if (!validateResponse.ok) {
-      throw new Error('Validation request failed');
-    }
-
-    const validationResult = await validateResponse.json();
-    
-    if (!validationResult.valid) {
-      console.log('Middleware: Session not found or expired for token:', sessionCookie.value.substring(0, 10) + '...');
-      // Invalid or expired session, redirect to login
-      const loginUrl = new URL('/login', request.url);
-      loginUrl.searchParams.set('redirect', pathname);
-      const response = NextResponse.redirect(loginUrl);
-      // Clear invalid cookie
-      response.cookies.delete('skycity_session');
-      return response;
-    }
-
-    console.log('Middleware: Session validated for user:', validationResult.username);
-    return NextResponse.next();
-  } catch (error) {
-    // If validation fails, redirect to login for security
-    console.log('Middleware: Session validation failed:', error);
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
-    const response = NextResponse.redirect(loginUrl);
-    response.cookies.delete('skycity_session');
-    return response;
-  }
+  // Cookie exists, allow through
+  // Full validation happens in the pages via check-auth API call
+  // This avoids middleware trying to make HTTP requests to itself
+  console.log('Middleware: Session cookie found, allowing request');
+  return NextResponse.next();
 }
 
 export const config = {
