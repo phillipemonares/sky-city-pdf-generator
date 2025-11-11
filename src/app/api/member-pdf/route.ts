@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
     const sanitizedAccount = accountNumber.replace(/[^a-zA-Z0-9_-]/g, '') || 'member';
     const filename = `Statement_Q${batch.quarter}_${batch.year}_${sanitizedAccount}.pdf`;
 
-    return new NextResponse(pdfBuffer, {
+    return new NextResponse(Buffer.from(pdfBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',

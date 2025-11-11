@@ -228,4 +228,5 @@ export interface AnnotatedStatementPlayer {
   activity?: ActivityStatementRow;
   preCommitment?: PreCommitmentPlayer;
   cashless?: PlayerData;
+  quarterlyData?: QuarterlyData;
 }
