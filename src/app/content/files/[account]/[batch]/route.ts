@@ -10,9 +10,9 @@ export async function GET(
   { params }: { params: Promise<{ account: string; batch: string }> }
 ) {
   try {
-    const { account, batch } = await params;
-    const accountNumber = account;
-    const batchId = batch;
+    const resolvedParams = await params;
+    const accountNumber = resolvedParams.account;
+    const batchId = resolvedParams.batch;
 
     if (!accountNumber) {
       return NextResponse.json(
