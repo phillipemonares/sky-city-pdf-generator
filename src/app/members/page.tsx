@@ -2,10 +2,10 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import Navigation from '@/components/Navigation';
-import { Member } from '@/lib/db';
+import { MemberWithBatch } from '@/lib/db';
 
 export default function MembersPage() {
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<MemberWithBatch[]>([]);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
@@ -32,6 +32,56 @@ export default function MembersPage() {
     }
   }, []);
 
+  const exportToCSV = useCallback(() => {
+    if (members.length === 0) {
+      alert('No members to export');
+      return;
+    }
+
+    // Create CSV header
+    const headers = ['Account', 'Name', 'Email', 'Address', 'Suburb', 'State', 'Post Code', 'Latest Quarter', 'PDF Link'];
+    
+    // Create CSV rows
+    const rows = members.map(member => {
+      const fullName = [member.title, member.first_name, member.last_name].filter(Boolean).join(' ');
+      const quarterInfo = member.latest_quarter && member.latest_year 
+        ? `Q${member.latest_quarter} ${member.latest_year}`
+        : 'N/A';
+      const pdfLink = member.latest_batch_id 
+        ? `https://skycity.dailypress.agency/content/files/${member.account_number}/${member.latest_batch_id}/`
+        : 'N/A';
+      
+      return [
+        member.account_number,
+        fullName,
+        member.email || '',
+        member.address || '',
+        member.suburb || '',
+        member.state || '',
+        member.post_code || '',
+        quarterInfo,
+        pdfLink
+      ];
+    });
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `members_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [members]);
+
   // Load members on component mount and when page changes
   useEffect(() => {
     loadMembers(currentPage, pageSize);
@@ -46,9 +96,6 @@ export default function MembersPage() {
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
             Member Information
           </h1>
-          <p className="text-gray-600">
-            View registered members in the database. Members are automatically added or updated when Activity Statement Templates are uploaded on the Quarterly Statement page.
-          </p>
         </div>
 
         {/* Member List */}
@@ -65,6 +112,13 @@ export default function MembersPage() {
                 </p>
               </div>
               <div className="flex gap-2">
+                <button
+                  onClick={exportToCSV}
+                  disabled={loadingMembers || members.length === 0}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                >
+                  Export to CSV
+                </button>
                 <select
                   value={pageSize}
                   onChange={(e) => {
@@ -109,22 +163,43 @@ export default function MembersPage() {
                       <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Suburb</th>
                       <th className="px-4 py-3 text-left border border-gray-200 font-semibold">State</th>
                       <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Post Code</th>
+                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">PDF Link</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {members.map((member) => (
-                      <tr key={member.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 border border-gray-200">{member.account_number}</td>
-                        <td className="px-4 py-2 border border-gray-200">
-                          {[member.title, member.first_name, member.last_name].filter(Boolean).join(' ')}
-                        </td>
-                        <td className="px-4 py-2 border border-gray-200">{member.email || '-'}</td>
-                        <td className="px-4 py-2 border border-gray-200">{member.address || '-'}</td>
-                        <td className="px-4 py-2 border border-gray-200">{member.suburb || '-'}</td>
-                        <td className="px-4 py-2 border border-gray-200">{member.state || '-'}</td>
-                        <td className="px-4 py-2 border border-gray-200">{member.post_code || '-'}</td>
-                      </tr>
-                    ))}
+                    {members.map((member) => {
+                      const previewUrl = member.latest_batch_id
+                        ? `/content/files/${member.account_number}/${member.latest_batch_id}/`
+                        : null;
+                      
+                      return (
+                        <tr key={member.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-2 border border-gray-200">{member.account_number}</td>
+                          <td className="px-4 py-2 border border-gray-200">
+                            {[member.title, member.first_name, member.last_name].filter(Boolean).join(' ')}
+                          </td>
+                          <td className="px-4 py-2 border border-gray-200">{member.email || '-'}</td>
+                          <td className="px-4 py-2 border border-gray-200">{member.address || '-'}</td>
+                          <td className="px-4 py-2 border border-gray-200">{member.suburb || '-'}</td>
+                          <td className="px-4 py-2 border border-gray-200">{member.state || '-'}</td>
+                          <td className="px-4 py-2 border border-gray-200">{member.post_code || '-'}</td>
+                          <td className="px-4 py-2 border border-gray-200">
+                            {previewUrl ? (
+                              <a
+                                href={previewUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:text-blue-800 text-sm underline"
+                              >
+                                Preview
+                              </a>
+                            ) : (
+                              <span className="text-gray-400 text-sm">No PDF available</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

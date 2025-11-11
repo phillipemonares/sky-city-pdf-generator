@@ -589,13 +589,20 @@ export async function getAllMembers(): Promise<Member[]> {
   }
 }
 
+export interface MemberWithBatch extends Member {
+  latest_batch_id: string | null;
+  latest_quarter: number | null;
+  latest_year: number | null;
+  latest_generation_date: Date | null;
+}
+
 /**
- * Get paginated members from the database
+ * Get paginated members from the database with their latest batch information
  */
 export async function getMembersPaginated(
   page: number = 1,
   pageSize: number = 50
-): Promise<{ members: Member[]; total: number; totalPages: number }> {
+): Promise<{ members: MemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
     const validPage = Math.max(1, Math.floor(page));
@@ -609,10 +616,29 @@ export async function getMembersPaginated(
     const total = countRows[0]?.total || 0;
     const totalPages = Math.ceil(total / validPageSize);
     
-    // Get paginated members - MySQL requires LIMIT and OFFSET to be integers (not placeholders)
-    // Since we've validated and converted to integers, it's safe to use template literals
+    // Get paginated members with their latest batch info
+    // Join with matched_accounts and generation_batches to get the most recent batch per member
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT * FROM members ORDER BY account_number ASC LIMIT ${validPageSize} OFFSET ${offset}`
+      `SELECT 
+        m.*,
+        latest_batch.batch_id as latest_batch_id,
+        latest_batch.quarter as latest_quarter,
+        latest_batch.year as latest_year,
+        latest_batch.generation_date as latest_generation_date
+       FROM members m
+       LEFT JOIN (
+         SELECT 
+           ma.account_number,
+           gb.id as batch_id,
+           gb.quarter,
+           gb.year,
+           gb.generation_date,
+           ROW_NUMBER() OVER (PARTITION BY ma.account_number ORDER BY gb.generation_date DESC) as rn
+         FROM matched_accounts ma
+         INNER JOIN generation_batches gb ON ma.batch_id = gb.id
+       ) as latest_batch ON m.account_number = latest_batch.account_number AND latest_batch.rn = 1
+       ORDER BY m.account_number ASC 
+       LIMIT ${validPageSize} OFFSET ${offset}`
     );
     
     const members = rows.map(row => ({
@@ -629,7 +655,11 @@ export async function getMembersPaginated(
       country: row.country || '',
       player_type: row.player_type || '',
       created_at: row.created_at,
-      updated_at: row.updated_at
+      updated_at: row.updated_at,
+      latest_batch_id: row.latest_batch_id || null,
+      latest_quarter: row.latest_quarter || null,
+      latest_year: row.latest_year || null,
+      latest_generation_date: row.latest_generation_date ? new Date(row.latest_generation_date) : null,
     }));
     
     return {

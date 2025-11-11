@@ -75,6 +75,8 @@ export default function UploadInterface() {
   const [deletingBatch, setDeletingBatch] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'generation' | 'history'>('generation');
   const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
 
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
     if (!activityUpload || !preCommitmentUpload || !quarterlyData) {
@@ -87,6 +89,18 @@ export default function UploadInterface() {
       quarterlyData
     );
   }, [activityUpload, preCommitmentUpload, quarterlyData]);
+
+  // Pagination calculations
+  const totalAccounts = annotatedPlayers.length;
+  const totalPages = Math.ceil(totalAccounts / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedPlayers = annotatedPlayers.slice(startIndex, endIndex);
+
+  // Reset to page 1 when annotatedPlayers changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [annotatedPlayers]);
 
   const isGenerating = generatingAccount !== null;
   const isPreviewing = previewingAccount !== null;
@@ -530,14 +544,13 @@ export default function UploadInterface() {
         throw new Error('Failed to generate preview');
       }
 
+      // Get the HTML content and create a blob URL
       const html = await response.text();
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
       
-      // Open preview in new window
-      const previewWindow = window.open('', '_blank');
-      if (previewWindow) {
-        previewWindow.document.write(html);
-        previewWindow.document.close();
-      }
+      // Open preview in new window with proper URL
+      window.open(url, '_blank');
 
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);
     } catch (error) {
@@ -1065,12 +1078,38 @@ export default function UploadInterface() {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-4">
               <div>
                 <h2 className="text-xl font-semibold">Matched Accounts</h2>
-                <p className="text-sm text-gray-600">Preview or download individual annotated statements.</p>
+                <p className="text-sm text-gray-600">
+                  {totalPages > 1 
+                    ? `Showing ${startIndex + 1} to ${Math.min(endIndex, totalAccounts)} of ${totalAccounts.toLocaleString()} matched accounts (Page ${currentPage} of ${totalPages})`
+                    : `Preview or download individual annotated statements.`
+                  }
+                </p>
               </div>
               <div className="flex flex-col md:flex-row items-center gap-3">
-                <p className="text-sm text-gray-600">
-                  {annotatedPlayers.length} {annotatedPlayers.length === 1 ? 'account' : 'accounts'} matched across uploads
-                </p>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1); // Reset to first page when changing page size
+                  }}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  disabled={isGenerating || isPreviewing || isSending}
+                >
+                  <option value="25">25 per page</option>
+                  <option value="50">50 per page</option>
+                  <option value="100">100 per page</option>
+                </select>
+                <button
+                  onClick={() => generatePDFs()}
+                  disabled={isGenerating || isPreviewing || isSending}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
+                    isGenerating || isPreviewing || isSending
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-purple-600 hover:bg-purple-700'
+                  }`}
+                >
+                  {isGenerating && generatingAccount === null ? 'Exporting...' : `Export All (${totalAccounts})`}
+                </button>
                 {!loadedBatchId && (
                   <button
                     onClick={saveBatch}
@@ -1092,89 +1131,129 @@ export default function UploadInterface() {
               </div>
             </div>
 
-            <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-              {annotatedPlayers.map(player => {
-                const fullName = [player.activity?.firstName, player.activity?.lastName]
-                  .filter(Boolean)
-                  .join(' ')
-                  .trim();
-                const email = player.activity?.email ?? '';
-                const hasActivity = Boolean(player.activity);
-                const hasPreCommitment = Boolean(player.preCommitment);
-                const hasCashless = Boolean(player.cashless);
-                const isAccountPreviewing = previewingAccount === player.account || previewingAccount === 'ALL';
-                const isAccountGenerating = generatingAccount === player.account || generatingAccount === 'ALL';
-                const isAccountSending = sendingAccount === player.account || sendingAccount === 'ALL';
+            <div className="overflow-x-auto">
+              <table className="min-w-full border border-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Account</th>
+                    <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Name</th>
+                    <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Email</th>
+                    <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Data Sources</th>
+                    <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedPlayers.map(player => {
+                    const fullName = [player.activity?.firstName, player.activity?.lastName]
+                      .filter(Boolean)
+                      .join(' ')
+                      .trim();
+                    const email = player.activity?.email ?? '-';
+                    const hasActivity = Boolean(player.activity);
+                    const hasPreCommitment = Boolean(player.preCommitment);
+                    const hasCashless = Boolean(player.cashless);
+                    const isAccountPreviewing = previewingAccount === player.account || previewingAccount === 'ALL';
+                    const isAccountGenerating = generatingAccount === player.account || generatingAccount === 'ALL';
+                    const isAccountSending = sendingAccount === player.account || sendingAccount === 'ALL';
 
-                return (
-                  <div
-                    key={player.account}
-                    className="border border-gray-200 rounded-lg p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
-                  >
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">Member #{player.account}</p>
-                      <p className="text-sm text-gray-700">
-                        {fullName || 'Name unavailable'}
-                        {email ? ` • ${email}` : ''}
-                      </p>
-                      <div className="flex flex-wrap gap-2 mt-2 text-xs">
-                        <span
-                          className={`px-2 py-1 rounded-full ${hasActivity ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
-                        >
-                          Activity
-                        </span>
-                        <span
-                          className={`px-2 py-1 rounded-full ${hasPreCommitment ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
-                        >
-                          Pre-commitment
-                        </span>
-                        <span
-                          className={`px-2 py-1 rounded-full ${hasCashless ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
-                        >
-                          Cashless
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => previewPDF(player.account)}
-                        disabled={isGenerating || isPreviewing || isSending}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                          isPreviewing || isGenerating || isSending
-                            ? 'bg-gray-400 cursor-not-allowed'
-                            : 'bg-emerald-600 hover:bg-emerald-700'
-                        }`}
-                      >
-                        {isPreviewing && isAccountPreviewing ? 'Generating Preview...' : 'Preview'}
-                      </button>
-                      <button
-                        onClick={() => generatePDFs(player.account)}
-                        disabled={isGenerating || isPreviewing || isSending}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                          isGenerating || isPreviewing || isSending
-                            ? 'bg-gray-400 cursor-not-allowed'
-                            : 'bg-blue-600 hover:bg-blue-700'
-                        }`}
-                      >
-                        {isGenerating && isAccountGenerating ? 'Generating PDF...' : 'Export'}
-                      </button>
-                      <button
-                        onClick={() => sendPDF(player.account)}
-                        disabled={isGenerating || isPreviewing || isSending || !email}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                          isSending || isGenerating || isPreviewing || !email
-                            ? 'bg-gray-400 cursor-not-allowed'
-                            : 'bg-purple-600 hover:bg-purple-700'
-                        }`}
-                      >
-                        {isSending && isAccountSending ? 'Sending...' : 'Send PDF'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                    return (
+                      <tr key={player.account} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 border border-gray-200">{player.account}</td>
+                        <td className="px-4 py-2 border border-gray-200">{fullName || 'Name unavailable'}</td>
+                        <td className="px-4 py-2 border border-gray-200">{email}</td>
+                        <td className="px-4 py-2 border border-gray-200">
+                          <div className="flex flex-wrap gap-1">
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs ${hasActivity ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
+                            >
+                              Activity
+                            </span>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs ${hasPreCommitment ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
+                            >
+                              Pre-commitment
+                            </span>
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs ${hasCashless ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}
+                            >
+                              Cashless
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 border border-gray-200">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => previewPDF(player.account)}
+                              disabled={isGenerating || isPreviewing || isSending}
+                              className={`px-3 py-1 rounded text-sm font-medium transition-colors text-white ${
+                                isPreviewing || isGenerating || isSending
+                                  ? 'bg-gray-400 cursor-not-allowed'
+                                  : 'bg-emerald-600 hover:bg-emerald-700'
+                              }`}
+                            >
+                              {isPreviewing && isAccountPreviewing ? 'Previewing...' : 'Preview'}
+                            </button>
+                            <button
+                              onClick={() => generatePDFs(player.account)}
+                              disabled={isGenerating || isPreviewing || isSending}
+                              className={`px-3 py-1 rounded text-sm font-medium transition-colors text-white ${
+                                isGenerating || isPreviewing || isSending
+                                  ? 'bg-gray-400 cursor-not-allowed'
+                                  : 'bg-blue-600 hover:bg-blue-700'
+                              }`}
+                            >
+                              {isGenerating && isAccountGenerating ? 'Exporting...' : 'Export'}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    First
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Previous
+                  </button>
+                  <span className="px-4 py-2 text-sm text-gray-700">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Next
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Last
+                  </button>
+                </div>
+                <div className="text-sm text-gray-600">
+                  Showing {startIndex + 1} to {Math.min(endIndex, totalAccounts)} of {totalAccounts.toLocaleString()} accounts
+                </div>
+              </div>
+            )}
           </div>
         )}
           </div>

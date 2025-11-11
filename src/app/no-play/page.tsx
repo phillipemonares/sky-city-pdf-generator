@@ -57,6 +57,20 @@ export default function NoPlayPage() {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [memberInfoMap, setMemberInfoMap] = useState<Map<string, MemberInfo['member']>>(new Map());
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(50);
+
+  // Pagination calculations
+  const totalPlayers = uploadedFile?.players.length || 0;
+  const totalPages = Math.ceil(totalPlayers / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedPlayers = uploadedFile?.players.slice(startIndex, endIndex) || [];
+
+  // Reset to page 1 when players change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [uploadedFile?.players]);
 
   // Format dates for statement period display
   const formatStatementPeriod = (start: string, end: string): string => {
@@ -763,90 +777,142 @@ export default function NoPlayPage() {
 
             {/* Players List */}
             {uploadedFile.players.length > 0 && (
-              <div className="space-y-4">
-                <h3 className="font-medium">Players Found:</h3>
-                {uploadedFile.players.map((player, index) => {
-                  const member = memberInfoMap.get(player.playerInfo.playerAccount);
-                  const fullName = member
-                    ? [member.title, member.first_name, member.last_name].filter(Boolean).join(' ').trim()
-                    : '';
-                  const email = member?.email || '';
-                  const isSendingThis = sendingAccount === player.playerInfo.playerAccount;
-                  
-                  return (
-                    <div key={index} className="border rounded-lg p-4">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-medium">
-                            Account No.: {player.playerInfo.playerAccount}
-                          </h4>
-                          <p className="text-sm text-gray-700 mt-1">
-                            {fullName || 'Name unavailable'}
-                            {email ? ` • ${email}` : ''}
-                          </p>
-                          <p className="text-sm text-gray-600 mt-1">
-                            Status: {player.noPlayStatus}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            Statement Period: {player.statementPeriod}
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => previewPDF(player)}
-                            disabled={isPreviewing || isGenerating || isSending}
-                            className={`px-4 py-2 rounded text-sm font-medium ${
-                              isPreviewing || isGenerating || isSending
-                                ? 'bg-gray-400 cursor-not-allowed'
-                                : 'bg-green-600 hover:bg-green-700'
-                            } text-white transition-colors`}
-                          >
-                            Preview
-                          </button>
-                          <button
-                            onClick={() => generatePDF(player)}
-                            disabled={isGenerating || isPreviewing || isSending}
-                            className={`px-4 py-2 rounded text-sm font-medium ${
-                              isGenerating || isPreviewing || isSending
-                                ? 'bg-gray-400 cursor-not-allowed'
-                                : 'bg-blue-600 hover:bg-blue-700'
-                            } text-white transition-colors`}
-                          >
-                            Export
-                          </button>
-                          <button
-                            onClick={() => sendEmail(player)}
-                            disabled={isGenerating || isPreviewing || isSending || !email}
-                            className={`px-4 py-2 rounded text-sm font-medium ${
-                              isGenerating || isPreviewing || isSending || !email
-                                ? 'bg-gray-400 cursor-not-allowed'
-                                : 'bg-purple-600 hover:bg-purple-700'
-                            } text-white transition-colors`}
-                          >
-                            {isSendingThis ? 'Sending...' : 'Send Email'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+              <div>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-medium">
+                    {totalPages > 1 
+                      ? `Showing ${startIndex + 1} to ${Math.min(endIndex, totalPlayers)} of ${totalPlayers.toLocaleString()} players (Page ${currentPage} of ${totalPages})`
+                      : `Players Found: ${totalPlayers.toLocaleString()}`
+                    }
+                  </h3>
+                  <div className="flex gap-2">
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      disabled={isGenerating || isPreviewing || isSending}
+                    >
+                      <option value="25">25 per page</option>
+                      <option value="50">50 per page</option>
+                      <option value="100">100 per page</option>
+                    </select>
+                    <button
+                      onClick={generateAllPDFs}
+                      disabled={isGenerating || isPreviewing || isSending}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
+                        isGenerating || isPreviewing || isSending
+                          ? 'bg-gray-400 cursor-not-allowed'
+                          : 'bg-purple-600 hover:bg-purple-700'
+                      }`}
+                    >
+                      {isGenerating ? 'Exporting...' : `Export All (${totalPlayers})`}
+                    </button>
+                  </div>
+                </div>
 
-            {/* Generate All Button */}
-            {uploadedFile.players.length > 0 && (
-              <div className="mt-6 pt-6 border-t">
-                <button
-                  onClick={generateAllPDFs}
-                  disabled={isGenerating || isPreviewing || isSending}
-                  className={`w-full py-3 px-6 rounded-lg font-medium ${
-                    isGenerating || isPreviewing || isSending
-                      ? 'bg-gray-400 cursor-not-allowed'
-                      : 'bg-purple-600 hover:bg-purple-700'
-                  } text-white transition-colors`}
-                >
-                  {isGenerating ? 'Exporting PDFs...' : `Export All (${uploadedFile.players.length} players)`}
-                </button>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border border-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Account</th>
+                        <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Name</th>
+                        <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Email</th>
+                        <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Statement Period</th>
+                        <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedPlayers.map((player, index) => {
+                        const member = memberInfoMap.get(player.playerInfo.playerAccount);
+                        const fullName = member
+                          ? [member.title, member.first_name, member.last_name].filter(Boolean).join(' ').trim()
+                          : 'Name unavailable';
+                        const email = member?.email || '-';
+                        const isSendingThis = sendingAccount === player.playerInfo.playerAccount;
+                        
+                        return (
+                          <tr key={index} className="hover:bg-gray-50">
+                            <td className="px-4 py-2 border border-gray-200">{player.playerInfo.playerAccount}</td>
+                            <td className="px-4 py-2 border border-gray-200">{fullName}</td>
+                            <td className="px-4 py-2 border border-gray-200">{email}</td>
+                            <td className="px-4 py-2 border border-gray-200">{player.statementPeriod}</td>
+                            <td className="px-4 py-2 border border-gray-200">
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => previewPDF(player)}
+                                  disabled={isPreviewing || isGenerating || isSending}
+                                  className={`px-3 py-1 rounded text-sm font-medium ${
+                                    isPreviewing || isGenerating || isSending
+                                      ? 'bg-gray-400 cursor-not-allowed'
+                                      : 'bg-emerald-600 hover:bg-emerald-700'
+                                  } text-white transition-colors`}
+                                >
+                                  Preview
+                                </button>
+                                <button
+                                  onClick={() => generatePDF(player)}
+                                  disabled={isGenerating || isPreviewing || isSending}
+                                  className={`px-3 py-1 rounded text-sm font-medium ${
+                                    isGenerating || isPreviewing || isSending
+                                      ? 'bg-gray-400 cursor-not-allowed'
+                                      : 'bg-blue-600 hover:bg-blue-700'
+                                  } text-white transition-colors`}
+                                >
+                                  Export
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setCurrentPage(1)}
+                        disabled={currentPage === 1}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                      >
+                        First
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                      >
+                        Previous
+                      </button>
+                      <span className="px-4 py-2 text-sm text-gray-700">
+                        Page {currentPage} of {totalPages}
+                      </span>
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                      >
+                        Next
+                      </button>
+                      <button
+                        onClick={() => setCurrentPage(totalPages)}
+                        disabled={currentPage === totalPages}
+                        className="px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                      >
+                        Last
+                      </button>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      Showing {startIndex + 1} to {Math.min(endIndex, totalPlayers)} of {totalPlayers.toLocaleString()} players
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
