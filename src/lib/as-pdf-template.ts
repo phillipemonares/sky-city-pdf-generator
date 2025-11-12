@@ -18,7 +18,6 @@ export const AS_STYLES = `
   }
 
   .salutation {
-    color: #008000;
     margin-bottom: 15px;
   }
 

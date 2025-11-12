@@ -77,12 +77,10 @@ export function generatePDFHTML(quarterlyData: QuarterlyData, playerData: Player
         }
         
         .member-number {
-            color: #008000;
             font-weight: bold;
         }
         
         .salutation {
-            color: #008000;
             margin-bottom: 15px;
         }
         

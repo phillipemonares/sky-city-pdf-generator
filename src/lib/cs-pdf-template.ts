@@ -156,7 +156,7 @@ export function generateCashlessStatements(
         </table>
         
         <div class="salutation-section">
-          <div class="green-text">Dear ${greetingName},</div>
+          Dear ${greetingName},
         </div>
         
         <div class="statement-intro">

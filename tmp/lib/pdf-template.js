@@ -78,7 +78,6 @@ function generatePDFHTML(quarterlyData, playerData, logoDataUrl) {
         }
         
         .salutation {
-            color: #008000;
             margin-bottom: 15px;
         }
         

@@ -68,7 +68,6 @@ export const COMMON_STYLES = `
   }
 
   .member-number {
-    color: #008000;
     font-weight: 600;
   }
 `;
