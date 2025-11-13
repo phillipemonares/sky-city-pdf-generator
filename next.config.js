@@ -11,6 +11,10 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: false,
   },
+  // Increase body size limit for API routes (default is 10MB)
+  experimental: {
+    middlewareClientMaxBodySize: '50mb',
+  },
 }
 
 module.exports = nextConfig

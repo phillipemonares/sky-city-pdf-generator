@@ -527,21 +527,42 @@ export default function UploadInterface() {
     setGenerationStatus(`Generating preview for ${accountLabel}...`);
 
     try {
+      // Prepare the request body
+      const requestBody = {
+        activityRows: activityUpload.rows,
+        preCommitmentPlayers: preCommitmentUpload.players,
+        quarterlyData,
+        account,
+      };
+
+      // Stringify with error handling
+      let bodyString: string;
+      try {
+        bodyString = JSON.stringify(requestBody);
+        const bodySizeMB = (new Blob([bodyString]).size / (1024 * 1024)).toFixed(2);
+        console.log(`Request body size: ${bodySizeMB} MB`);
+        
+        if (parseFloat(bodySizeMB) > 45) {
+          console.warn('Large request body detected. This may cause issues.');
+        }
+      } catch (stringifyError) {
+        console.error('Error stringifying request body:', stringifyError);
+        setGenerationStatus(`Error: Failed to prepare data. ${stringifyError instanceof Error ? stringifyError.message : 'Unknown error'}`);
+        return;
+      }
+
       const response = await fetch('/api/preview-pdf', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          activityRows: activityUpload.rows,
-          preCommitmentPlayers: preCommitmentUpload.players,
-          quarterlyData,
-          account,
-        }),
+        body: bodyString,
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate preview');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const errorMessage = errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+        throw new Error(errorMessage);
       }
 
       // Get the HTML content and create a blob URL
@@ -555,7 +576,8 @@ export default function UploadInterface() {
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);
     } catch (error) {
       console.error('Error generating preview:', error);
-      setGenerationStatus(`Error generating preview for ${accountLabel}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setGenerationStatus(`Error generating preview for ${accountLabel}: ${errorMessage}`);
     } finally {
       setPreviewingAccount(null);
     }

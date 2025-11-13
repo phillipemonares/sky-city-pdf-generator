@@ -106,7 +106,8 @@ export function buildAnnotatedPlayers(
 export function generateAnnotatedHTML(
   player: AnnotatedStatementPlayer,
   quarterlyData: QuarterlyData,
-  logoDataUrl?: string
+  logoDataUrl?: string,
+  playHeaderDataUrl?: string
 ): string {
   const nameDetails = resolveNameDetails(player);
   const salutationName = nameDetails.salutation;
@@ -117,10 +118,12 @@ export function generateAnnotatedHTML(
     : '';
 
   const preCommitmentSection = player.preCommitment
-    ? renderPreCommitmentPage(player.preCommitment, quarterlyData, salutationName)
+    ? renderPreCommitmentPage(player.preCommitment, quarterlyData, salutationName, playHeaderDataUrl)
     : '';
 
-  const cashlessSection = player.cashless
+  // Only include cashless section if player.cashless exists and is truthy
+  // This ensures cashless is only included when it's highlighted in the UI
+  const cashlessSection = player.cashless && player.cashless.playerInfo
     ? generateCashlessStatements(quarterlyData, player.cashless, logoDataUrl, salutationName, displayName)
     : '';
 

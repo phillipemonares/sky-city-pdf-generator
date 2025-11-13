@@ -7,9 +7,9 @@
     "test": "test"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_OPTIONS='--max-http-header-size=16384' node server.js",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_ENV=production NODE_OPTIONS='--max-http-header-size=16384' node server.js",
     "lint": "next lint"
   },
   "keywords": [],

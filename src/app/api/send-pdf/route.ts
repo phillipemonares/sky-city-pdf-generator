@@ -85,6 +85,12 @@ export async function POST(request: NextRequest) {
       // Set timeout for page operations
       page.setDefaultTimeout(10000);
       
+      // Ensure cashless is only included if it exists (matches UI highlighting logic)
+      // If cashless is not highlighted in UI, targetPlayer.cashless will be undefined
+      if (!targetPlayer.cashless) {
+        console.log(`Cashless data not found for account ${targetPlayer.account}, excluding from email`);
+      }
+      
       // Convert logo to base64
       const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');
       const logoBuffer = readFileSync(logoPath);

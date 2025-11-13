@@ -160,7 +160,8 @@ const buildPreCommitmentRules = (player: PreCommitmentPlayer): string[] => {
 export function renderPreCommitmentPage(
   preCommitment: PreCommitmentPlayer,
   quarterlyData: QuarterlyData,
-  salutationOverride?: string
+  salutationOverride?: string,
+  playHeaderDataUrl?: string
 ): string {
   const { playerInfo } = preCommitment;
   const quarterStart = getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
@@ -193,7 +194,7 @@ export function renderPreCommitmentPage(
 
   return `
   <div class="page">
-    <img src="/play-header.png" alt="SkyCity Adelaide" class="play-header" />
+    ${playHeaderDataUrl ? `<img src="${playHeaderDataUrl}" alt="SkyCity Adelaide" class="play-header" />` : '<div class="text-logo">SKYCITY ADELAIDE</div>'}
     <div class="member-info">
       <div class="member-number">Member Number: ${playerInfo.playerAccount || '-'}</div>
     </div>

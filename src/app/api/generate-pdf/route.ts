@@ -85,6 +85,12 @@ export async function POST(request: NextRequest) {
       const pdfResults: { buffer: Buffer; account: string }[] = [];
       
       for (const annotatedPlayer of playersToProcess) {
+        // Ensure cashless is only included if it exists (matches UI highlighting logic)
+        // If cashless is not highlighted in UI, annotatedPlayer.cashless will be undefined
+        if (!annotatedPlayer.cashless) {
+          console.log(`Cashless data not found for account ${annotatedPlayer.account}, excluding from export`);
+        }
+        
         const html = generateAnnotatedHTML(annotatedPlayer, quarterlyData, logoDataUrl);
         
         await page.setContent(html, { waitUntil: 'networkidle0' });
