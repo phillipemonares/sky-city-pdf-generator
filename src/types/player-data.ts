@@ -227,7 +227,7 @@ export interface PreCommitmentCSVRow {
   // Legacy support
   'Every'?: string;
   'Hour'?: string;
-  [key: string]: string;
+  [key: string]: string | undefined;
 }
 
 export interface PreCommitmentPDFRequest {
