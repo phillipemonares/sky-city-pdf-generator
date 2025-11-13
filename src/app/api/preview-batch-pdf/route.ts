@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getBatchById, getMatchedAccountsByBatch } from '@/lib/db';
-import { buildAnnotatedPlayers, generateAnnotatedHTML } from '@/lib/annotated-pdf-template';
+import { getBatchById, getAccountFromBatch, getQuarterlyDataFromBatch } from '@/lib/db';
+import { generatePreviewHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -30,21 +30,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get matched accounts
-    const matchedAccounts = await getMatchedAccountsByBatch(batchId);
-
-    if (matchedAccounts.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No matched accounts found in batch' },
-        { status: 404 }
-      );
-    }
-
-    // Extract data from the batch
-    const annotatedPlayers = matchedAccounts.map(acc => acc.account_data);
-    
-    // Extract quarterly data from the first account
-    const quarterlyData = (annotatedPlayers[0] as any)?.quarterlyData || null;
+    // Get quarterly data (efficiently from one account)
+    const quarterlyData = await getQuarterlyDataFromBatch(batchId);
     
     if (!quarterlyData) {
       return NextResponse.json(
@@ -53,24 +40,31 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Clean up the quarterlyData from the account_data objects
-    const cleanedPlayers = annotatedPlayers.map(player => {
-      const { quarterlyData: _, ...rest } = player as any;
-      return rest;
-    });
+    // Determine target account
+    let targetAccountNumber: string;
+    if (account) {
+      targetAccountNumber = normalizeAccount(account);
+    } else {
+      // If no specific account requested, we need to get any account from the batch
+      // For efficiency, we'll use the quarterly data query result's account
+      return NextResponse.json(
+        { success: false, error: 'Account parameter is required for preview' },
+        { status: 400 }
+      );
+    }
 
-    // Find the target player
-    const requestedAccount = normalizeAccount(account);
-    const targetPlayer = requestedAccount
-      ? cleanedPlayers.find(player => normalizeAccount(player.account) === requestedAccount)
-      : cleanedPlayers[0];
-
-    if (!targetPlayer) {
+    // Get the specific account data (optimized single query)
+    const matchedAccount = await getAccountFromBatch(batchId, targetAccountNumber);
+    
+    if (!matchedAccount) {
       return NextResponse.json(
         { success: false, error: 'Requested account was not found in the batch' },
         { status: 404 }
       );
     }
+
+    // Extract the target player data
+    const targetPlayer = matchedAccount.account_data;
 
     // Ensure cashless is only included if it exists
     if (!targetPlayer.cashless) {
@@ -89,7 +83,7 @@ export async function GET(request: NextRequest) {
     const playHeaderBase64 = playHeaderBuffer.toString('base64');
     const playHeaderDataUrl = `data:image/png;base64,${playHeaderBase64}`;
 
-    const html = generateAnnotatedHTML(targetPlayer, quarterlyData, logoDataUrl, playHeaderDataUrl);
+    const html = generatePreviewHTML(targetPlayer, quarterlyData, logoDataUrl, playHeaderDataUrl);
 
     // Add print button to the HTML
     const htmlWithPrintButton = html.replace(

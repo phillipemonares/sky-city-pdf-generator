@@ -145,3 +145,28 @@ export function generateAnnotatedHTML(
 </html>
   `;
 }
+
+/**
+ * Generate HTML optimized for preview (with limited session data for performance)
+ */
+export function generatePreviewHTML(
+  player: AnnotatedStatementPlayer,
+  quarterlyData: QuarterlyData,
+  logoDataUrl?: string,
+  playHeaderDataUrl?: string
+): string {
+  // Create a copy of the player with limited session data for preview
+  const previewPlayer = { ...player };
+  
+  // Limit precommitment sessions for preview performance
+  if (previewPlayer.preCommitment?.sessionSummaries) {
+    const sessionLimit = 50; // Limit to first 50 sessions for preview
+    previewPlayer.preCommitment = {
+      ...previewPlayer.preCommitment,
+      sessionSummaries: previewPlayer.preCommitment.sessionSummaries.slice(0, sessionLimit)
+    };
+  }
+
+  // Use the regular HTML generation with limited data
+  return generateAnnotatedHTML(previewPlayer, quarterlyData, logoDataUrl, playHeaderDataUrl);
+}

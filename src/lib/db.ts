@@ -189,6 +189,67 @@ export async function getMatchedAccountsByBatch(batchId: string): Promise<Matche
 }
 
 /**
+ * Get a specific account from a batch (optimized for preview)
+ */
+export async function getAccountFromBatch(batchId: string, accountNumber: string): Promise<MatchedAccount | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT id, batch_id, account_number, account_data, has_activity, 
+              has_pre_commitment, has_cashless, created_at, updated_at
+       FROM matched_accounts
+       WHERE batch_id = ? AND account_number = ?
+       LIMIT 1`,
+      [batchId, accountNumber]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      batch_id: row.batch_id,
+      account_number: row.account_number,
+      account_data: JSON.parse(row.account_data) as AnnotatedStatementPlayer,
+      has_activity: Boolean(row.has_activity),
+      has_pre_commitment: Boolean(row.has_pre_commitment),
+      has_cashless: Boolean(row.has_cashless),
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+    };
+  } catch (error) {
+    console.error('Error fetching account from batch:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get quarterly data from any account in the batch (for preview)
+ */
+export async function getQuarterlyDataFromBatch(batchId: string): Promise<QuarterlyData | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT account_data
+       FROM matched_accounts
+       WHERE batch_id = ?
+       LIMIT 1`,
+      [batchId]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const accountData = JSON.parse(rows[0].account_data) as any;
+    return accountData?.quarterlyData || null;
+  } catch (error) {
+    console.error('Error fetching quarterly data from batch:', error);
+    throw error;
+  }
+}
+
+/**
  * Delete a generation batch and all associated matched accounts (cascade)
  */
 export async function deleteBatch(batchId: string): Promise<boolean> {
