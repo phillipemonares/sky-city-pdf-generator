@@ -524,49 +524,73 @@ export default function UploadInterface() {
         ? `account ${previewAccount}`
         : 'the first matched account';
     setPreviewingAccount(previewAccount);
-    setGenerationStatus(`Generating preview for ${accountLabel}...`);
+    setGenerationStatus(`Preparing preview for ${accountLabel}...`);
 
     try {
-      // Prepare the request body
-      const requestBody = {
-        activityRows: activityUpload.rows,
-        preCommitmentPlayers: preCommitmentUpload.players,
-        quarterlyData,
-        account,
-      };
-
-      // Stringify with error handling
-      let bodyString: string;
-      try {
-        bodyString = JSON.stringify(requestBody);
-        const bodySizeMB = (new Blob([bodyString]).size / (1024 * 1024)).toFixed(2);
-        console.log(`Request body size: ${bodySizeMB} MB`);
+      // Auto-save batch if not already saved
+      let batchId = loadedBatchId;
+      
+      if (!batchId) {
+        setGenerationStatus(`Saving data for preview...`);
         
-        if (parseFloat(bodySizeMB) > 45) {
-          console.warn('Large request body detected. This may cause issues.');
+        const saveResponse = await fetch('/api/save-batch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            activityRows: activityUpload.rows,
+            preCommitmentPlayers: preCommitmentUpload.players,
+            quarterlyData,
+          }),
+        });
+
+        if (!saveResponse.ok) {
+          throw new Error('Failed to save batch for preview');
         }
-      } catch (stringifyError) {
-        console.error('Error stringifying request body:', stringifyError);
-        setGenerationStatus(`Error: Failed to prepare data. ${stringifyError instanceof Error ? stringifyError.message : 'Unknown error'}`);
-        return;
+
+        const saveData = await saveResponse.json();
+        if (!saveData.success) {
+          throw new Error(saveData.error || 'Failed to save batch for preview');
+        }
+
+        batchId = saveData.batchId;
+        setLoadedBatchId(batchId);
+        
+        // Update batches list asynchronously (don't wait for it)
+        loadPreviousBatches().catch(error => 
+          console.warn('Failed to reload batches list:', error)
+        );
       }
 
-      const response = await fetch('/api/preview-pdf', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: bodyString,
-      });
+      setGenerationStatus(`Generating preview for ${accountLabel}...`);
+
+      // Use the new batch-based preview endpoint
+      if (!batchId) {
+        throw new Error('No batch ID available for preview');
+      }
+      
+      const previewUrl = `/api/preview-batch-pdf?batchId=${encodeURIComponent(batchId)}${account ? `&account=${encodeURIComponent(account)}` : ''}`;
+      console.log('Preview URL:', previewUrl);
+      
+      const response = await fetch(previewUrl);
 
       if (!response.ok) {
+        console.error('Preview API error:', response.status, response.statusText);
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('Preview API error data:', errorData);
         const errorMessage = errorData.error || `HTTP ${response.status}: ${response.statusText}`;
         throw new Error(errorMessage);
       }
 
       // Get the HTML content and display directly in new window
       const html = await response.text();
+      
+      // Check if HTML response is valid
+      if (!html || html.length < 100) {
+        throw new Error('Invalid or empty HTML response from preview API');
+      }
+      
       const previewWindow = window.open('', '_blank');
       if (previewWindow) {
         // Use document.open() to clear any existing content
@@ -574,6 +598,11 @@ export default function UploadInterface() {
         previewWindow.document.open();
         previewWindow.document.write(html);
         previewWindow.document.close();
+        
+        // Ensure the window is focused
+        previewWindow.focus();
+      } else {
+        throw new Error('Failed to open preview window. Please check popup blocker settings.');
       }
 
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);

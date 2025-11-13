@@ -111,14 +111,10 @@ export function aggregateQuarterlyData(monthlyFiles: { month: number; year: numb
     throw new Error('No monthly data provided');
   }
 
-  console.log('Aggregating quarterly data with monthly files:', monthlyFiles.map(f => ({ month: f.month, year: f.year, playerCount: f.data.length })));
-
   // Determine quarter and year from the first month
   const firstMonth = monthlyFiles[0];
   const quarter = Math.ceil(firstMonth.month / 3);
   const year = firstMonth.year;
-  
-  console.log('Quarter calculation:', { firstMonth: firstMonth.month, quarter, year });
 
   // Group players by account number across all months
   const playerMap = new Map<string, PlayerData>();
