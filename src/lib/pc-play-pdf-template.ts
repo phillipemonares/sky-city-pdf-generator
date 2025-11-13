@@ -1,6 +1,7 @@
 import { PreCommitmentPlayer, QuarterlyData } from '@/types/player-data';
 import {
   formatCurrency,
+  formatExcelDate,
   formatExcelTime,
   formatUnitValue,
   getQuarterEndDate,
@@ -24,7 +25,7 @@ export const PC_PLAY_STYLES = `
   }
 
   .precommitment-section {
-    margin-top: 25px;
+    margin-top: 20px;
   }
 
   .precommitment-section h4 {
@@ -64,14 +65,40 @@ export const PC_PLAY_STYLES = `
   }
 
   .precommitment-footer {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: 40px;
-    width: calc(100% - 80px);
+    margin-top: auto;
     text-align: center;
     font-size: 10px;
     line-height: 1.5;
+    padding-top: 20px;
+  }
+
+  .page {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  .page-break {
+    page-break-before: always;
+  }
+
+  .session-page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 auto;
+    background: white;
+    padding: 40px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .session-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 10px 0 20px 0;
+    text-align: center;
+    text-transform: uppercase;
   }
 
   .negative-value {
@@ -177,19 +204,34 @@ export function renderPreCommitmentPage(
     : '<li>No active pre-commitment rules recorded.</li>';
   const breaches = wrapNegativeValue(sanitizeNumber(preCommitment.breaches));
   const sessionSummaries = preCommitment.sessionSummaries ?? [];
+  
+  // Split session rows: first 9 rows on first page, rest on next page
+  const firstPageRows = sessionSummaries.slice(0, 8).map((summary, index) => {
+    const date = formatExcelDate(summary.session);
+    const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
+    return `
+      <tr>
+        <td>${date}</td>
+        <td class="amount">${amount}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  const nextPageRows = sessionSummaries.slice(8).map((summary, index) => {
+    const date = formatExcelDate(summary.session);
+    const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
+    return `
+      <tr>
+        <td>${date}</td>
+        <td class="amount">${amount}</td>
+      </tr>
+    `;
+  }).join('');
+  
+  const hasNextPageRows = sessionSummaries.length > 8;
+  
   const sessionRows = sessionSummaries.length
-    ? sessionSummaries
-        .map(summary => {
-          const date = sanitizeText(summary.session) || '-';
-          const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
-          return `
-            <tr>
-              <td>${date}</td>
-              <td class="amount">${amount}</td>
-            </tr>
-          `;
-        })
-        .join('')
+    ? firstPageRows
     : '<tr><td colspan="2">No daily activity recorded for this period.</td></tr>';
 
   return `
@@ -228,9 +270,29 @@ export function renderPreCommitmentPage(
         </tbody>
       </table>
     </div>
-
+    ${!hasNextPageRows && sessionSummaries.length > 0 ? `
+    <p class="precommitment-footer">This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
+    ` : ''}
+  </div>
+  ${hasNextPageRows && nextPageRows ? `
+  <div class="page-break"></div>
+  <div class="session-page">
+    <div style="flex: 1;">
+      <table class="precommitment-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Amount Won/Lost</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${nextPageRows}
+        </tbody>
+      </table>
+    </div>
     <p class="precommitment-footer">This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
   </div>
+  ` : ''}
   `;
 }
 

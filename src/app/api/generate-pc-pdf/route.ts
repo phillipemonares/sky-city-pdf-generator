@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
-import { generatePreCommitmentPDFHTML } from '@/lib/pc-pdf-template';
+import { generatePreCommitmentPDFHTML } from '@/lib/pc-no-play-pdf-template';
 import { PreCommitmentPDFRequest, PreCommitmentPlayer } from '@/types/player-data';
-import { getMemberByAccount } from '@/lib/db';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -39,16 +38,8 @@ export async function POST(request: NextRequest) {
       // Generate PDF for the first player (single player per request)
       const playerData = players[0];
       
-      // Fetch member data from database
-      let memberData = null;
-      try {
-        memberData = await getMemberByAccount(playerData.playerInfo.playerAccount);
-      } catch (error) {
-        console.error('Error fetching member data:', error);
-        // Continue without member data if fetch fails
-      }
-      
-      const html = generatePreCommitmentPDFHTML(playerData, logoDataUrl, memberData);
+      // Member data is now included in the template, no need to fetch from database
+      const html = generatePreCommitmentPDFHTML(playerData, logoDataUrl, null);
       
       await page.setContent(html, { waitUntil: 'networkidle0' });
       

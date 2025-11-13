@@ -11,6 +11,8 @@ export default function MembersPage() {
   const [pageSize, setPageSize] = useState<number>(50);
   const [totalMembers, setTotalMembers] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(0);
+  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState<boolean>(false);
 
   const loadMembers = useCallback(async (page: number, size: number) => {
     try {
@@ -32,6 +34,66 @@ export default function MembersPage() {
     }
   }, []);
 
+  const handleSelectMember = useCallback((memberId: string) => {
+    setSelectedMembers(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(memberId)) {
+        newSet.delete(memberId);
+      } else {
+        newSet.add(memberId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((checked: boolean) => {
+    if (checked) {
+      setSelectedMembers(new Set(members.map(m => m.id)));
+    } else {
+      setSelectedMembers(new Set());
+    }
+  }, [members]);
+
+  const handleDeleteSelected = useCallback(async () => {
+    if (selectedMembers.size === 0) {
+      alert('Please select at least one member to delete');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete ${selectedMembers.size} member(s)? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      const response = await fetch('/api/delete-member', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          memberIds: Array.from(selectedMembers),
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        // Clear selection and reload members
+        setSelectedMembers(new Set());
+        await loadMembers(currentPage, pageSize);
+        alert(`Successfully deleted ${data.deletedCount} member(s)`);
+      } else {
+        alert(`Error: ${data.error || 'Failed to delete members'}`);
+      }
+    } catch (error) {
+      console.error('Error deleting members:', error);
+      alert('Failed to delete members. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedMembers, currentPage, pageSize, loadMembers]);
+
   const exportToCSV = useCallback(() => {
     if (members.length === 0) {
       alert('No members to export');
@@ -39,7 +101,7 @@ export default function MembersPage() {
     }
 
     // Create CSV header
-    const headers = ['Account', 'Name', 'Email', 'Address', 'Suburb', 'State', 'Post Code', 'Latest Quarter', 'PDF Link'];
+    const headers = ['Account', 'Name', 'Email', 'Address', 'Suburb', 'State', 'Post Code', 'Is Email', 'Is Postal', 'Latest Quarter', 'PDF Link'];
     
     // Create CSV rows
     const rows = members.map(member => {
@@ -59,6 +121,8 @@ export default function MembersPage() {
         member.suburb || '',
         member.state || '',
         member.post_code || '',
+        member.is_email ? 'Yes' : 'No',
+        member.is_postal ? 'Yes' : 'No',
         quarterInfo,
         pdfLink
       ];
@@ -88,6 +152,11 @@ export default function MembersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, pageSize]);
 
+  // Clear selection when page changes
+  useEffect(() => {
+    setSelectedMembers(new Set());
+  }, [currentPage]);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
@@ -112,6 +181,15 @@ export default function MembersPage() {
                 </p>
               </div>
               <div className="flex gap-2">
+                {selectedMembers.size > 0 && (
+                  <button
+                    onClick={handleDeleteSelected}
+                    disabled={deleting || loadingMembers}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                  >
+                    {deleting ? 'Deleting...' : `Delete Selected (${selectedMembers.size})`}
+                  </button>
+                )}
                 <button
                   onClick={exportToCSV}
                   disabled={loadingMembers || members.length === 0}
@@ -153,17 +231,34 @@ export default function MembersPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="min-w-full border border-gray-200">
+                <table className="min-w-full border border-gray-200 text-sm">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Account</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Name</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Email</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Address</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Suburb</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">State</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">Post Code</th>
-                      <th className="px-4 py-3 text-left border border-gray-200 font-semibold">PDF Link</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs w-12">
+                        <input
+                          type="checkbox"
+                          checked={members.length > 0 && selectedMembers.size === members.length}
+                          ref={(input) => {
+                            if (input) {
+                              input.indeterminate = 
+                                selectedMembers.size > 0 && 
+                                selectedMembers.size < members.length;
+                            }
+                          }}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Account</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Name</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Email</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Address</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Suburb</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">State</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Post Code</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Email</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Postal</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">PDF Link</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -174,27 +269,53 @@ export default function MembersPage() {
                       
                       return (
                         <tr key={member.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-2 border border-gray-200">{member.account_number}</td>
-                          <td className="px-4 py-2 border border-gray-200">
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={selectedMembers.has(member.id)}
+                              onChange={() => handleSelectMember(member.id)}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.account_number}</td>
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">
                             {[member.title, member.first_name, member.last_name].filter(Boolean).join(' ')}
                           </td>
-                          <td className="px-4 py-2 border border-gray-200">{member.email || '-'}</td>
-                          <td className="px-4 py-2 border border-gray-200">{member.address || '-'}</td>
-                          <td className="px-4 py-2 border border-gray-200">{member.suburb || '-'}</td>
-                          <td className="px-4 py-2 border border-gray-200">{member.state || '-'}</td>
-                          <td className="px-4 py-2 border border-gray-200">{member.post_code || '-'}</td>
-                          <td className="px-4 py-2 border border-gray-200">
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || '-'}</td>
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.address || '-'}</td>
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || '-'}</td>
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.state || '-'}</td>
+                          <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.post_code || '-'}</td>
+                          <td className="px-3 py-1.5 border border-gray-200">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              member.is_email 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {member.is_email ? 'Yes' : 'No'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 border border-gray-200">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              member.is_postal 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {member.is_postal ? 'Yes' : 'No'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 border border-gray-200">
                             {previewUrl ? (
                               <a
                                 href={previewUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-blue-600 hover:text-blue-800 text-sm underline"
+                                className="text-blue-600 hover:text-blue-800 text-xs underline"
                               >
                                 Preview
                               </a>
                             ) : (
-                              <span className="text-gray-400 text-sm">No PDF available</span>
+                              <span className="text-gray-400 text-xs">No PDF available</span>
                             )}
                           </td>
                         </tr>

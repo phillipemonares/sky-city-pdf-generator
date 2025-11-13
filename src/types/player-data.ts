@@ -180,8 +180,15 @@ export interface PreCommitmentPlayer {
 }
 
 export interface PreCommitmentCSVRow {
-  // Section 1: Player/Account Information (Light Blue Background)
+  // Section 1: Member Information (Blue Background)
   'Acct': string;
+  'KnownAs': string;
+  'LastName': string;
+  'Add1': string;
+  'Add2': string;
+  'SuburbName': string;
+  'StateName': string;
+  'Pcode': string;
   'Enrolled': string;
   'Un Enrolled': string;
   'Status': string;
@@ -198,7 +205,7 @@ export interface PreCommitmentCSVRow {
   'Monthly Budget': string;
   'Monthly Time': string;
   
-  // Section 3: Daily Schedule and Intervals (Light Gray Background)
+  // Section 3: Daily Schedule and Activity (Light Gray Background)
   'MON Start': string;
   'MON End': string;
   'TUE Start': string;
@@ -214,8 +221,12 @@ export interface PreCommitmentCSVRow {
   'SUN Start': string;
   'SUN End': string;
   'Mins': string;
-  'Every': string;
-  'Hour': string;
+  'Every Hour': string;
+  'Total Amount Spent': string;
+  'Net Win/Loss': string;
+  // Legacy support
+  'Every'?: string;
+  'Hour'?: string;
   [key: string]: string;
 }
 

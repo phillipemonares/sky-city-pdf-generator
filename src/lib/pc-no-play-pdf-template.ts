@@ -1,5 +1,6 @@
 import { PreCommitmentPlayer } from '@/types/player-data';
 import { Member } from './db';
+import { formatExcelDate, wrapNegativeValue } from './pdf-shared';
 
 const PRECOMMITMENT_STYLES = `
   <style>
@@ -59,6 +60,8 @@ const PRECOMMITMENT_STYLES = `
       background: white;
       padding-top: 0;
       position: relative;
+      display: flex;
+      flex-direction: column;
     }
 
     .header {
@@ -78,6 +81,7 @@ const PRECOMMITMENT_STYLES = `
 
     .content {
       padding: 40px;
+      flex: 1;
     }
 
     .statement-details {
@@ -89,7 +93,7 @@ const PRECOMMITMENT_STYLES = `
     }
 
     .footer-info {
-      margin-top: 10px;
+      margin-top: auto;
       text-align: center;
       background-color: #50a6db;
       color: white;
@@ -119,7 +123,7 @@ const PRECOMMITMENT_STYLES = `
     }
 
     .session-table {
-      width: 100%;
+      width: 40%;
       border-collapse: collapse;
       margin-top: 10px;
     }
@@ -127,19 +131,31 @@ const PRECOMMITMENT_STYLES = `
     .session-table th,
     .session-table td {
       border: 1px solid #000;
-      padding: 8px;
-      text-align: center;
+      padding: 6px;
+      font-size: 11px;
     }
 
-    .session-table th:first-child,
+    .session-table th {
+      text-align: left;
+      font-weight: 600;
+    }
+
     .session-table td:first-child {
       text-align: left;
+    }
+
+    .session-table td:last-child {
+      text-align: right;
     }
 
     .session-note {
       margin-top: 20px;
       font-size: 10px;
       color: #333;
+    }
+
+    .negative-value {
+      color: #c53030;
     }
   </style>
 `;
@@ -203,13 +219,12 @@ function formatExcelTime(value: unknown): string {
 export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUrl?: string, memberData?: Member | null): string {
   const { playerInfo, statementPeriod, statementDate } = player;
   
-  // Use member data if available, otherwise fall back to playerInfo
-  const displayName = memberData 
-    ? [memberData.first_name, memberData.last_name].filter(Boolean).join(' ').trim() || 'Member'
-    : [playerInfo.firstName, playerInfo.lastName].filter(Boolean).join(' ').trim() || 'Member';
+  // Member data is now included in the template columns, use playerInfo directly
+  const displayName = [playerInfo.firstName, playerInfo.lastName].filter(Boolean).join(' ').trim() || 'Member';
   
-  const address = memberData?.address || '';
-  const suburb = memberData?.suburb || '';
+  // Build address from playerInfo (Add1 and Add2 from template)
+  const address = [playerInfo.address1, playerInfo.address2].filter(Boolean).join(', ').trim();
+  const suburb = playerInfo.suburb || '';
   
   // Format statement date for footer (last day of the period)
   const formatFooterDate = (dateStr: string): string => {
@@ -226,18 +241,34 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   };
   const formattedFooterDate = statementDate ? formatFooterDate(statementDate) : '';
   const sessionSummaries = player.sessionSummaries ?? [];
-  const sessionTableRows = sessionSummaries.map((summary, index) => {
-    const label = (summary.session ?? '').toString().trim() || `Session ${index + 1}`;
+  const hasSessionSummaries = sessionSummaries.length > 0;
+  
+  // Split session rows: first 11 rows on first page, rest on next page
+  const firstPageRows = sessionSummaries.slice(0, 11).map((summary, index) => {
+    const sessionValue = summary.session ?? '';
+    const label = sessionValue ? formatExcelDate(sessionValue) : `Session ${index + 1}`;
+    const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
     return `
             <tr>
               <td>${label}</td>
-              <td>${formatCurrency(summary.sessionWin)}</td>
-              <td>${formatCurrency(summary.sessionLoss)}</td>
-              <td>${formatCurrency(summary.sessionNett)}</td>
+              <td>${amount}</td>
             </tr>
     `;
   }).join('');
-  const hasSessionSummaries = sessionSummaries.length > 0;
+  
+  const nextPageRows = sessionSummaries.slice(11).map((summary, index) => {
+    const sessionValue = summary.session ?? '';
+    const label = sessionValue ? formatExcelDate(sessionValue) : `Session ${index + 12}`;
+    const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
+    return `
+            <tr>
+              <td>${label}</td>
+              <td>${amount}</td>
+            </tr>
+    `;
+  }).join('');
+  
+  const hasNextPageRows = sessionSummaries.length > 11;
   
   // Build lists for the No Play letter format
   const expenditureItems: string[] = [];
@@ -294,6 +325,7 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   addPeriod('Sunday', player.sunStart, player.sunEnd);
 
   const consecutiveDaysF = formatAccounting(player.consecutiveDays);
+  const hasConsecutiveDays = !isZeroOrEmpty(player.consecutiveDays) && consecutiveDaysF !== '–';
   const renderList = (items: string[]) => items.length ? items.map(i => `<li>${i}</li>`).join('') : '<li>Nil</li>';
   
   return `
@@ -356,12 +388,28 @@ ${PRECOMMITMENT_STYLES}
           <br>
           <p><strong>Consecutive Days:</strong></p>
           <ul>
-            ${renderList(consecutiveDaysF === '–' ? [] : [consecutiveDaysF])}
+            ${renderList(hasConsecutiveDays ? [consecutiveDaysF] : [])}
           </ul>
         </div>
+        ${hasSessionSummaries && firstPageRows ? `
+        <div class="statement-details">
+          <p><strong>Daily Amounts Won/Lost During the Period:</strong></p>
+          <table class="session-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Amount Won/Lost</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${firstPageRows}
+            </tbody>
+          </table>
+        </div>
+        ` : ''}
         <p>SkyCity Adelaide is able to send statements by post or email. You are also able to access your statements via on-site kiosks.</p>
         <br>  
-        <p>If you would like to have your MyPlay statement produced in another language please contact SkyCity Adelaide’s Rewards department either at the desks onsite, or by emailing marketing@skycityadelaide.com.au to see if that language is available.</p>
+        <p>If you would like to have your MyPlay statement produced in another language please contact SkyCity Adelaide's Rewards department either at the desks onsite, or by emailing marketing@skycityadelaide.com.au to see if that language is available.</p>
         <br><br><br>
         <p>Kind regards,</p>
         <p><strong>SkyCity Adelaide</strong></p>
@@ -370,6 +418,26 @@ ${PRECOMMITMENT_STYLES}
             <p>This information is accurate as of ${formattedFooterDate} and will not reflect any changes you make in MyPlay after this time.</p>
         </div>
     </div>
+    ${hasNextPageRows && nextPageRows ? `
+    <div class="page-break"></div>
+    <div class="session-page">
+      <h3 class="session-title">Daily Amounts Won/Lost During the Period</h3>
+      <table class="session-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Amount Won/Lost</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${nextPageRows}
+        </tbody>
+      </table>
+      <div class="session-note">
+        <p>This information is accurate as of ${formattedFooterDate} and will not reflect any changes you make in MyPlay after this time.</p>
+      </div>
+    </div>
+    ` : ''}
   `;
 }
 
@@ -390,3 +458,4 @@ export function generatePreCommitmentPDFHTML(player: PreCommitmentPlayer, logoDa
 </html>
   `;
 }
+

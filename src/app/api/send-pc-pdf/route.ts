@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
 import sgMail from '@sendgrid/mail';
-import { generatePreCommitmentPDFHTML } from '@/lib/pc-pdf-template';
+import { generatePreCommitmentPDFHTML } from '@/lib/pc-no-play-pdf-template';
 import { PreCommitmentPDFRequest, PreCommitmentPlayer } from '@/types/player-data';
 import { getMemberByAccount } from '@/lib/db';
 import { readFileSync } from 'fs';

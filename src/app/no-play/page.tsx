@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navigation from '@/components/Navigation';
-import { parseExcelFile, parseCSVFile, validatePreCommitmentFile } from '@/lib/pc-parser';
+import { parseExcelFile, parseExcelFileWithMemberContacts, parseCSVFile, validatePreCommitmentFile } from '@/lib/pc-parser';
 import { PreCommitmentPlayer } from '@/types/player-data';
 
 interface UploadedFile {
@@ -125,31 +125,105 @@ export default function NoPlayPage() {
 
     const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
     
-    const parseFile = fileExtension === '.xlsx' ? parseExcelFile : parseCSVFile;
-    
-    parseFile(file)
-      .then(players => {
-        // Update statement period if dates are set
-        const updatedPlayers = (startDate && endDate) 
-          ? updatePlayersStatementPeriod(players, startDate, endDate)
-          : players;
-        
-        setUploadedFile({
-          file,
-          players: updatedPlayers,
-          errors: []
+    if (fileExtension === '.xlsx') {
+      // For Excel files, use the new parser that extracts Member Contact data
+      parseExcelFileWithMemberContacts(file)
+        .then(async result => {
+          const { players, memberContacts } = result;
+          
+          // Update statement period if dates are set
+          const updatedPlayers = (startDate && endDate) 
+            ? updatePlayersStatementPeriod(players, startDate, endDate)
+            : players;
+          
+          setUploadedFile({
+            file,
+            players: updatedPlayers,
+            errors: []
+          });
+          
+          // Save member contacts to database if available
+          if (memberContacts && memberContacts.length > 0) {
+            try {
+              setGenerationStatus(`Successfully parsed ${updatedPlayers.length} players. Saving member information...`);
+              
+              const response = await fetch('/api/save-member-contacts', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  memberContacts,
+                }),
+              });
+
+              if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                  setGenerationStatus(
+                    `Successfully parsed ${updatedPlayers.length} players with "No Play" status. ` +
+                    `Saved ${data.savedCount} new members and updated ${data.updatedCount} existing members from Member Contact sheet.`
+                  );
+                } else {
+                  console.error('Error saving member contacts:', data.error);
+                  setGenerationStatus(
+                    `Successfully parsed ${updatedPlayers.length} players with "No Play" status. ` +
+                    `Warning: Failed to save member information.`
+                  );
+                }
+              } else {
+                console.error('Failed to save member contacts:', response.statusText);
+                setGenerationStatus(
+                  `Successfully parsed ${updatedPlayers.length} players with "No Play" status. ` +
+                  `Warning: Failed to save member information.`
+                );
+              }
+            } catch (error) {
+              console.error('Error saving member contacts:', error);
+              setGenerationStatus(
+                `Successfully parsed ${updatedPlayers.length} players with "No Play" status. ` +
+                `Warning: Failed to save member information.`
+              );
+            }
+          } else {
+            setGenerationStatus(`Successfully parsed ${updatedPlayers.length} players with "No Play" status`);
+          }
+        })
+        .catch(error => {
+          console.error('Error parsing file:', error);
+          setUploadedFile({
+            file,
+            players: [],
+            errors: [`Error parsing file: ${error.message}`]
+          });
+          setGenerationStatus('Error parsing file');
         });
-        setGenerationStatus(`Successfully parsed ${updatedPlayers.length} players with "No Play" status`);
-      })
-      .catch(error => {
-        console.error('Error parsing file:', error);
-        setUploadedFile({
-          file,
-          players: [],
-          errors: [`Error parsing file: ${error.message}`]
+    } else {
+      // For CSV files, use the regular parser (no Member Contact sheet)
+      parseCSVFile(file)
+        .then(players => {
+          // Update statement period if dates are set
+          const updatedPlayers = (startDate && endDate) 
+            ? updatePlayersStatementPeriod(players, startDate, endDate)
+            : players;
+          
+          setUploadedFile({
+            file,
+            players: updatedPlayers,
+            errors: []
+          });
+          setGenerationStatus(`Successfully parsed ${updatedPlayers.length} players with "No Play" status`);
+        })
+        .catch(error => {
+          console.error('Error parsing file:', error);
+          setUploadedFile({
+            file,
+            players: [],
+            errors: [`Error parsing file: ${error.message}`]
+          });
+          setGenerationStatus('Error parsing file');
         });
-        setGenerationStatus('Error parsing file');
-      });
+    }
   }, [startDate, endDate]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -389,6 +463,9 @@ export default function NoPlayPage() {
       // Open preview in new window
       const previewWindow = window.open('', '_blank');
       if (previewWindow) {
+        // Use document.open() to clear any existing content
+        // This ensures it works even when navigating back in history
+        previewWindow.document.open();
         previewWindow.document.write(html);
         previewWindow.document.close();
       }
@@ -820,11 +897,11 @@ export default function NoPlayPage() {
                     </thead>
                     <tbody>
                       {paginatedPlayers.map((player, index) => {
-                        const member = memberInfoMap.get(player.playerInfo.playerAccount);
-                        const fullName = member
-                          ? [member.title, member.first_name, member.last_name].filter(Boolean).join(' ').trim()
-                          : 'Name unavailable';
-                        const email = member?.email || '-';
+                        // Use KnownAs and LastName from template (playerInfo)
+                        const knownAs = player.playerInfo.firstName || '';
+                        const lastName = player.playerInfo.lastName || '';
+                        const fullName = [knownAs, lastName].filter(Boolean).join(' ').trim() || 'Name unavailable';
+                        const email = player.playerInfo.email || '-';
                         const isSendingThis = sendingAccount === player.playerInfo.playerAccount;
                         
                         return (

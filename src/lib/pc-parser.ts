@@ -111,6 +111,120 @@ function buildSessionMap(
   return sessionMap;
 }
 
+export interface MemberContactData {
+  accountNumber: string;
+  firstName: string;
+  lastName: string;
+  preferredName: string;
+  isEmail: number; // 0 or 1
+  isPostal: number; // 0 or 1
+  email: string;
+  address1: string;
+  address2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
+function buildMemberContactMap(
+  headerRow: string[] | null,
+  dataRows: string[][]
+): Map<string, string> {
+  const emailMap = new Map<string, string>();
+  if (!headerRow) return emailMap;
+
+  const normalizedHeaders = headerRow.map(normalizeHeaderName);
+  const acctIdx = normalizedHeaders.indexOf('acct');
+  const emailIdx = normalizedHeaders.indexOf('email address');
+  
+  if (acctIdx === -1 || emailIdx === -1) return emailMap;
+
+  dataRows.forEach(row => {
+    const acct = normalizeAccountId(row[acctIdx]);
+    if (!acct) return;
+
+    const email = sanitizeCell(row, emailIdx);
+    if (email) {
+      emailMap.set(acct, email);
+    }
+  });
+
+  return emailMap;
+}
+
+function buildMemberContactData(
+  headerRow: string[] | null,
+  dataRows: string[][]
+): MemberContactData[] {
+  const memberContacts: MemberContactData[] = [];
+  if (!headerRow) return memberContacts;
+
+  const normalizedHeaders = headerRow.map(normalizeHeaderName);
+  const acctIdx = normalizedHeaders.indexOf('acct');
+  const firstNameIdx = normalizedHeaders.indexOf('firstname');
+  const lastNameIdx = normalizedHeaders.indexOf('last name');
+  const preferredNameIdx = normalizedHeaders.indexOf('preferred name');
+  const isEmailIdx = normalizedHeaders.indexOf('is email');
+  const isPostalIdx = normalizedHeaders.indexOf('is postal');
+  const emailIdx = normalizedHeaders.indexOf('email address');
+  const address1Idx = normalizedHeaders.indexOf('address1');
+  const address2Idx = normalizedHeaders.indexOf('address2');
+  const cityIdx = normalizedHeaders.indexOf('city');
+  const stateIdx = normalizedHeaders.indexOf('state name');
+  const postalCodeIdx = normalizedHeaders.indexOf('postal code');
+  const countryIdx = normalizedHeaders.indexOf('country');
+  
+  if (acctIdx === -1) return memberContacts;
+
+  dataRows.forEach(row => {
+    const acct = normalizeAccountId(row[acctIdx]);
+    if (!acct) return;
+
+    // Parse is_email and is_postal as 0 or 1
+    const isEmailValue = sanitizeCell(row, isEmailIdx);
+    const isEmail = isEmailValue === '1' || isEmailValue.toLowerCase() === 'true' || isEmailValue.toLowerCase() === 'yes' ? 1 : 0;
+    
+    const isPostalValue = sanitizeCell(row, isPostalIdx);
+    const isPostal = isPostalValue === '1' || isPostalValue.toLowerCase() === 'true' || isPostalValue.toLowerCase() === 'yes' ? 1 : 0;
+
+    memberContacts.push({
+      accountNumber: acct,
+      firstName: sanitizeCell(row, firstNameIdx),
+      lastName: sanitizeCell(row, lastNameIdx),
+      preferredName: sanitizeCell(row, preferredNameIdx),
+      isEmail,
+      isPostal,
+      email: sanitizeCell(row, emailIdx),
+      address1: sanitizeCell(row, address1Idx),
+      address2: sanitizeCell(row, address2Idx),
+      city: sanitizeCell(row, cityIdx),
+      state: sanitizeCell(row, stateIdx),
+      postalCode: sanitizeCell(row, postalCodeIdx),
+      country: sanitizeCell(row, countryIdx),
+    });
+  });
+
+  return memberContacts;
+}
+
+function findMemberContactHeaderRow(rows: unknown[][]): number {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row)) continue;
+    const normalized = row.map(normalizeHeaderName);
+    if (normalized[0] === 'acct' && normalized.includes('email address')) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+export interface ParseExcelResult {
+  players: PreCommitmentPlayer[];
+  memberContacts: MemberContactData[];
+}
+
 export function parseExcelFile(
   file: File,
   options: TransformOptions = DEFAULT_OPTIONS
@@ -126,6 +240,8 @@ export function parseExcelFile(
         let headerRow: string[] | null = null;
         let sessionHeader: string[] | null = null;
         let sessionRows: string[][] = [];
+        let memberContactHeader: string[] | null = null;
+        let memberContactRows: string[][] = [];
 
         for (const name of workbook.SheetNames) {
           const sheet = workbook.Sheets[name];
@@ -137,6 +253,16 @@ export function parseExcelFile(
             header: 1,
             defval: ''
           }) as unknown[][];
+
+          // Check if this is the Member Contact sheet
+          if (name.toLowerCase().includes('member contact') || name.toLowerCase().includes('contact')) {
+            const contactHeaderIndex = findMemberContactHeaderRow(allRows);
+            if (contactHeaderIndex !== -1) {
+              memberContactHeader = (allRows[contactHeaderIndex] as string[]).map(cell => String(cell));
+              memberContactRows = (allRows.slice(contactHeaderIndex + 1) as string[][]).filter(hasData);
+            }
+            continue;
+          }
 
           if (!primaryRows) {
             const headerIndex = findMainHeaderRow(allRows);
@@ -153,9 +279,90 @@ export function parseExcelFile(
               sessionRows = (allRows.slice(sessionHeaderIndex + 1) as string[][]).filter(hasData);
             }
           }
+        }
 
-          if (primaryRows && sessionHeader) {
-            break;
+        if (!primaryRows || !headerRow) {
+          throw new Error('Could not find header row with "Acct" or "Is Play" column');
+        }
+
+        const headers = headerRow.map(h => String(h).trim());
+        const rows = primaryRows.slice(1) as string[][];
+        const sessionMap = buildSessionMap(sessionHeader, sessionRows);
+        const emailMap = buildMemberContactMap(memberContactHeader, memberContactRows);
+
+        const csvRows: PreCommitmentCSVRow[] = rows.map(row => {
+          const csvRow: Record<string, string> = {};
+          headers.forEach((header, index) => {
+            csvRow[header] = row[index] ?? '';
+          });
+          return csvRow as PreCommitmentCSVRow;
+        });
+
+        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options, emailMap);
+        resolve(players);
+      } catch (error) {
+        console.error('Error parsing Excel file:', error);
+        reject(error);
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsBinaryString(file);
+  });
+}
+
+export function parseExcelFileWithMemberContacts(
+  file: File,
+  options: TransformOptions = DEFAULT_OPTIONS
+): Promise<ParseExcelResult> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        const workbook = XLSX.read(data, { type: 'binary' });
+
+        let primaryRows: string[][] | null = null;
+        let headerRow: string[] | null = null;
+        let sessionHeader: string[] | null = null;
+        let sessionRows: string[][] = [];
+        let memberContactHeader: string[] | null = null;
+        let memberContactRows: string[][] = [];
+
+        for (const name of workbook.SheetNames) {
+          const sheet = workbook.Sheets[name];
+          if (!sheet['!ref']) {
+            continue;
+          }
+
+          const allRows = XLSX.utils.sheet_to_json(sheet, {
+            header: 1,
+            defval: ''
+          }) as unknown[][];
+
+          // Check if this is the Member Contact sheet
+          if (name.toLowerCase().includes('member contact') || name.toLowerCase().includes('contact')) {
+            const contactHeaderIndex = findMemberContactHeaderRow(allRows);
+            if (contactHeaderIndex !== -1) {
+              memberContactHeader = (allRows[contactHeaderIndex] as string[]).map(cell => String(cell));
+              memberContactRows = (allRows.slice(contactHeaderIndex + 1) as string[][]).filter(hasData);
+            }
+            continue;
+          }
+
+          if (!primaryRows) {
+            const headerIndex = findMainHeaderRow(allRows);
+            if (headerIndex !== -1) {
+              headerRow = (allRows[headerIndex] as string[]).map(cell => String(cell));
+              primaryRows = (allRows.slice(headerIndex) as string[][]).filter(hasData);
+            }
+          }
+
+          if (!sessionHeader) {
+            const sessionHeaderIndex = findSessionHeaderRow(allRows);
+            if (sessionHeaderIndex !== -1) {
+              sessionHeader = (allRows[sessionHeaderIndex] as string[]).map(cell => String(cell));
+              sessionRows = (allRows.slice(sessionHeaderIndex + 1) as string[][]).filter(hasData);
+            }
           }
         }
 
@@ -166,6 +373,8 @@ export function parseExcelFile(
         const headers = headerRow.map(h => String(h).trim());
         const rows = primaryRows.slice(1) as string[][];
         const sessionMap = buildSessionMap(sessionHeader, sessionRows);
+        const emailMap = buildMemberContactMap(memberContactHeader, memberContactRows);
+        const memberContacts = buildMemberContactData(memberContactHeader, memberContactRows);
 
         const csvRows: PreCommitmentCSVRow[] = rows.map(row => {
           const csvRow: Record<string, string> = {};
@@ -175,8 +384,8 @@ export function parseExcelFile(
           return csvRow as PreCommitmentCSVRow;
         });
 
-        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options);
-        resolve(players);
+        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options, emailMap);
+        resolve({ players, memberContacts });
       } catch (error) {
         console.error('Error parsing Excel file:', error);
         reject(error);
@@ -230,7 +439,8 @@ export function parseCSVFile(
         const players = transformToPreCommitmentPlayers(
           result.data as unknown as PreCommitmentCSVRow[],
           new Map(),
-          options
+          options,
+          new Map() // CSV files don't have Member Contact sheet
         );
         resolve(players);
       } catch (error) {
@@ -245,7 +455,8 @@ export function parseCSVFile(
 function transformToPreCommitmentPlayers(
   csvRows: PreCommitmentCSVRow[],
   sessionMap: Map<string, PreCommitmentSessionSummary[]> = new Map(),
-  options: TransformOptions = DEFAULT_OPTIONS
+  options: TransformOptions = DEFAULT_OPTIONS,
+  emailMap: Map<string, string> = new Map()
 ): PreCommitmentPlayer[] {
   const effectiveOptions: TransformOptions = {
     ...DEFAULT_OPTIONS,
@@ -307,17 +518,29 @@ function transformToPreCommitmentPlayers(
       detectedPlayStatus = 'No Play';
     }
 
+    // Extract member information from template columns
+    const knownAs = (n['knownas'] ?? '').toString().trim();
+    const lastName = (n['lastname'] ?? '').toString().trim();
+    const add1 = (n['add1'] ?? '').toString().trim();
+    const add2 = (n['add2'] ?? '').toString().trim();
+    const suburbName = (n['suburbname'] ?? '').toString().trim();
+    const stateName = (n['statename'] ?? '').toString().trim();
+    const pcode = (n['pcode'] ?? '').toString().trim();
+    
+    // Get email from Member Contact sheet if available
+    const email = emailMap.get(acct) || '';
+
     const playerInfo: PlayerInfo = {
       playerAccount: acct,
       salutation: '',
-      firstName: '',
-      lastName: '',
-      email: '',
-      address1: '',
-      address2: '',
-      suburb: '',
-      state: '',
-      postCode: '',
+      firstName: knownAs, // KnownAs maps to firstName
+      lastName: lastName,
+      email: email,
+      address1: add1,
+      address2: add2,
+      suburb: suburbName,
+      state: stateName,
+      postCode: pcode,
       country: '',
       playerType: '',
       clubState: '',
@@ -355,7 +578,7 @@ function transformToPreCommitmentPlayers(
       sunStart: (n['sun start'] ?? '').toString(),
       sunEnd: (n['sun end'] ?? '').toString(),
       mins: (n['mins'] ?? '').toString(),
-      every: (n['every'] ?? '').toString(),
+      every: (n['every hour'] ?? n['every'] ?? '').toString(), // Support both "Every Hour" and "Every"
       hour: (n['hour'] ?? '').toString(),
       sessionSummaries: sessions.length ? [...sessions] : undefined,
     } as PreCommitmentPlayer;

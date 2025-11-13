@@ -7,8 +7,18 @@ export async function GET(request: NextRequest) {
     const workbook = XLSX.utils.book_new();
     
     // Define the template headers based on the PreCommitmentCSVRow interface
+    // Blue section: Member information
+    // Dark gray section: Budget and Time limits
+    // Light gray section: Schedule and activity
     const headers = [
       'Acct',
+      'KnownAs',
+      'LastName',
+      'Add1',
+      'Add2',
+      'SuburbName',
+      'StateName',
+      'Pcode',
       'Enrolled', 
       'Un Enrolled',
       'Status',
@@ -38,13 +48,22 @@ export async function GET(request: NextRequest) {
       'SUN End',
       'Mins',
       'Every',
-      'Hour'
+      'Hour',
+      'Total Amount Spent',
+      'Net Win/Loss'
     ];
 
     // Create sample data rows
     const sampleRows = [
       [
         '111',
+        'John',
+        'Smith',
+        '123 Main St',
+        '',
+        'Adelaide',
+        'SA',
+        '5000',
         '1',
         '',
         'Enrolled',
@@ -74,10 +93,19 @@ export async function GET(request: NextRequest) {
         '',
         '10',
         'Every',
-        '3'
+        '3',
+        '0',
+        '0'
       ],
       [
         '999',
+        'Jane',
+        'Doe',
+        '456 Oak Ave',
+        'Unit 2',
+        'Adelaide',
+        'SA',
+        '5000',
         '1',
         '',
         'Enrolled',
@@ -107,10 +135,19 @@ export async function GET(request: NextRequest) {
         '',
         '10',
         'Every',
-        '1'
+        '1',
+        '0',
+        '0'
       ],
       [
         '101',
+        'Bob',
+        'Johnson',
+        '789 Elm St',
+        '',
+        'Adelaide',
+        'SA',
+        '5000',
         '0',
         '1',
         'Un-Enrolled',
@@ -123,6 +160,7 @@ export async function GET(request: NextRequest) {
         '0',
         '0',
         '0',
+        '',
         '0.25',
         '0.3333333333333333',
         '0.5',
@@ -139,7 +177,8 @@ export async function GET(request: NextRequest) {
         '0.5',
         '5',
         'Every',
-        '1'
+        '0',
+        '0'
       ]
     ];
 
@@ -153,6 +192,13 @@ export async function GET(request: NextRequest) {
     // Set column widths
     const colWidths = [
       { wch: 8 },  // Acct
+      { wch: 12 }, // KnownAs
+      { wch: 12 }, // LastName
+      { wch: 15 }, // Add1
+      { wch: 15 }, // Add2
+      { wch: 12 }, // SuburbName
+      { wch: 10 }, // StateName
+      { wch: 8 },  // Pcode
       { wch: 10 }, // Enrolled
       { wch: 12 }, // Un Enrolled
       { wch: 10 }, // Status
@@ -182,7 +228,9 @@ export async function GET(request: NextRequest) {
       { wch: 10 }, // SUN End
       { wch: 8 },  // Mins
       { wch: 8 },  // Every
-      { wch: 8 }   // Hour
+      { wch: 8 },  // Hour
+      { wch: 18 }, // Total Amount Spent
+      { wch: 15 }  // Net Win/Loss
     ];
     
     worksheet['!cols'] = colWidths;
@@ -214,6 +262,50 @@ export async function GET(request: NextRequest) {
     ];
 
     XLSX.utils.book_append_sheet(workbook, sessionWorksheet, 'Session Summary');
+
+    // Member Contact Information Sheet
+    const memberContactHeaders = [
+      'Acct',
+      'Firstname',
+      'Last Name',
+      'Preferred Name',
+      'Is Email',
+      'Is Email Inactive',
+      'Email Address',
+      'Is Postal',
+      'Address1',
+      'Address2',
+      'City',
+      'State Name',
+      'Postal Code',
+      'Country'
+    ];
+
+    const memberContactSampleRows = [
+      ['111', 'John', 'Smith', 'Johnny', '1', '0', 'john.smith@example.com', '1', '123 Main St', '', 'Adelaide', 'SA', '5000', 'Australia'],
+      ['999', 'Jane', 'Doe', 'Jane', '1', '0', 'jane.doe@example.com', '1', '456 Oak Ave', 'Unit 2', 'Adelaide', 'SA', '5000', 'Australia'],
+      ['101', 'Bob', 'Johnson', 'Bobby', '0', '0', '', '1', '789 Elm St', '', 'Adelaide', 'SA', '5000', 'Australia']
+    ];
+
+    const memberContactWorksheet = XLSX.utils.aoa_to_sheet([memberContactHeaders, ...memberContactSampleRows]);
+    memberContactWorksheet['!cols'] = [
+      { wch: 8 },  // Acct
+      { wch: 12 }, // Firstname
+      { wch: 12 }, // Last Name
+      { wch: 15 }, // Preferred Name
+      { wch: 10 }, // Is Email
+      { wch: 15 }, // Is Email Inactive
+      { wch: 25 }, // Email Address
+      { wch: 10 }, // Is Postal
+      { wch: 20 }, // Address1
+      { wch: 20 }, // Address2
+      { wch: 15 }, // City
+      { wch: 12 }, // State Name
+      { wch: 12 }, // Postal Code
+      { wch: 12 }  // Country
+    ];
+
+    XLSX.utils.book_append_sheet(workbook, memberContactWorksheet, 'Member Contact');
     
     // Generate Excel file buffer
     const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });

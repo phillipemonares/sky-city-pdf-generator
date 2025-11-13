@@ -428,6 +428,8 @@ export interface Member {
   post_code: string;
   country: string;
   player_type: string;
+  is_email: number;
+  is_postal: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -462,7 +464,8 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
           `UPDATE members 
            SET title = ?, first_name = ?, last_name = ?, email = ?, 
                address = ?, suburb = ?, state = ?, post_code = ?, 
-               country = ?, player_type = ?, updated_at = NOW()
+               country = ?, player_type = ?, is_email = COALESCE(is_email, 0), 
+               is_postal = COALESCE(is_postal, 0), updated_at = NOW()
            WHERE account_number = ?`,
           [
             row.title || '',
@@ -484,8 +487,8 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
         await connection.execute(
           `INSERT INTO members 
            (id, account_number, title, first_name, last_name, email, 
-            address, suburb, state, post_code, country, player_type)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            address, suburb, state, post_code, country, player_type, is_email, is_postal)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
             normalizedAccount,
@@ -498,7 +501,9 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
             row.state || '',
             row.postCode || '',
             row.country || '',
-            row.playerType || ''
+            row.playerType || '',
+            0, // is_email default to 0 for activity statements
+            0  // is_postal default to 0 for activity statements
           ]
         );
         savedCount++;
@@ -547,6 +552,8 @@ export async function getMemberByAccount(accountNumber: string): Promise<Member 
       post_code: memberRow.post_code || '',
       country: memberRow.country || '',
       player_type: memberRow.player_type || '',
+      is_email: memberRow.is_email ?? 0,
+      is_postal: memberRow.is_postal ?? 0,
       created_at: memberRow.created_at,
       updated_at: memberRow.updated_at
     };
@@ -580,12 +587,122 @@ export async function getAllMembers(): Promise<Member[]> {
       post_code: row.post_code || '',
       country: row.country || '',
       player_type: row.player_type || '',
+      is_email: row.is_email ?? 0,
+      is_postal: row.is_postal ?? 0,
       created_at: row.created_at,
       updated_at: row.updated_at
     }));
   } catch (error) {
     console.error('Error getting all members:', error);
     throw error;
+  }
+}
+
+/**
+ * Save or update members from Member Contact sheet data
+ * Only saves unique members based on account number
+ * Returns the count of newly saved members
+ */
+export async function saveMembersFromMemberContact(
+  memberContacts: Array<{
+    accountNumber: string;
+    firstName: string;
+    lastName: string;
+    preferredName: string;
+    isEmail: number;
+    isPostal: number;
+    email: string;
+    address1: string;
+    address2: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country: string;
+  }>
+): Promise<number> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    let savedCount = 0;
+    
+    for (const contact of memberContacts) {
+      if (!contact.accountNumber) continue; // Skip rows without account number
+      
+      const normalizedAccount = normalizeAccount(contact.accountNumber);
+      
+      // Use preferredName if available, otherwise firstName
+      const displayName = contact.preferredName || contact.firstName;
+      
+      // Combine address1 and address2
+      const fullAddress = [contact.address1, contact.address2].filter(Boolean).join(' ').trim();
+      
+      // Check if member already exists
+      const [existing] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT id FROM members WHERE account_number = ?`,
+        [normalizedAccount]
+      );
+      
+      if (existing.length > 0) {
+        // Update existing member
+        await connection.execute(
+          `UPDATE members 
+           SET first_name = ?, last_name = ?, email = ?, 
+               address = ?, suburb = ?, state = ?, post_code = ?, 
+               country = ?, is_email = ?, is_postal = ?, updated_at = NOW()
+           WHERE account_number = ?`,
+          [
+            displayName,
+            contact.lastName || '',
+            contact.email || '',
+            fullAddress,
+            contact.city || '',
+            contact.state || '',
+            contact.postalCode || '',
+            contact.country || '',
+            contact.isEmail,
+            contact.isPostal,
+            normalizedAccount
+          ]
+        );
+      } else {
+        // Insert new member
+        const memberId = randomUUID();
+        await connection.execute(
+          `INSERT INTO members 
+           (id, account_number, title, first_name, last_name, email, 
+            address, suburb, state, post_code, country, player_type, is_email, is_postal)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            memberId,
+            normalizedAccount,
+            '', // title not in Member Contact sheet
+            displayName,
+            contact.lastName || '',
+            contact.email || '',
+            fullAddress,
+            contact.city || '',
+            contact.state || '',
+            contact.postalCode || '',
+            contact.country || '',
+            '', // player_type not in Member Contact sheet
+            contact.isEmail,
+            contact.isPostal
+          ]
+        );
+        savedCount++;
+      }
+    }
+    
+    await connection.commit();
+    return savedCount;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error saving members from Member Contact:', error);
+    throw error;
+  } finally {
+    connection.release();
   }
 }
 
@@ -654,6 +771,8 @@ export async function getMembersPaginated(
       post_code: row.post_code || '',
       country: row.country || '',
       player_type: row.player_type || '',
+      is_email: row.is_email ?? 0,
+      is_postal: row.is_postal ?? 0,
       created_at: row.created_at,
       updated_at: row.updated_at,
       latest_batch_id: row.latest_batch_id || null,
@@ -670,6 +789,38 @@ export async function getMembersPaginated(
   } catch (error) {
     console.error('Error getting paginated members:', error);
     throw error;
+  }
+}
+
+/**
+ * Delete members by their IDs
+ */
+export async function deleteMembers(memberIds: string[]): Promise<number> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    if (memberIds.length === 0) {
+      await connection.commit();
+      return 0;
+    }
+    
+    // Delete members by IDs
+    const placeholders = memberIds.map(() => '?').join(',');
+    const [result] = await connection.execute<mysql.ResultSetHeader>(
+      `DELETE FROM members WHERE id IN (${placeholders})`,
+      memberIds
+    );
+    
+    await connection.commit();
+    return result.affectedRows;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error deleting members:', error);
+    throw error;
+  } finally {
+    connection.release();
   }
 }
 

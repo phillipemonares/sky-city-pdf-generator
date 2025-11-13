@@ -565,13 +565,16 @@ export default function UploadInterface() {
         throw new Error(errorMessage);
       }
 
-      // Get the HTML content and create a blob URL
+      // Get the HTML content and display directly in new window
       const html = await response.text();
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      
-      // Open preview in new window with proper URL
-      window.open(url, '_blank');
+      const previewWindow = window.open('', '_blank');
+      if (previewWindow) {
+        // Use document.open() to clear any existing content
+        // This ensures it works even when navigating back in history
+        previewWindow.document.open();
+        previewWindow.document.write(html);
+        previewWindow.document.close();
+      }
 
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);
     } catch (error) {

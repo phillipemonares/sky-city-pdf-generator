@@ -165,6 +165,36 @@ export const formatExcelTime = (value: unknown): string | null => {
   return `${hh}:${mm}`;
 };
 
+export const formatExcelDate = (value: unknown): string => {
+  const raw = sanitizeText(value);
+  if (!raw) {
+    return '-';
+  }
+  // If it's already a date-like string (DD/MM/YYYY or similar), return as-is
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
+    return raw;
+  }
+  const numeric = Number(raw.replace(/,/g, ''));
+  if (Number.isNaN(numeric)) {
+    return raw;
+  }
+  // Excel serial date: 1 = January 1, 1900
+  // JavaScript Date: epoch is January 1, 1970
+  // Excel incorrectly treats 1900 as a leap year, so we need to account for that
+  // The difference between Excel epoch (1900-01-01) and JS epoch (1970-01-01) is approximately 25569 days
+  // But Excel has a bug: it treats 1900 as a leap year, so we subtract 1
+  const excelEpoch = new Date(1899, 11, 30); // December 30, 1899 (Excel's epoch - 1 day due to bug)
+  const daysSinceEpoch = Math.floor(numeric);
+  const date = new Date(excelEpoch);
+  date.setDate(date.getDate() + daysSinceEpoch);
+  
+  // Format as DD/MM/YYYY
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
 export const getQuarterStartDate = (quarter: number, year: number): string => {
   const startMonths = [1, 4, 7, 10];
   const month = startMonths[Math.max(0, Math.min(startMonths.length - 1, quarter - 1))] ?? 1;
