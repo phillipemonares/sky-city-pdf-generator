@@ -51,6 +51,11 @@ const hasRowData = (row: unknown[]): boolean =>
   Array.isArray(row) && row.some(cell => (cell ?? '').toString().trim() !== '');
 
 function mapRowToActivity(row: string[], headers: string[]): ActivityStatementRow {
+  // Debug: Log all headers to identify template columns
+  if (headers.length > 30) { // Only log for the first row to avoid spam
+    console.log('Available headers:', headers.filter(h => h && h.toLowerCase().includes('month')));
+  }
+  
   const record: ActivityStatementRow = {
     acct: '',
     title: '',
@@ -100,6 +105,56 @@ function mapRowToActivity(row: string[], headers: string[]): ActivityStatementRo
       return;
     }
     record[column.key] = row[index] ? String(row[index]).trim() : '';
+  });
+
+  // Look for template month name columns and prioritize them over regular month name columns
+  headers.forEach((header, index) => {
+    const normalized = normalizeHeader(header);
+    const cellValue = row[index] ? String(row[index]).trim() : '';
+    const lowerHeader = normalized.toLowerCase();
+    
+    // Check for various template month name column patterns
+    if (
+      // Pattern: "Month 1 template name" or "Month 1 Template Name"
+      (lowerHeader.includes('month 1') && lowerHeader.includes('template') && lowerHeader.includes('name')) ||
+      // Pattern: "Template Month 1 Name" 
+      (lowerHeader.includes('template') && lowerHeader.includes('month 1') && lowerHeader.includes('name')) ||
+      // Pattern: "M1 Template Name" or similar abbreviations
+      (lowerHeader.includes('m1') && lowerHeader.includes('template') && lowerHeader.includes('name')) ||
+      // Pattern: Any column with "1" and "template" that contains actual month names like "January", "February", etc.
+      (lowerHeader.includes('1') && lowerHeader.includes('template') && 
+       (cellValue === 'January' || cellValue === 'February' || cellValue === 'March' || 
+        cellValue === 'April' || cellValue === 'May' || cellValue === 'June' ||
+        cellValue === 'July' || cellValue === 'August' || cellValue === 'September' ||
+        cellValue === 'October' || cellValue === 'November' || cellValue === 'December'))
+    ) {
+      record.month1Name = cellValue;
+      console.log(`Found Month 1 template: "${normalized}" = "${cellValue}"`);
+    } else if (
+      (lowerHeader.includes('month 2') && lowerHeader.includes('template') && lowerHeader.includes('name')) ||
+      (lowerHeader.includes('template') && lowerHeader.includes('month 2') && lowerHeader.includes('name')) ||
+      (lowerHeader.includes('m2') && lowerHeader.includes('template') && lowerHeader.includes('name')) ||
+      (lowerHeader.includes('2') && lowerHeader.includes('template') && 
+       (cellValue === 'January' || cellValue === 'February' || cellValue === 'March' || 
+        cellValue === 'April' || cellValue === 'May' || cellValue === 'June' ||
+        cellValue === 'July' || cellValue === 'August' || cellValue === 'September' ||
+        cellValue === 'October' || cellValue === 'November' || cellValue === 'December'))
+    ) {
+      record.month2Name = cellValue;
+      console.log(`Found Month 2 template: "${normalized}" = "${cellValue}"`);
+    } else if (
+      (lowerHeader.includes('month 3') && lowerHeader.includes('template') && lowerHeader.includes('name')) ||
+      (lowerHeader.includes('template') && lowerHeader.includes('month 3') && lowerHeader.includes('name')) ||
+      (lowerHeader.includes('m3') && lowerHeader.includes('template') && lowerHeader.includes('name')) ||
+      (lowerHeader.includes('3') && lowerHeader.includes('template') && 
+       (cellValue === 'January' || cellValue === 'February' || cellValue === 'March' || 
+        cellValue === 'April' || cellValue === 'May' || cellValue === 'June' ||
+        cellValue === 'July' || cellValue === 'August' || cellValue === 'September' ||
+        cellValue === 'October' || cellValue === 'November' || cellValue === 'December'))
+    ) {
+      record.month3Name = cellValue;
+      console.log(`Found Month 3 template: "${normalized}" = "${cellValue}"`);
+    }
   });
 
   return record;

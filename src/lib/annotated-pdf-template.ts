@@ -118,7 +118,7 @@ export function generateAnnotatedHTML(
     : '';
 
   const preCommitmentSection = player.preCommitment
-    ? renderPreCommitmentPage(player.preCommitment, quarterlyData, salutationName, playHeaderDataUrl)
+    ? renderPreCommitmentPage(player.preCommitment, quarterlyData, salutationName, playHeaderDataUrl, player.activity)
     : '';
 
   // Only include cashless section if player.cashless exists and is truthy

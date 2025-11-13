@@ -5,6 +5,7 @@ import {
   sanitizeText,
   getQuarterEndDate,
   getQuarterStartDate,
+  getQuarterMonths,
   wrapNegativeValue,
 } from './pdf-shared';
 
@@ -129,9 +130,157 @@ type MonthlyRow = {
   minutes: string;
 };
 
-const buildMonthlyRows = (activity: ActivityStatementRow): MonthlyRow[] => ([
+const getStatementPeriod = (quarterlyData: QuarterlyData): { start: string; end: string } => {
+  // Use explicit statement period if provided
+  if (quarterlyData.statementPeriod?.startDate && quarterlyData.statementPeriod?.endDate) {
+    return {
+      start: quarterlyData.statementPeriod.startDate,
+      end: quarterlyData.statementPeriod.endDate,
+    };
+  }
+
+  // Fallback to quarter-based dates
+  return {
+    start: getQuarterStartDate(quarterlyData.quarter, quarterlyData.year),
+    end: getQuarterEndDate(quarterlyData.quarter, quarterlyData.year),
+  };
+};
+
+// Extract months from statement period dates (DD/MM/YYYY format)
+const getStatementPeriodMonths = (quarterlyData: QuarterlyData): { name: string; month: number }[] => {
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  const statementPeriod = getStatementPeriod(quarterlyData);
+  
+  // Parse start and end dates (DD/MM/YYYY format)
+  const parseDate = (dateStr: string): { month: number; year: number } | null => {
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10);
+      const year = parseInt(parts[2], 10);
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+        return { month, year };
+      }
+    }
+    return null;
+  };
+
+  const startDate = parseDate(statementPeriod.start);
+  const endDate = parseDate(statementPeriod.end);
+
+  if (!startDate || !endDate) {
+    // Fallback to quarter months if parsing fails
+    return getQuarterMonths(quarterlyData.quarter, quarterlyData.year);
+  }
+
+  // Get all months between start and end dates
+  const months: { name: string; month: number }[] = [];
+  let currentMonth = startDate.month;
+  let currentYear = startDate.year;
+  const endMonth = endDate.month;
+  const endYear = endDate.year;
+
+  while (
+    currentYear < endYear ||
+    (currentYear === endYear && currentMonth <= endMonth)
+  ) {
+    months.push({
+      name: monthNames[currentMonth - 1],
+      month: currentMonth
+    });
+
+    currentMonth++;
+    if (currentMonth > 12) {
+      currentMonth = 1;
+      currentYear++;
+    }
+
+    // Safety limit to prevent infinite loops
+    if (months.length > 12) break;
+  }
+
+  // Return up to 3 months (for quarterly statements)
+  return months.slice(0, 3);
+};
+
+const formatMonthName = (monthName: string, quarterlyData: QuarterlyData, monthIndex: number): string => {
+  if (!monthName || monthName.trim() === '') {
+    return '';
+  }
+  
+  // If it's already a proper month name (not a reference number), return as is
+  // This handles formats like "apr-25", "may-25", "jun-25" or full names like "April", "May", "June"
+  if (isNaN(Number(monthName.trim()))) {
+    // If it contains a month abbreviation, convert to full name for display
+    const normalized = monthName.trim().toLowerCase();
+    const monthPart = normalized.split(/[-_\/\s]/)[0];
+    
+    const monthAbbreviations: Record<string, string> = {
+      'jan': 'January', 'feb': 'February', 'mar': 'March', 'apr': 'April',
+      'may': 'May', 'jun': 'June', 'jul': 'July', 'aug': 'August',
+      'sep': 'September', 'oct': 'October', 'nov': 'November', 'dec': 'December'
+    };
+    
+    // If it's an abbreviation, convert to full name
+    if (monthAbbreviations[monthPart]) {
+      return monthAbbreviations[monthPart];
+    }
+    
+    // If it's already a full month name, capitalize it properly
+    const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
+      'july', 'august', 'september', 'october', 'november', 'december'];
+    const monthIdx = monthNames.findIndex(name => name === monthPart || name.startsWith(monthPart));
+    if (monthIdx >= 0) {
+      return monthNames[monthIdx].charAt(0).toUpperCase() + monthNames[monthIdx].slice(1);
+    }
+    
+    // Return as-is if we can't parse it
+    return monthName;
+  }
+  
+  // Use statement period months instead of quarter months
+  const statementMonths = getStatementPeriodMonths(quarterlyData);
+  const targetMonth = statementMonths[monthIndex - 1];
+  
+  return targetMonth ? targetMonth.name : '';
+};
+
+const getMonthNumber = (monthName: string): number | null => {
+  if (!monthName) return null;
+  
+  // Handle formats like "apr-25", "may-25", "jun-25" by extracting just the month part
+  const normalized = monthName.trim().toLowerCase();
+  // Remove year suffix if present (e.g., "apr-25" -> "apr")
+  const monthPart = normalized.split(/[-_\/\s]/)[0];
+  
+  const monthNames = [
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december'
+  ];
+  
+  const monthAbbreviations = [
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+    'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+  ];
+  
+  // Try full month name match first
+  let index = monthNames.findIndex(name => name === monthPart || name.startsWith(monthPart));
+  
+  // If no match, try abbreviation
+  if (index < 0) {
+    index = monthAbbreviations.findIndex(abbr => abbr === monthPart || monthPart.startsWith(abbr));
+  }
+  
+  return index >= 0 ? index + 1 : null;
+};
+
+const buildMonthlyRows = (activity: ActivityStatementRow, quarterlyData: QuarterlyData): MonthlyRow[] => ([
   {
-    name: activity.month1Name,
+    name: formatMonthName(activity.month1Name, quarterlyData, 1),
     totalBet: activity.month1TotalAmountBet,
     days: activity.month1NoDaysGambled,
     net: activity.month1NetAmountWonOrLost,
@@ -139,7 +288,7 @@ const buildMonthlyRows = (activity: ActivityStatementRow): MonthlyRow[] => ([
     minutes: activity.month1TimeSpentMinute,
   },
   {
-    name: activity.month2Name,
+    name: formatMonthName(activity.month2Name, quarterlyData, 2),
     totalBet: activity.month2TotalAmountBet,
     days: activity.month2NoDaysGambled,
     net: activity.month2NetAmountWonOrLost,
@@ -147,7 +296,7 @@ const buildMonthlyRows = (activity: ActivityStatementRow): MonthlyRow[] => ([
     minutes: activity.month2TimeSpentMinute,
   },
   {
-    name: activity.month3Name,
+    name: formatMonthName(activity.month3Name, quarterlyData, 3),
     totalBet: activity.month3TotalAmountBet,
     days: activity.month3NoDaysGambled,
     net: activity.month3NetAmountWonOrLost,
@@ -192,14 +341,29 @@ export function renderActivityPages(
     .trim();
   const fallbackSalutation = activity.firstName || memberName || 'Member';
   const salutationName = salutationOverride || fallbackSalutation;
-  const quarterStart = getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
-  const quarterEnd = getQuarterEndDate(quarterlyData.quarter, quarterlyData.year);
-  const monthRows = buildMonthlyRows(activity);
+  const statementPeriod = getStatementPeriod(quarterlyData);
+  const quarterStart = statementPeriod.start;
+  const quarterEnd = statementPeriod.end;
+  const monthRows = buildMonthlyRows(activity, quarterlyData);
   const addressLines = buildAddressLines(activity);
-  const totalHours = sanitizeNumber(activity.totalTimeSpentHour);
-  const totalMinutes = sanitizeNumber(activity.totalTimeSpentMinute);
   const currencyCell = (value: unknown) => wrapNegativeValue(formatCurrency(value));
   const numericCell = (value: unknown) => wrapNegativeValue(sanitizeNumber(value));
+  
+  // Format time display: show "-" if both hours and minutes are empty/dash
+  const formatTimeDisplay = (hoursRaw: unknown, minutesRaw: unknown): string => {
+    const hoursStr = String(hoursRaw ?? '').trim();
+    const minutesStr = String(minutesRaw ?? '').trim();
+    const hoursEmpty = !hoursStr || hoursStr === '-';
+    const minutesEmpty = !minutesStr || minutesStr === '-';
+    
+    if (hoursEmpty && minutesEmpty) {
+      return '-';
+    }
+    
+    const hours = sanitizeNumber(hoursRaw);
+    const minutes = sanitizeNumber(minutesRaw);
+    return `${hours} hour(s) ${minutes} minute(s)`;
+  };
 
   const monthlyRowsMarkup = monthRows.length
     ? monthRows
@@ -314,7 +478,7 @@ export function renderActivityPages(
         </tr>
         <tr>
           <td>The total amount of time your loyalty card was used during the period:</td>
-          <td class="value">${numericCell(totalHours)} hour(s) ${numericCell(totalMinutes)} minute(s)</td>
+          <td class="value">${formatTimeDisplay(activity.totalTimeSpentHour, activity.totalTimeSpentMinute)}</td>
         </tr>
       </table>
     </div>

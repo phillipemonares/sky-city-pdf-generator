@@ -299,8 +299,8 @@ export function generatePDFHTML(quarterlyData: QuarterlyData, playerData: Player
 
 function generateCoverLetter(quarterlyData: QuarterlyData, playerData: PlayerData, logoDataUrl?: string): string {
   const { playerInfo } = playerData;
-  const quarterStart = getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
-  const quarterEnd = getQuarterEndDate(quarterlyData.quarter, quarterlyData.year);
+  const quarterStart = quarterlyData.statementPeriod?.startDate || getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
+  const quarterEnd = quarterlyData.statementPeriod?.endDate || getQuarterEndDate(quarterlyData.quarter, quarterlyData.year);
   
   return `
     <div class="page">
@@ -357,8 +357,8 @@ function generateCoverLetter(quarterlyData: QuarterlyData, playerData: PlayerDat
 
 function generateActivityStatement(quarterlyData: QuarterlyData, playerData: PlayerData, logoDataUrl?: string): string {
   const { playerInfo, monthlyTotals, dailyTransactions } = playerData;
-  const quarterStart = getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
-  const quarterEnd = getQuarterEndDate(quarterlyData.quarter, quarterlyData.year);
+  const quarterStart = quarterlyData.statementPeriod?.startDate || getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
+  const quarterEnd = quarterlyData.statementPeriod?.endDate || getQuarterEndDate(quarterlyData.quarter, quarterlyData.year);
   const quarterMonths = getQuarterMonths(quarterlyData.quarter, quarterlyData.year);
   
   return `

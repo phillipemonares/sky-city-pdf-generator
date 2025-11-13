@@ -47,6 +47,10 @@ export interface QuarterlyData {
   year: number;
   players: PlayerData[];
   monthlyBreakdown: { month: number; year: number; players: PlayerData[] }[];
+  statementPeriod?: {
+    startDate: string; // Format: DD/MM/YYYY
+    endDate: string;   // Format: DD/MM/YYYY
+  };
 }
 
 export interface CSVRow {

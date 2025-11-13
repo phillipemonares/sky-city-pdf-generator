@@ -77,6 +77,8 @@ export default function UploadInterface() {
   const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
 
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
     if (!activityUpload || !preCommitmentUpload || !quarterlyData) {
@@ -110,6 +112,27 @@ export default function UploadInterface() {
   useEffect(() => {
     loadPreviousBatches();
   }, []);
+
+  // Update quarterlyData when statement period dates change
+  useEffect(() => {
+    if (quarterlyData && startDate && endDate) {
+      const formatDateToDDMMYYYY = (dateStr: string): string => {
+        const date = new Date(dateStr);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
+      };
+
+      setQuarterlyData({
+        ...quarterlyData,
+        statementPeriod: {
+          startDate: formatDateToDDMMYYYY(startDate),
+          endDate: formatDateToDDMMYYYY(endDate),
+        },
+      });
+    }
+  }, [startDate, endDate]);
 
   const loadPreviousBatches = async () => {
     try {
@@ -162,6 +185,18 @@ export default function UploadInterface() {
 
         if (data.quarterlyData) {
           setQuarterlyData(data.quarterlyData);
+
+          // Restore statement period dates if they exist
+          if (data.quarterlyData.statementPeriod) {
+            const formatDateToYYYYMMDD = (dateStr: string): string => {
+              // Convert DD/MM/YYYY to YYYY-MM-DD
+              const [day, month, year] = dateStr.split('/');
+              return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+            };
+
+            setStartDate(formatDateToYYYYMMDD(data.quarterlyData.statementPeriod.startDate));
+            setEndDate(formatDateToYYYYMMDD(data.quarterlyData.statementPeriod.endDate));
+          }
         }
 
         setGenerationStatus(`Loaded batch: Q${data.batch.quarter} ${data.batch.year} with ${data.batch.total_accounts} accounts`);
@@ -517,6 +552,11 @@ export default function UploadInterface() {
       return;
     }
 
+    if (!startDate || !endDate) {
+      alert('Please set both start and end dates for the statement period before generating a preview');
+      return;
+    }
+
     const previewAccount = account ?? annotatedPlayers[0]?.account ?? 'ALL';
     const accountLabel = account
       ? `account ${account}`
@@ -588,27 +628,18 @@ export default function UploadInterface() {
         throw new Error('Invalid or empty HTML response from preview API');
       }
       
-      // Use a more reliable approach to open preview window
-      const previewWindow = window.open('about:blank', `preview_${Date.now()}`, 'width=1200,height=800,scrollbars=yes,resizable=yes');
+      // Always use '_blank' to ensure it opens in a new tab (like target="_blank")
+      const previewWindow = window.open('about:blank', '_blank');
+      
       if (previewWindow) {
-        // Wait a moment for the window to fully load
-        setTimeout(() => {
-          previewWindow.document.open();
-          previewWindow.document.write(html);
-          previewWindow.document.close();
-          previewWindow.focus();
-        }, 100);
+        // Write HTML content to the new window
+        previewWindow.document.open();
+        previewWindow.document.write(html);
+        previewWindow.document.close();
+        previewWindow.focus();
       } else {
-        // Fallback: try to open in same tab if popup is blocked
-        const blob = new Blob([html], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        const fallbackWindow = window.open(url, '_blank');
-        if (!fallbackWindow) {
-          // Last resort: show in current tab
-          document.open();
-          document.write(html);
-          document.close();
-        }
+        // Fallback if popup is blocked
+        alert('Popup blocked. Please allow popups for this site to preview PDFs.');
       }
 
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);
@@ -634,6 +665,11 @@ export default function UploadInterface() {
 
     if (!quarterlyData || quarterlyData.players.length === 0) {
       alert('Upload the three monthly cashless CSV files before generating PDFs');
+      return;
+    }
+
+    if (!startDate || !endDate) {
+      alert('Please set both start and end dates for the statement period before generating PDFs');
       return;
     }
 
@@ -1073,26 +1109,24 @@ export default function UploadInterface() {
               )}
             </div>
           </div>
-        </div>
 
-        {/* Uploaded Files */}
-        {uploadedFiles.length > 0 && (
-          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 className="text-xl font-semibold mb-4">Uploaded Files</h2>
-            <div className="space-y-4">
-              {uploadedFiles.map((fileData, index) => (
-                <div key={index} className="border rounded-lg p-4">
-                  <div className="flex justify-between items-start">
+          {/* Uploaded Files */}
+          {uploadedFiles.length > 0 && (
+            <div className="mt-4">
+              <h3 className="text-sm font-semibold mb-3 text-gray-700">Uploaded Files</h3>
+              <div className="grid grid-cols-3 gap-3">
+                {uploadedFiles.map((fileData, index) => (
+                  <div key={index} className="border rounded-lg p-3 flex flex-col justify-between min-h-[120px]">
                     <div>
-                      <h3 className="font-medium">{fileData.file.name}</h3>
-                      <p className="text-sm text-gray-600">
+                      <h4 className="font-medium text-sm mb-1 truncate" title={fileData.file.name}>{fileData.file.name}</h4>
+                      <p className="text-xs text-gray-600">
                         Month: {fileData.month}, Year: {fileData.year}
                       </p>
-                      <p className="text-sm text-gray-600">
+                      <p className="text-xs text-gray-600">
                         Players: {fileData.data.length}
                       </p>
                       {fileData.errors.length > 0 && (
-                        <div className="text-red-600 text-sm mt-2">
+                        <div className="text-red-600 text-xs mt-1">
                           <p>Errors:</p>
                           <ul className="list-disc list-inside">
                             {fileData.errors.map((error, i) => (
@@ -1104,22 +1138,22 @@ export default function UploadInterface() {
                     </div>
                     <button
                       onClick={() => removeFile(index)}
-                      className="text-red-600 hover:text-red-800"
+                      className="text-red-600 hover:text-red-800 text-xs mt-2 self-start"
                     >
                       Remove
                     </button>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Quarterly Data Summary */}
         {quarterlyData && (
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
             <h2 className="text-xl font-semibold mb-4">Quarterly Summary</h2>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
                 <p className="text-sm text-gray-600">Quarter</p>
                 <p className="text-lg font-medium">Q{quarterlyData.quarter} {quarterlyData.year}</p>
@@ -1128,6 +1162,51 @@ export default function UploadInterface() {
                 <p className="text-sm text-gray-600">Total Players</p>
                 <p className="text-lg font-medium">{annotatedPlayers.length}</p>
               </div>
+            </div>
+
+            {/* Statement Period Inputs */}
+            <div className="border-t pt-4">
+              <h3 className="text-lg font-semibold mb-4">Statement Period</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    id="startDate"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    id="endDate"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              {quarterlyData.statementPeriod && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Statement Period:</strong> {quarterlyData.statementPeriod.startDate} – {quarterlyData.statementPeriod.endDate}
+                  </p>
+                </div>
+              )}
+              {(!startDate || !endDate) && (
+                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm text-yellow-800">
+                    ⚠ Please set both start and end dates for the statement period
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

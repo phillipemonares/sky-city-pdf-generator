@@ -460,14 +460,18 @@ export default function NoPlayPage() {
 
       const html = await response.text();
       
-      // Open preview in new window
-      const previewWindow = window.open('', '_blank');
+      // Always use '_blank' to ensure it opens in a new tab (like target="_blank")
+      const previewWindow = window.open('about:blank', '_blank');
+      
       if (previewWindow) {
-        // Use document.open() to clear any existing content
-        // This ensures it works even when navigating back in history
+        // Write HTML content to the new window
         previewWindow.document.open();
         previewWindow.document.write(html);
         previewWindow.document.close();
+        previewWindow.focus();
+      } else {
+        // Fallback if popup is blocked
+        alert('Popup blocked. Please allow popups for this site to preview PDFs.');
       }
 
       setGenerationStatus('Preview generated successfully!');

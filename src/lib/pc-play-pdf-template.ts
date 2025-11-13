@@ -1,4 +1,4 @@
-import { PreCommitmentPlayer, QuarterlyData } from '@/types/player-data';
+import { ActivityStatementRow, PreCommitmentPlayer, QuarterlyData } from '@/types/player-data';
 import {
   formatCurrency,
   formatExcelDate,
@@ -6,6 +6,7 @@ import {
   formatUnitValue,
   getQuarterEndDate,
   getQuarterStartDate,
+  getQuarterMonths,
   sanitizeNumber,
   sanitizeText,
   wrapNegativeValue,
@@ -184,15 +185,104 @@ const buildPreCommitmentRules = (player: PreCommitmentPlayer): string[] => {
   return rules;
 };
 
+const getMonthNumber = (monthName: string): number | null => {
+  if (!monthName) return null;
+  
+  // Handle formats like "apr-25", "may-25", "jun-25" by extracting just the month part
+  const normalized = monthName.trim().toLowerCase();
+  // Remove year suffix if present (e.g., "apr-25" -> "apr")
+  const monthPart = normalized.split(/[-_\/\s]/)[0];
+  
+  const monthNames = [
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december'
+  ];
+  
+  const monthAbbreviations = [
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+    'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+  ];
+  
+  // Try full month name match first
+  let index = monthNames.findIndex(name => name === monthPart || name.startsWith(monthPart));
+  
+  // If no match, try abbreviation
+  if (index < 0) {
+    index = monthAbbreviations.findIndex(abbr => abbr === monthPart || monthPart.startsWith(abbr));
+  }
+  
+  return index >= 0 ? index + 1 : null;
+};
+
+const formatMonthName = (monthName: string, quarterlyData: QuarterlyData, monthIndex: number): string => {
+  if (!monthName || monthName.trim() === '') {
+    return '';
+  }
+  
+  // If it's already a proper month name (not a reference number), return as is
+  // This handles formats like "apr-25", "may-25", "jun-25" or full names like "April", "May", "June"
+  if (isNaN(Number(monthName.trim()))) {
+    // If it contains a month abbreviation, convert to full name for display
+    const normalized = monthName.trim().toLowerCase();
+    const monthPart = normalized.split(/[-_\/\s]/)[0];
+    
+    const monthAbbreviations: Record<string, string> = {
+      'jan': 'January', 'feb': 'February', 'mar': 'March', 'apr': 'April',
+      'may': 'May', 'jun': 'June', 'jul': 'July', 'aug': 'August',
+      'sep': 'September', 'oct': 'October', 'nov': 'November', 'dec': 'December'
+    };
+    
+    // If it's an abbreviation, convert to full name
+    if (monthAbbreviations[monthPart]) {
+      return monthAbbreviations[monthPart];
+    }
+    
+    // If it's already a full month name, capitalize it properly
+    const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
+      'july', 'august', 'september', 'october', 'november', 'december'];
+    const monthIdx = monthNames.findIndex(name => name === monthPart || name.startsWith(monthPart));
+    if (monthIdx >= 0) {
+      return monthNames[monthIdx].charAt(0).toUpperCase() + monthNames[monthIdx].slice(1);
+    }
+    
+    // Return as-is if we can't parse it
+    return monthName;
+  }
+  
+  // Use the existing getQuarterMonths function to get proper month names
+  const quarterMonths = getQuarterMonths(quarterlyData.quarter, quarterlyData.year);
+  const targetMonth = quarterMonths[monthIndex - 1];
+  
+  return targetMonth ? targetMonth.name : '';
+};
+
+const getStatementPeriod = (quarterlyData: QuarterlyData): { start: string; end: string } => {
+  // Use explicit statement period if provided
+  if (quarterlyData.statementPeriod?.startDate && quarterlyData.statementPeriod?.endDate) {
+    return {
+      start: quarterlyData.statementPeriod.startDate,
+      end: quarterlyData.statementPeriod.endDate,
+    };
+  }
+
+  // Fallback to quarter-based dates
+  return {
+    start: getQuarterStartDate(quarterlyData.quarter, quarterlyData.year),
+    end: getQuarterEndDate(quarterlyData.quarter, quarterlyData.year),
+  };
+};
+
 export function renderPreCommitmentPage(
   preCommitment: PreCommitmentPlayer,
   quarterlyData: QuarterlyData,
   salutationOverride?: string,
-  playHeaderDataUrl?: string
+  playHeaderDataUrl?: string,
+  activity?: ActivityStatementRow
 ): string {
   const { playerInfo } = preCommitment;
-  const quarterStart = getQuarterStartDate(quarterlyData.quarter, quarterlyData.year);
-  const quarterEnd = getQuarterEndDate(quarterlyData.quarter, quarterlyData.year);
+  const statementPeriod = getStatementPeriod(quarterlyData);
+  const quarterStart = statementPeriod.start;
+  const quarterEnd = statementPeriod.end;
   const fallbackDisplayName = [playerInfo.firstName, playerInfo.lastName]
     .filter(Boolean)
     .join(' ')
@@ -257,7 +347,8 @@ export function renderPreCommitmentPage(
     <p><strong>Number of Breaches:</strong> ${breaches}</p>
 
     <div class="precommitment-section">
-      <h4>Daily Amounts Won/Lost During the Period:</h4>
+      <h4>Statement Period: ${quarterStart} to ${quarterEnd}</h4>
+      <h4 style="margin-top: 15px;">Daily Amounts Won/Lost During the Period:</h4>
       <table class="precommitment-table">
         <thead>
           <tr>
@@ -277,6 +368,10 @@ export function renderPreCommitmentPage(
   ${hasNextPageRows && nextPageRows ? `
   <div class="page-break"></div>
   <div class="session-page">
+    <div class="session-title">Daily Amounts Won/Lost During the Period</div>
+    <div style="margin-bottom: 15px;">
+      <strong>Statement Period:</strong> ${quarterStart} to ${quarterEnd}
+    </div>
     <div style="flex: 1;">
       <table class="precommitment-table">
         <thead>
