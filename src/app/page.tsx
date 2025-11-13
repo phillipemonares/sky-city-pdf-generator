@@ -571,14 +571,11 @@ export default function UploadInterface() {
       }
       
       const previewUrl = `/api/preview-batch-pdf?batchId=${encodeURIComponent(batchId)}${account ? `&account=${encodeURIComponent(account)}` : ''}`;
-      console.log('Preview URL:', previewUrl);
       
       const response = await fetch(previewUrl);
 
       if (!response.ok) {
-        console.error('Preview API error:', response.status, response.statusText);
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        console.error('Preview API error data:', errorData);
         const errorMessage = errorData.error || `HTTP ${response.status}: ${response.statusText}`;
         throw new Error(errorMessage);
       }
@@ -591,18 +588,27 @@ export default function UploadInterface() {
         throw new Error('Invalid or empty HTML response from preview API');
       }
       
-      const previewWindow = window.open('', '_blank');
+      // Use a more reliable approach to open preview window
+      const previewWindow = window.open('about:blank', `preview_${Date.now()}`, 'width=1200,height=800,scrollbars=yes,resizable=yes');
       if (previewWindow) {
-        // Use document.open() to clear any existing content
-        // This ensures it works even when navigating back in history
-        previewWindow.document.open();
-        previewWindow.document.write(html);
-        previewWindow.document.close();
-        
-        // Ensure the window is focused
-        previewWindow.focus();
+        // Wait a moment for the window to fully load
+        setTimeout(() => {
+          previewWindow.document.open();
+          previewWindow.document.write(html);
+          previewWindow.document.close();
+          previewWindow.focus();
+        }, 100);
       } else {
-        throw new Error('Failed to open preview window. Please check popup blocker settings.');
+        // Fallback: try to open in same tab if popup is blocked
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const fallbackWindow = window.open(url, '_blank');
+        if (!fallbackWindow) {
+          // Last resort: show in current tab
+          document.open();
+          document.write(html);
+          document.close();
+        }
       }
 
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);
