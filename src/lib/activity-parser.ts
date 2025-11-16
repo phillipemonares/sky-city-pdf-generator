@@ -51,11 +51,6 @@ const hasRowData = (row: unknown[]): boolean =>
   Array.isArray(row) && row.some(cell => (cell ?? '').toString().trim() !== '');
 
 function mapRowToActivity(row: string[], headers: string[]): ActivityStatementRow {
-  // Debug: Log all headers to identify template columns
-  if (headers.length > 30) { // Only log for the first row to avoid spam
-    console.log('Available headers:', headers.filter(h => h && h.toLowerCase().includes('month')));
-  }
-  
   const record: ActivityStatementRow = {
     acct: '',
     title: '',

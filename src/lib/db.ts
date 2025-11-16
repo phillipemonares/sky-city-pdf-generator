@@ -23,6 +23,8 @@ export interface GenerationBatch {
   year: number;
   generation_date: Date;
   total_accounts: number;
+  start_date: Date | null;
+  end_date: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -41,12 +43,15 @@ export interface MatchedAccount {
 
 /**
  * Save a generation batch with matched accounts to the database
+ * Uses quarterly_user_statements table (one row per user)
  */
 export async function saveGenerationBatch(
   quarter: number,
   year: number,
   annotatedPlayers: AnnotatedStatementPlayer[],
-  quarterlyData: QuarterlyData
+  quarterlyData: QuarterlyData,
+  startDate?: Date | null,
+  endDate?: Date | null
 ): Promise<string> {
   const connection = await pool.getConnection();
   
@@ -57,35 +62,79 @@ export async function saveGenerationBatch(
     const batchId = randomUUID();
     const generationDate = new Date();
 
+    // Extract dates from quarterlyData.statementPeriod if not provided
+    let startDateValue = startDate;
+    let endDateValue = endDate;
+    
+    if (!startDateValue && quarterlyData.statementPeriod?.startDate) {
+      // Parse DD/MM/YYYY format
+      const [day, month, yearStr] = quarterlyData.statementPeriod.startDate.split('/');
+      if (day && month && yearStr) {
+        startDateValue = new Date(parseInt(yearStr), parseInt(month) - 1, parseInt(day));
+      }
+    }
+    
+    if (!endDateValue && quarterlyData.statementPeriod?.endDate) {
+      // Parse DD/MM/YYYY format
+      const [day, month, yearStr] = quarterlyData.statementPeriod.endDate.split('/');
+      if (day && month && yearStr) {
+        endDateValue = new Date(parseInt(yearStr), parseInt(month) - 1, parseInt(day));
+      }
+    }
+
     // Insert generation batch
-    await connection.execute(
-      `INSERT INTO generation_batches (id, quarter, year, generation_date, total_accounts)
-       VALUES (?, ?, ?, ?, ?)`,
-      [batchId, quarter, year, generationDate, annotatedPlayers.length]
-    );
-
-    // Insert matched accounts
-    for (const player of annotatedPlayers) {
-      const accountId = randomUUID();
-      const accountDataJson = JSON.stringify({
-        ...player,
-        quarterlyData: quarterlyData, // Include quarterly data for regeneration
-      });
-
+    try {
       await connection.execute(
-        `INSERT INTO matched_accounts 
-         (id, batch_id, account_number, account_data, has_activity, has_pre_commitment, has_cashless)
+        `INSERT INTO generation_batches (id, quarter, year, generation_date, total_accounts, start_date, end_date)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          accountId,
-          batchId,
-          player.account,
-          accountDataJson,
-          Boolean(player.activity),
-          Boolean(player.preCommitment),
-          Boolean(player.cashless),
-        ]
+        [batchId, quarter, year, generationDate, annotatedPlayers.length, startDateValue, endDateValue]
       );
+    } catch (error: any) {
+      // If start_date/end_date columns don't exist, insert without them
+      if (error.code === 'ER_BAD_FIELD_ERROR') {
+        await connection.execute(
+          `INSERT INTO generation_batches (id, quarter, year, generation_date, total_accounts)
+           VALUES (?, ?, ?, ?, ?)`,
+          [batchId, quarter, year, generationDate, annotatedPlayers.length]
+        );
+      } else {
+        throw error;
+      }
+    }
+
+    // Insert user statements using batch inserts for performance (23k+ rows)
+    // Process in chunks of 1000 to avoid hitting MySQL max_allowed_packet limit
+    const chunkSize = 1000;
+    const totalPlayers = annotatedPlayers.length;
+    
+    for (let i = 0; i < totalPlayers; i += chunkSize) {
+      const chunk = annotatedPlayers.slice(i, i + chunkSize);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      
+      for (const player of chunk) {
+        const statementId = randomUUID();
+        
+        // Structure data per user: activity_statement, pre_commitment, cashless_statement
+        const userData = {
+          activity_statement: player.activity || null,
+          pre_commitment: player.preCommitment || null,
+          cashless_statement: player.cashless || null,
+          quarterlyData: quarterlyData, // Include quarterly data for regeneration
+        };
+        
+        const dataJson = JSON.stringify(userData);
+        
+        values.push(statementId, batchId, player.account, dataJson);
+        placeholders.push('(?, ?, ?, ?)');
+      }
+      
+      // Execute batch insert
+      const sql = `INSERT INTO quarterly_user_statements 
+                   (id, batch_id, account_number, data)
+                   VALUES ${placeholders.join(', ')}`;
+      
+      await connection.execute(sql, values);
     }
 
     await connection.commit();
@@ -105,7 +154,7 @@ export async function saveGenerationBatch(
 export async function getAllBatches(): Promise<GenerationBatch[]> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, quarter, year, generation_date, total_accounts, created_at, updated_at
+      `SELECT id, quarter, year, generation_date, total_accounts, start_date, end_date, created_at, updated_at
        FROM generation_batches
        ORDER BY generation_date DESC`
     );
@@ -116,6 +165,8 @@ export async function getAllBatches(): Promise<GenerationBatch[]> {
       year: row.year,
       generation_date: new Date(row.generation_date),
       total_accounts: row.total_accounts,
+      start_date: row.start_date ? new Date(row.start_date) : null,
+      end_date: row.end_date ? new Date(row.end_date) : null,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     }));
@@ -131,7 +182,7 @@ export async function getAllBatches(): Promise<GenerationBatch[]> {
 export async function getBatchById(batchId: string): Promise<GenerationBatch | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, quarter, year, generation_date, total_accounts, created_at, updated_at
+      `SELECT id, quarter, year, generation_date, total_accounts, start_date, end_date, created_at, updated_at
        FROM generation_batches
        WHERE id = ?`,
       [batchId]
@@ -148,6 +199,8 @@ export async function getBatchById(batchId: string): Promise<GenerationBatch | n
       year: row.year,
       generation_date: new Date(row.generation_date),
       total_accounts: row.total_accounts,
+      start_date: row.start_date ? new Date(row.start_date) : null,
+      end_date: row.end_date ? new Date(row.end_date) : null,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -159,29 +212,47 @@ export async function getBatchById(batchId: string): Promise<GenerationBatch | n
 
 /**
  * Get all matched accounts for a specific batch
+ * Reads from quarterly_user_statements and reconstructs AnnotatedStatementPlayer format
  */
 export async function getMatchedAccountsByBatch(batchId: string): Promise<MatchedAccount[]> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, batch_id, account_number, account_data, has_activity, 
-              has_pre_commitment, has_cashless, created_at, updated_at
-       FROM matched_accounts
+      `SELECT id, batch_id, account_number, data, created_at, updated_at
+       FROM quarterly_user_statements
        WHERE batch_id = ?
        ORDER BY account_number`,
       [batchId]
     );
 
-    return rows.map(row => ({
-      id: row.id,
-      batch_id: row.batch_id,
-      account_number: row.account_number,
-      account_data: JSON.parse(row.account_data) as AnnotatedStatementPlayer,
-      has_activity: Boolean(row.has_activity),
-      has_pre_commitment: Boolean(row.has_pre_commitment),
-      has_cashless: Boolean(row.has_cashless),
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
-    }));
+    return rows.map(row => {
+      const userData = JSON.parse(row.data) as {
+        activity_statement?: ActivityStatementRow;
+        pre_commitment?: PreCommitmentPlayer;
+        cashless_statement?: any;
+        quarterlyData?: QuarterlyData;
+      };
+      
+      // Reconstruct AnnotatedStatementPlayer format for backward compatibility
+      const accountData: AnnotatedStatementPlayer = {
+        account: row.account_number,
+        activity: userData.activity_statement || undefined,
+        preCommitment: userData.pre_commitment || undefined,
+        cashless: userData.cashless_statement || undefined,
+        quarterlyData: userData.quarterlyData,
+      };
+
+      return {
+        id: row.id,
+        batch_id: row.batch_id,
+        account_number: row.account_number,
+        account_data: accountData,
+        has_activity: Boolean(userData.activity_statement),
+        has_pre_commitment: Boolean(userData.pre_commitment),
+        has_cashless: Boolean(userData.cashless_statement),
+        created_at: new Date(row.created_at),
+        updated_at: new Date(row.updated_at),
+      };
+    });
   } catch (error) {
     console.error('Error fetching matched accounts:', error);
     throw error;
@@ -190,13 +261,13 @@ export async function getMatchedAccountsByBatch(batchId: string): Promise<Matche
 
 /**
  * Get a specific account from a batch (optimized for preview)
+ * Reads from quarterly_user_statements and reconstructs AnnotatedStatementPlayer format
  */
 export async function getAccountFromBatch(batchId: string, accountNumber: string): Promise<MatchedAccount | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, batch_id, account_number, account_data, has_activity, 
-              has_pre_commitment, has_cashless, created_at, updated_at
-       FROM matched_accounts
+      `SELECT id, batch_id, account_number, data, created_at, updated_at
+       FROM quarterly_user_statements
        WHERE batch_id = ? AND account_number = ?
        LIMIT 1`,
       [batchId, accountNumber]
@@ -207,14 +278,30 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
     }
 
     const row = rows[0];
+    const userData = JSON.parse(row.data) as {
+      activity_statement?: ActivityStatementRow;
+      pre_commitment?: PreCommitmentPlayer;
+      cashless_statement?: any;
+      quarterlyData?: QuarterlyData;
+    };
+    
+    // Reconstruct AnnotatedStatementPlayer format for backward compatibility
+    const accountData: AnnotatedStatementPlayer = {
+      account: row.account_number,
+      activity: userData.activity_statement || undefined,
+      preCommitment: userData.pre_commitment || undefined,
+      cashless: userData.cashless_statement || undefined,
+      quarterlyData: userData.quarterlyData,
+    };
+
     return {
       id: row.id,
       batch_id: row.batch_id,
       account_number: row.account_number,
-      account_data: JSON.parse(row.account_data) as AnnotatedStatementPlayer,
-      has_activity: Boolean(row.has_activity),
-      has_pre_commitment: Boolean(row.has_pre_commitment),
-      has_cashless: Boolean(row.has_cashless),
+      account_data: accountData,
+      has_activity: Boolean(userData.activity_statement),
+      has_pre_commitment: Boolean(userData.pre_commitment),
+      has_cashless: Boolean(userData.cashless_statement),
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -226,12 +313,13 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
 
 /**
  * Get quarterly data from any account in the batch (for preview)
+ * Reads from quarterly_user_statements
  */
 export async function getQuarterlyDataFromBatch(batchId: string): Promise<QuarterlyData | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT account_data
-       FROM matched_accounts
+      `SELECT data
+       FROM quarterly_user_statements
        WHERE batch_id = ?
        LIMIT 1`,
       [batchId]
@@ -241,8 +329,10 @@ export async function getQuarterlyDataFromBatch(batchId: string): Promise<Quarte
       return null;
     }
 
-    const accountData = JSON.parse(rows[0].account_data) as any;
-    return accountData?.quarterlyData || null;
+    const userData = JSON.parse(rows[0].data) as {
+      quarterlyData?: QuarterlyData;
+    };
+    return userData?.quarterlyData || null;
   } catch (error) {
     console.error('Error fetching quarterly data from batch:', error);
     throw error;
@@ -795,7 +885,7 @@ export async function getMembersPaginated(
     const totalPages = Math.ceil(total / validPageSize);
     
     // Get paginated members with their latest batch info
-    // Join with matched_accounts and generation_batches to get the most recent batch per member
+    // Join with quarterly_user_statements and generation_batches to get the most recent batch per member
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         m.*,
@@ -806,14 +896,14 @@ export async function getMembersPaginated(
        FROM members m
        LEFT JOIN (
          SELECT 
-           ma.account_number,
+           qus.account_number,
            gb.id as batch_id,
            gb.quarter,
            gb.year,
            gb.generation_date,
-           ROW_NUMBER() OVER (PARTITION BY ma.account_number ORDER BY gb.generation_date DESC) as rn
-         FROM matched_accounts ma
-         INNER JOIN generation_batches gb ON ma.batch_id = gb.id
+           ROW_NUMBER() OVER (PARTITION BY qus.account_number ORDER BY gb.generation_date DESC) as rn
+         FROM quarterly_user_statements qus
+         INNER JOIN generation_batches gb ON qus.batch_id = gb.id
        ) as latest_batch ON m.account_number = latest_batch.account_number AND latest_batch.rn = 1
        ORDER BY m.account_number ASC 
        LIMIT ${validPageSize} OFFSET ${offset}`

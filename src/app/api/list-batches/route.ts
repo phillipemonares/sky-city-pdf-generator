@@ -13,6 +13,8 @@ export async function GET(request: NextRequest) {
         year: batch.year,
         generation_date: batch.generation_date.toISOString(),
         total_accounts: batch.total_accounts,
+        start_date: batch.start_date ? batch.start_date.toISOString().split('T')[0] : null,
+        end_date: batch.end_date ? batch.end_date.toISOString().split('T')[0] : null,
         created_at: batch.created_at.toISOString(),
         updated_at: batch.updated_at.toISOString(),
       })),
@@ -25,6 +27,7 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 
 
 

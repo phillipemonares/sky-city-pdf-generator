@@ -55,6 +55,8 @@ interface GenerationBatch {
   year: number;
   generation_date: string;
   total_accounts: number;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +74,7 @@ export default function UploadInterface() {
   const [loadingBatches, setLoadingBatches] = useState<boolean>(false);
   const [loadingBatch, setLoadingBatch] = useState<string | null>(null);
   const [savingBatch, setSavingBatch] = useState<boolean>(false);
+  const [saveProgress, setSaveProgress] = useState<number>(0);
   const [deletingBatch, setDeletingBatch] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'generation' | 'history'>('generation');
   const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
@@ -79,8 +82,24 @@ export default function UploadInterface() {
   const [pageSize, setPageSize] = useState<number>(50);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [allAnnotatedPlayers, setAllAnnotatedPlayers] = useState<AnnotatedStatementPlayer[]>([]);
+  const [loadedBatchPagination, setLoadedBatchPagination] = useState<{
+    page: number;
+    pageSize: number;
+    totalAccounts: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  } | null>(null);
 
+  // Use allAnnotatedPlayers if we have them (from loaded batch), otherwise build from uploads
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
+    // If we have loaded batch data, use that (server-side paginated)
+    if (allAnnotatedPlayers.length > 0 && loadedBatchId) {
+      return allAnnotatedPlayers;
+    }
+
+    // Otherwise, build from uploaded files (normal flow)
     if (!activityUpload || !preCommitmentUpload || !quarterlyData) {
       return [];
     }
@@ -90,7 +109,7 @@ export default function UploadInterface() {
       preCommitmentUpload.players,
       quarterlyData
     );
-  }, [activityUpload, preCommitmentUpload, quarterlyData]);
+  }, [allAnnotatedPlayers, loadedBatchId, activityUpload, preCommitmentUpload, quarterlyData]);
 
   // Pagination calculations
   const totalAccounts = annotatedPlayers.length;
@@ -151,12 +170,12 @@ export default function UploadInterface() {
     }
   };
 
-  const loadBatch = async (batchId: string) => {
+  const loadBatch = async (batchId: string, loadPage: number = 1) => {
     try {
       setLoadingBatch(batchId);
       setGenerationStatus(`Loading batch ${batchId}...`);
       
-      const response = await fetch(`/api/load-batch?batchId=${batchId}`);
+      const response = await fetch(`/api/load-batch?batchId=${batchId}&page=${loadPage}&pageSize=${pageSize}`);
       if (!response.ok) {
         throw new Error('Failed to load batch');
       }
@@ -166,23 +185,8 @@ export default function UploadInterface() {
         // Set the loaded batch ID to prevent duplicate saves
         setLoadedBatchId(batchId);
         
-        // Set the loaded data
-        if (data.activityRows && data.activityRows.length > 0) {
-          setActivityUpload({
-            file: new File([], 'loaded-from-database'),
-            rows: data.activityRows,
-            errors: [],
-          });
-        }
-
-        if (data.preCommitmentPlayers && data.preCommitmentPlayers.length > 0) {
-          setPreCommitmentUpload({
-            file: new File([], 'loaded-from-database'),
-            players: data.preCommitmentPlayers,
-            errors: [],
-          });
-        }
-
+        // For paginated loading, we need to handle data differently
+        // Store quarterlyData and preCommitmentPlayers once (they're the same for all pages)
         if (data.quarterlyData) {
           setQuarterlyData(data.quarterlyData);
 
@@ -199,7 +203,56 @@ export default function UploadInterface() {
           }
         }
 
-        setGenerationStatus(`Loaded batch: Q${data.batch.quarter} ${data.batch.year} with ${data.batch.total_accounts} accounts`);
+        if (data.preCommitmentPlayers && data.preCommitmentPlayers.length > 0) {
+          setPreCommitmentUpload({
+            file: new File([], 'loaded-from-database'),
+            players: data.preCommitmentPlayers,
+            errors: [],
+          });
+        }
+
+        // For server-side pagination, we use the annotatedPlayers directly from the API
+        // instead of rebuilding them from activityRows
+        if (loadPage === 1) {
+          // First page - replace all data
+          setAllAnnotatedPlayers(data.annotatedPlayers || []);
+          if (data.activityRows && data.activityRows.length > 0) {
+            setActivityUpload({
+              file: new File([], 'loaded-from-database'),
+              rows: data.activityRows,
+              errors: [],
+            });
+          }
+        } else {
+          // Subsequent pages - append to existing data
+          setAllAnnotatedPlayers(prev => [...prev, ...(data.annotatedPlayers || [])]);
+          if (data.activityRows && data.activityRows.length > 0) {
+            setActivityUpload(prev => prev ? {
+              ...prev,
+              rows: [...prev.rows, ...data.activityRows],
+            } : {
+              file: new File([], 'loaded-from-database'),
+              rows: data.activityRows,
+              errors: [],
+            });
+          }
+        }
+
+        // Store pagination info - update page number for subsequent loads
+        if (data.pagination) {
+          setLoadedBatchPagination(prev => {
+            if (prev && loadPage > 1) {
+              // Update the page number for subsequent loads
+              return {
+                ...data.pagination,
+                page: loadPage,
+              };
+            }
+            return data.pagination;
+          });
+        }
+
+        setGenerationStatus(`Loaded batch: Q${data.batch.quarter} ${data.batch.year} with ${data.batch.total_accounts} accounts (page ${loadPage}/${data.pagination?.totalPages || 1})`);
       }
     } catch (error) {
       console.error('Error loading batch:', error);
@@ -207,6 +260,11 @@ export default function UploadInterface() {
     } finally {
       setLoadingBatch(null);
     }
+  };
+
+  // Load more pages when needed
+  const loadBatchPage = async (batchId: string, page: number) => {
+    await loadBatch(batchId, page);
   };
 
   const formatDate = (dateString: string) => {
@@ -249,37 +307,119 @@ export default function UploadInterface() {
 
     try {
       setSavingBatch(true);
-      setGenerationStatus('Saving batch to database...');
+      setSaveProgress(0);
+      setGenerationStatus('Initializing batch...');
 
-      const response = await fetch('/api/save-batch', {
+      // Send data in chunks to avoid memory issues
+      const chunkSize = 1000;
+      const totalRows = activityUpload.rows.length;
+      let batchId: string | null = null;
+
+      // First, create the batch and get batchId
+      // Send quarterlyData and preCommitmentPlayers once during init to avoid sending with every chunk
+      const initResponse = await fetch('/api/save-batch-init', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          activityRows: activityUpload.rows,
-          preCommitmentPlayers: preCommitmentUpload.players,
+          quarter: quarterlyData.quarter,
+          year: quarterlyData.year,
+          totalAccounts: annotatedPlayers.length,
           quarterlyData,
+          preCommitmentPlayers: preCommitmentUpload.players,
+          startDate: startDate || null,
+          endDate: endDate || null,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to save batch');
+      if (!initResponse.ok) {
+        throw new Error('Failed to initialize batch');
       }
 
-      const data = await response.json();
-      if (data.success) {
-        // Set the loaded batch ID to the newly saved batch
-        setLoadedBatchId(data.batchId);
+      const initData = await initResponse.json();
+      if (!initData.success) {
+        throw new Error(initData.error || 'Failed to initialize batch');
+      }
+      batchId = initData.batchId;
+      setSaveProgress(5);
+      setGenerationStatus('Saving data to database...');
+
+      // Calculate total chunks
+      const totalChunks = Math.ceil(totalRows / chunkSize);
+
+      // Send data in chunks
+      for (let i = 0; i < totalRows; i += chunkSize) {
+        const chunk = activityUpload.rows.slice(i, i + chunkSize);
+        const currentChunk = Math.floor(i / chunkSize) + 1;
+        const progress = Math.min(i + chunkSize, totalRows);
+        
+        // Update progress (5% for init, 90% for chunks, 5% for finalize)
+        const chunkProgress = 5 + Math.floor((currentChunk / totalChunks) * 90);
+        setSaveProgress(chunkProgress);
+        setGenerationStatus(`Saving batch to database... ${progress}/${totalRows} rows (${currentChunk}/${totalChunks} chunks)`);
+
+        const chunkResponse = await fetch('/api/save-batch-chunk', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            batchId,
+            activityRows: chunk,
+            preCommitmentPlayers: preCommitmentUpload.players,
+            quarterlyData,
+            chunkIndex: Math.floor(i / chunkSize),
+            isLastChunk: i + chunkSize >= totalRows,
+          }),
+        });
+
+        if (!chunkResponse.ok) {
+          throw new Error(`Failed to save chunk ${currentChunk}`);
+        }
+
+        const chunkData = await chunkResponse.json();
+        if (!chunkData.success) {
+          throw new Error(chunkData.error || `Failed to save chunk ${currentChunk}`);
+        }
+      }
+
+      setSaveProgress(95);
+      setGenerationStatus('Finalizing batch...');
+
+      // Finalize the batch
+      const finalizeResponse = await fetch('/api/save-batch-finalize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          batchId,
+          startDate: startDate || null,
+          endDate: endDate || null,
+        }),
+      });
+
+      if (!finalizeResponse.ok) {
+        throw new Error('Failed to finalize batch');
+      }
+
+      const finalizeData = await finalizeResponse.json();
+      if (finalizeData.success) {
+        setSaveProgress(100);
+        setLoadedBatchId(batchId!);
         setGenerationStatus(
-          `Batch saved successfully! Q${data.quarter} ${data.year} with ${data.totalAccounts} accounts`
+          `Batch saved successfully! Q${quarterlyData.quarter} ${quarterlyData.year} with ${annotatedPlayers.length} accounts`
         );
-        // Reload batches list to show the new batch
         loadPreviousBatches();
+        
+        // Reset progress after a short delay
+        setTimeout(() => setSaveProgress(0), 2000);
       }
     } catch (error) {
       console.error('Error saving batch:', error);
       setGenerationStatus('Error saving batch to database');
+      setSaveProgress(0);
     } finally {
       setSavingBatch(false);
     }
@@ -582,6 +722,7 @@ export default function UploadInterface() {
             activityRows: activityUpload.rows,
             preCommitmentPlayers: preCommitmentUpload.players,
             quarterlyData,
+            // quarterlyData already contains statementPeriod with dates, which will be extracted in the API
           }),
         });
 
@@ -930,7 +1071,15 @@ export default function UploadInterface() {
         {/* Generation Status */}
         {generationStatus && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8">
-            <p className="text-sm text-blue-800">{generationStatus}</p>
+            <p className="text-sm text-blue-800 mb-2">{generationStatus}</p>
+            {savingBatch && saveProgress > 0 && (
+              <div className="w-full bg-blue-200 rounded-full h-2.5 mt-2">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${saveProgress}%` }}
+                ></div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1391,6 +1540,22 @@ export default function UploadInterface() {
                 <div className="text-sm text-gray-600">
                   Showing {startIndex + 1} to {Math.min(endIndex, totalAccounts)} of {totalAccounts.toLocaleString()} accounts
                 </div>
+              </div>
+            )}
+
+            {/* Load More Button for Server-Side Pagination */}
+            {loadedBatchId && loadedBatchPagination && loadedBatchPagination.hasNextPage && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => {
+                    const nextPage = (loadedBatchPagination.page || 0) + 1;
+                    loadBatchPage(loadedBatchId, nextPage);
+                  }}
+                  disabled={loadingBatch !== null}
+                  className="px-6 py-2 bg-purple-600 text-white rounded-lg font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loadingBatch ? 'Loading...' : `Load More (${loadedBatchPagination.totalAccounts - allAnnotatedPlayers.length} remaining)`}
+                </button>
               </div>
             )}
           </div>

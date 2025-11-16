@@ -3,9 +3,23 @@ import { saveGenerationBatch, saveMembersFromActivity } from '@/lib/db';
 import { buildAnnotatedPlayers } from '@/lib/annotated-pdf-template';
 import { AnnotatedPDFGenerationRequest } from '@/types/player-data';
 
+// Increase body size limit for this route (default is 1MB, but we need more for large batches)
+export const maxDuration = 300; // 5 minutes
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs'; // Use Node.js runtime for larger body support
+
 export async function POST(request: NextRequest) {
   try {
-    const body: AnnotatedPDFGenerationRequest = await request.json();
+    // Read body as text first to handle large payloads
+    const text = await request.text();
+    if (!text) {
+      return NextResponse.json(
+        { success: false, error: 'Empty request body' },
+        { status: 400 }
+      );
+    }
+    
+    const body: AnnotatedPDFGenerationRequest = JSON.parse(text);
     const { activityRows, preCommitmentPlayers, quarterlyData } = body;
 
     if (!activityRows || activityRows.length === 0) {
@@ -31,10 +45,8 @@ export async function POST(request: NextRequest) {
 
     // Save members from activity statement (unique members only)
     try {
-      const savedMembersCount = await saveMembersFromActivity(activityRows);
-      console.log(`Saved ${savedMembersCount} new members from activity statement`);
+      await saveMembersFromActivity(activityRows);
     } catch (memberError) {
-      console.error('Error saving members (continuing anyway):', memberError);
       // Continue even if member saving fails
     }
 
@@ -52,12 +64,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Extract start_date and end_date from quarterlyData.statementPeriod if available
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
+    
+    if (quarterlyData.statementPeriod?.startDate && quarterlyData.statementPeriod?.endDate) {
+      // Parse DD/MM/YYYY format
+      const [startDay, startMonth, startYear] = quarterlyData.statementPeriod.startDate.split('/');
+      const [endDay, endMonth, endYear] = quarterlyData.statementPeriod.endDate.split('/');
+      
+      if (startDay && startMonth && startYear) {
+        startDate = new Date(parseInt(startYear), parseInt(startMonth) - 1, parseInt(startDay));
+      }
+      if (endDay && endMonth && endYear) {
+        endDate = new Date(parseInt(endYear), parseInt(endMonth) - 1, parseInt(endDay));
+      }
+    }
+
     // Save to database
     const batchId = await saveGenerationBatch(
       quarterlyData.quarter,
       quarterlyData.year,
       annotatedPlayers,
-      quarterlyData
+      quarterlyData,
+      startDate,
+      endDate
     );
 
     return NextResponse.json({
@@ -68,9 +99,15 @@ export async function POST(request: NextRequest) {
       year: quarterlyData.year,
     });
   } catch (error) {
-    console.error('Error saving batch:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    console.error('Error saving batch:', errorMessage, errorStack);
     return NextResponse.json(
-      { success: false, error: 'Failed to save batch to database' },
+      { 
+        success: false, 
+        error: 'Failed to save batch to database',
+        details: errorMessage
+      },
       { status: 500 }
     );
   }
