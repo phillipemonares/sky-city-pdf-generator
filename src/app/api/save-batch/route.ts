@@ -10,16 +10,9 @@ export const runtime = 'nodejs'; // Use Node.js runtime for larger body support
 
 export async function POST(request: NextRequest) {
   try {
-    // Read body as text first to handle large payloads
-    const text = await request.text();
-    if (!text) {
-      return NextResponse.json(
-        { success: false, error: 'Empty request body' },
-        { status: 400 }
-      );
-    }
-    
-    const body: AnnotatedPDFGenerationRequest = JSON.parse(text);
+    // Use request.json() directly - more memory efficient than manual parsing
+    // Next.js handles the body parsing more efficiently internally
+    const body: AnnotatedPDFGenerationRequest = await request.json();
     const { activityRows, preCommitmentPlayers, quarterlyData } = body;
 
     if (!activityRows || activityRows.length === 0) {

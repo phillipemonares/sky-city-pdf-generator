@@ -235,35 +235,7 @@ export async function GET(request: NextRequest) {
     
     worksheet['!cols'] = colWidths;
     
-    // Add worksheet to workbook
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'PreCommitment Data');
-
-    const sessionHeaders = [
-      'Acct',
-      'Session',
-      'Session Win',
-      'Session Loss',
-      'Session Nett'
-    ];
-
-    const sessionSampleRows = [
-      ['111', 'Session 1', '350', '120', '230'],
-      ['111', 'Session 2', '180', '240', '-60'],
-      ['999', 'Session 1', '95', '175', '-80']
-    ];
-
-    const sessionWorksheet = XLSX.utils.aoa_to_sheet([sessionHeaders, ...sessionSampleRows]);
-    sessionWorksheet['!cols'] = [
-      { wch: 10 },
-      { wch: 12 },
-      { wch: 14 },
-      { wch: 14 },
-      { wch: 14 },
-    ];
-
-    XLSX.utils.book_append_sheet(workbook, sessionWorksheet, 'Session Summary');
-
-    // Member Contact Information Sheet
+    // Member Contact Information Sheet (Sheet 1)
     const memberContactHeaders = [
       'Acct',
       'Firstname',
@@ -305,7 +277,38 @@ export async function GET(request: NextRequest) {
       { wch: 12 }  // Country
     ];
 
+    // Add worksheets to workbook in the correct order:
+    // Sheet 1: Member Contact
     XLSX.utils.book_append_sheet(workbook, memberContactWorksheet, 'Member Contact');
+    
+    // Sheet 2: PreCommitment Data
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'PreCommitment Data');
+
+    // Sheet 3: Session Summary
+    const sessionHeaders = [
+      'Acct',
+      'Session',
+      'Session Win',
+      'Session Loss',
+      'Session Nett'
+    ];
+
+    const sessionSampleRows = [
+      ['111', 'Session 1', '350', '120', '230'],
+      ['111', 'Session 2', '180', '240', '-60'],
+      ['999', 'Session 1', '95', '175', '-80']
+    ];
+
+    const sessionWorksheet = XLSX.utils.aoa_to_sheet([sessionHeaders, ...sessionSampleRows]);
+    sessionWorksheet['!cols'] = [
+      { wch: 10 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+    ];
+
+    XLSX.utils.book_append_sheet(workbook, sessionWorksheet, 'Session Summary');
     
     // Generate Excel file buffer
     const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });

@@ -22,16 +22,8 @@ export async function POST(request: NextRequest) {
   const connection = await pool.getConnection();
   
   try {
-    // Read body as text first to handle large payloads
-    const text = await request.text();
-    if (!text) {
-      return NextResponse.json(
-        { success: false, error: 'Empty request body' },
-        { status: 400 }
-      );
-    }
-    
-    const body = JSON.parse(text);
+    // Use request.json() directly - more memory efficient than manual parsing
+    const body = await request.json();
     const { quarter, year, totalAccounts, quarterlyData, preCommitmentPlayers, startDate, endDate } = body;
 
     if (!quarter || !year || !totalAccounts) {

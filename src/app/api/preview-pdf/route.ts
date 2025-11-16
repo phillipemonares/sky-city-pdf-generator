@@ -14,94 +14,9 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    // Read body as stream to bypass Next.js body size limit
-    // This allows us to handle bodies larger than 10MB
-    let rawBody = '';
-    if (request.body) {
-      const reader = request.body.getReader();
-      const decoder = new TextDecoder();
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          rawBody += decoder.decode(value, { stream: true });
-        }
-        // Decode any remaining bytes
-        rawBody += decoder.decode();
-      } finally {
-        reader.releaseLock();
-      }
-    } else {
-      // Fallback to standard method if body is not available as stream
-      rawBody = await request.text();
-    }
-    
-    if (!rawBody || rawBody.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Request body is empty' },
-        { status: 400 }
-      );
-    }
-
-    // Check if body was truncated (Next.js default limit is 10MB = 10485760 bytes)
-    const bodySizeMB = rawBody.length / (1024 * 1024);
-    if (rawBody.length >= 10485760) {
-      console.warn(`Large body detected: ${bodySizeMB.toFixed(2)}MB. Body may be truncated.`);
-    }
-
-    // Check if JSON appears truncated (ends abruptly)
-    const trimmedBody = rawBody.trim();
-    const lastChar = trimmedBody[trimmedBody.length - 1];
-    if (lastChar !== '}' && lastChar !== ']' && !trimmedBody.endsWith('"')) {
-      console.error('Body appears to be truncated - does not end with valid JSON terminator');
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Request body appears to be truncated. The payload is too large (exceeds 10MB limit). Please reduce the data size or split the request.',
-          bodyLength: rawBody.length,
-          bodySizeMB: bodySizeMB.toFixed(2),
-          suggestion: 'Consider filtering the data to only include necessary records before sending.'
-        },
-        { status: 413 }
-      );
-    }
-
-    // Parse JSON with better error handling
-    let body: AnnotatedPDFGenerationRequest;
-    try {
-      body = JSON.parse(rawBody);
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError);
-      console.error('Body length:', rawBody.length);
-      console.error('Body size (MB):', bodySizeMB.toFixed(2));
-      console.error('Body preview (first 500 chars):', rawBody.substring(0, 500));
-      console.error('Body ending (last 200 chars):', rawBody.substring(Math.max(0, rawBody.length - 200)));
-      
-      // Check if error is due to truncation
-      if (rawBody.length >= 10485760) {
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: 'Request body exceeds 10MB limit and was truncated. Please reduce the data size.',
-            bodyLength: rawBody.length,
-            bodySizeMB: bodySizeMB.toFixed(2),
-            suggestion: 'Consider filtering data to only include necessary records or split into multiple requests.'
-          },
-          { status: 413 }
-        );
-      }
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: `Invalid JSON: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`,
-          bodyLength: rawBody.length,
-          bodySizeMB: bodySizeMB.toFixed(2)
-        },
-        { status: 400 }
-      );
-    }
+    // Use request.json() directly - more memory efficient than manual stream reading
+    // Next.js handles the body parsing more efficiently internally
+    const body: AnnotatedPDFGenerationRequest = await request.json();
     const { activityRows, preCommitmentPlayers, quarterlyData } = body;
 
     if (!activityRows || activityRows.length === 0) {
@@ -212,9 +127,13 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error generating preview:', error);
+    console.error('Error generating preview:', error instanceof Error ? error.message : 'Unknown error');
+    // Don't serialize the full error object to avoid memory issues with large payloads
     return NextResponse.json(
-      { success: false, error: 'Failed to generate preview' },
+      { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to generate preview' 
+      },
       { status: 500 }
     );
   }

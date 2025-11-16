@@ -704,52 +704,136 @@ export default function UploadInterface() {
         ? `account ${previewAccount}`
         : 'the first matched account';
     setPreviewingAccount(previewAccount);
-    setGenerationStatus(`Preparing preview for ${accountLabel}...`);
-
+    
     try {
       // Auto-save batch if not already saved
       let batchId = loadedBatchId;
       
-      if (!batchId) {
-        setGenerationStatus(`Saving data for preview...`);
+      if (batchId) {
+        // Batch already saved, preview will be faster
+        setGenerationStatus(`Generating preview for ${accountLabel}... (Using saved batch - this will be quick!)`);
+      } else {
+        // Inform user that previewing requires saving first, which takes time
+        setGenerationStatus(`⏳ Preparing preview for ${accountLabel}... This will take some time as we need to save your data first. Please wait...`);
         
-        const saveResponse = await fetch('/api/save-batch', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            activityRows: activityUpload.rows,
-            preCommitmentPlayers: preCommitmentUpload.players,
-            quarterlyData,
-            // quarterlyData already contains statementPeriod with dates, which will be extracted in the API
-          }),
-        });
-
-        if (!saveResponse.ok) {
-          throw new Error('Failed to save batch for preview');
-        }
-
-        const saveData = await saveResponse.json();
-        if (!saveData.success) {
-          throw new Error(saveData.error || 'Failed to save batch for preview');
-        }
-
-        batchId = saveData.batchId;
-        setLoadedBatchId(batchId);
+        // Small delay to ensure the message is visible
+        await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Update batches list asynchronously (don't wait for it)
-        loadPreviousBatches().catch(error => 
-          console.warn('Failed to reload batches list:', error)
-        );
+        try {
+          // Use chunked save approach to avoid memory issues
+          const chunkSize = 1000;
+          const totalRows = activityUpload.rows.length;
+          const estimatedTime = Math.ceil(totalRows / chunkSize) * 2; // Rough estimate: 2 seconds per chunk
+          
+          // First, create the batch and get batchId
+          setGenerationStatus(`💾 Saving data for preview... Processing ${totalRows} rows in chunks. This may take ${estimatedTime}-${estimatedTime + 10} seconds. Please be patient...`);
+          
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          setGenerationStatus(`Initializing batch for preview...`);
+          const initResponse = await fetch('/api/save-batch-init', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              quarter: quarterlyData.quarter,
+              year: quarterlyData.year,
+              totalAccounts: annotatedPlayers.length,
+              quarterlyData,
+              preCommitmentPlayers: preCommitmentUpload.players,
+              startDate: startDate || null,
+              endDate: endDate || null,
+            }),
+          });
+
+          if (!initResponse.ok) {
+            throw new Error('Failed to initialize batch for preview');
+          }
+
+          const initData = await initResponse.json();
+          if (!initData.success) {
+            throw new Error(initData.error || 'Failed to initialize batch for preview');
+          }
+          batchId = initData.batchId;
+
+          // Calculate total chunks
+          const totalChunks = Math.ceil(totalRows / chunkSize);
+
+          // Send data in chunks
+          for (let i = 0; i < totalRows; i += chunkSize) {
+            const chunk = activityUpload.rows.slice(i, i + chunkSize);
+            const currentChunk = Math.floor(i / chunkSize) + 1;
+            const progress = Math.min(i + chunkSize, totalRows);
+            
+            setGenerationStatus(`💾 Saving chunk ${currentChunk}/${totalChunks} for preview (${progress}/${totalRows} rows)... This may take a moment, please wait...`);
+
+            const chunkResponse = await fetch('/api/save-batch-chunk', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                batchId,
+                activityRows: chunk,
+                preCommitmentPlayers: preCommitmentUpload.players,
+                quarterlyData,
+                chunkIndex: Math.floor(i / chunkSize),
+                isLastChunk: i + chunkSize >= totalRows,
+              }),
+            });
+
+            if (!chunkResponse.ok) {
+              throw new Error(`Failed to save chunk ${currentChunk} for preview`);
+            }
+
+            const chunkData = await chunkResponse.json();
+            if (!chunkData.success) {
+              throw new Error(chunkData.error || `Failed to save chunk ${currentChunk} for preview`);
+            }
+          }
+
+          // Finalize the batch
+          setGenerationStatus(`Finalizing batch for preview... Almost done!`);
+          const finalizeResponse = await fetch('/api/save-batch-finalize', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              batchId,
+              startDate: startDate || null,
+              endDate: endDate || null,
+            }),
+          });
+
+          if (!finalizeResponse.ok) {
+            throw new Error('Failed to finalize batch for preview');
+          }
+
+          const finalizeData = await finalizeResponse.json();
+          if (!finalizeData.success) {
+            throw new Error(finalizeData.error || 'Failed to finalize batch for preview');
+          }
+
+          setLoadedBatchId(batchId);
+          
+          // Update batches list asynchronously (don't wait for it)
+          loadPreviousBatches().catch(error => 
+            console.warn('Failed to reload batches list:', error)
+          );
+        } catch (saveError) {
+          const errorMsg = saveError instanceof Error ? saveError.message : 'Unknown error';
+          throw new Error(`Failed to save batch for preview: ${errorMsg}`);
+        }
       }
-
-      setGenerationStatus(`Generating preview for ${accountLabel}...`);
 
       // Use the new batch-based preview endpoint
       if (!batchId) {
         throw new Error('No batch ID available for preview');
       }
+      
+      setGenerationStatus(`Generating preview for ${accountLabel}...`);
       
       const previewUrl = `/api/preview-batch-pdf?batchId=${encodeURIComponent(batchId)}${account ? `&account=${encodeURIComponent(account)}` : ''}`;
       
