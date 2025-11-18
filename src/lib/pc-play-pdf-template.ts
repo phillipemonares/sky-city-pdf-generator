@@ -26,7 +26,7 @@ export const PC_PLAY_STYLES = `
   }
 
   .precommitment-section {
-    margin-top: 20px;
+    margin-top: 10px;
   }
 
   .precommitment-section h4 {
@@ -41,6 +41,14 @@ export const PC_PLAY_STYLES = `
 
   .precommitment-section li {
     margin-bottom: 6px;
+  }
+
+  .statement-details {
+    padding-left: 20px;
+  }
+
+  .statement-details ul li {
+    margin-left: 35px;
   }
 
   .precommitment-table {
@@ -107,82 +115,24 @@ export const PC_PLAY_STYLES = `
   }
 `;
 
-const buildPreCommitmentRules = (player: PreCommitmentPlayer): string[] => {
-  const rules: string[] = [];
-  const addRule = (text: string | null | undefined) => {
-    const sanitized = sanitizeText(text);
-    if (sanitized) {
-      rules.push(sanitized);
-    }
-  };
+// Check if a value is zero or empty
+const isZeroOrEmpty = (value: unknown): boolean => {
+  if (value === null || value === undefined) return true;
+  const raw = String(value).trim();
+  if (raw === '') return true;
+  const cleaned = raw.replace(/,/g, '').replace(/\$/g, '');
+  const num = Number(cleaned);
+  if (Number.isNaN(num)) return true;
+  return num === 0;
+};
 
-  const addCurrencyRule = (label: string, value: unknown) => {
-    const formatted = formatCurrency(value);
-    if (formatted !== '-') {
-      rules.push(`${label}: ${wrapNegativeValue(formatted)}`);
-    }
-  };
+const formatWithUnit = (value: unknown, unit: string): string => {
+  const formatted = formatUnitValue(value, unit);
+  return formatted || '–';
+};
 
-  const addUnitRule = (label: string, value: unknown, unit: string) => {
-    const formatted = formatUnitValue(value, unit);
-    if (formatted) {
-      rules.push(`${label}: ${wrapNegativeValue(formatted)}`);
-    }
-  };
-
-  addRule(player.enrollmentStatus ? `Enrollment status: ${player.enrollmentStatus}` : null);
-  addRule(player.noPlayStatus ? `Play status: ${player.noPlayStatus}` : null);
-  addCurrencyRule('Daily budget limit', player.dailyBudget);
-  addCurrencyRule('Weekly budget limit', player.weeklyBudget);
-  addCurrencyRule('Monthly budget limit', player.monthlyBudget);
-  addUnitRule('Daily time limit', player.dailyTime, 'minutes');
-  addUnitRule('Weekly time limit', player.weeklyTime, 'minutes');
-  addUnitRule('Monthly time limit', player.monthlyTime, 'minutes');
-
-  const breakParts: string[] = [];
-  const breakMins = formatUnitValue(player.mins, 'minutes');
-  if (breakMins) {
-    breakParts.push(`Break duration ${wrapNegativeValue(breakMins)}`);
-  }
-  const breakEvery = sanitizeText(player.every);
-  if (breakEvery) {
-    breakParts.push(`Every ${breakEvery}`);
-  }
-  const breakHour = formatUnitValue(player.hour, 'hours');
-  if (breakHour) {
-    breakParts.push(`Over ${wrapNegativeValue(breakHour)}`);
-  }
-  if (breakParts.length) {
-    rules.push(`Break in play reminders: ${breakParts.join(', ')}`);
-  }
-
-  const scheduleEntries: string[] = [];
-  const addSchedule = (day: string, start: unknown, end: unknown) => {
-    const formattedStart = formatExcelTime(start);
-    const formattedEnd = formatExcelTime(end);
-    if (formattedStart && formattedEnd) {
-      scheduleEntries.push(`${day} ${formattedStart}-${formattedEnd}`);
-    }
-  };
-
-  addSchedule('Monday', player.monStart, player.monEnd);
-  addSchedule('Tuesday', player.tueStart, player.tueEnd);
-  addSchedule('Wednesday', player.wedStart, player.wedEnd);
-  addSchedule('Thursday', player.thuStart, player.thuEnd);
-  addSchedule('Friday', player.friStart, player.friEnd);
-  addSchedule('Saturday', player.satStart, player.satEnd);
-  addSchedule('Sunday', player.sunStart, player.sunEnd);
-
-  if (scheduleEntries.length) {
-    rules.push(`No play periods: ${scheduleEntries.join('; ')}`);
-  }
-
-  const consecutive = formatUnitValue(player.consecutiveDays, 'days');
-  if (consecutive) {
-    rules.push(`Consecutive days: ${wrapNegativeValue(consecutive)}`);
-  }
-
-  return rules;
+const renderList = (items: string[]): string => {
+  return items.length ? items.map(i => `<li>${i}</li>`).join('') : '<li>Nil</li>';
 };
 
 const getMonthNumber = (monthName: string): number | null => {
@@ -288,15 +238,83 @@ export function renderPreCommitmentPage(
     .join(' ')
     .trim() || 'Member';
   const displayName = salutationOverride || fallbackDisplayName;
-  const rules = buildPreCommitmentRules(preCommitment);
-  const ruleItems = rules.length
-    ? rules.map((rule, index) => `<li><strong>Rule ${index + 1}:</strong> ${rule}</li>`).join('')
-    : '<li>No active pre-commitment rules recorded.</li>';
-  const breaches = wrapNegativeValue(sanitizeNumber(preCommitment.breaches));
+  const breachesRaw = wrapNegativeValue(sanitizeNumber(preCommitment.breaches));
+  // Show "Nil" if breaches is "-", "0.00", "0", or empty (strip HTML tags for comparison)
+  const breachesPlain = breachesRaw.replace(/<[^>]*>/g, '').trim();
+  const breaches = (breachesPlain === '-' || breachesPlain === '0.00' || breachesPlain === '0' || breachesPlain === '') 
+    ? 'Nil' 
+    : breachesRaw;
+  
+  // Build sections for the Pre-Commitment rules format
+  const expenditureItems: string[] = [];
+  const dailyBudgetF = formatCurrency(preCommitment.dailyBudget);
+  const weeklyBudgetF = formatCurrency(preCommitment.weeklyBudget);
+  const monthlyBudgetF = formatCurrency(preCommitment.monthlyBudget);
+  const hasDailyBudget = dailyBudgetF !== '-' && !isZeroOrEmpty(preCommitment.dailyBudget);
+  const hasWeeklyBudget = weeklyBudgetF !== '-' && !isZeroOrEmpty(preCommitment.weeklyBudget);
+  const hasMonthlyBudget = monthlyBudgetF !== '-' && !isZeroOrEmpty(preCommitment.monthlyBudget);
+  
+  if (hasDailyBudget) {
+    expenditureItems.push(`${wrapNegativeValue(dailyBudgetF)} per day`);
+  }
+  if (hasWeeklyBudget) {
+    expenditureItems.push(`${wrapNegativeValue(weeklyBudgetF)} per week`);
+  }
+  if (hasMonthlyBudget) {
+    expenditureItems.push(`${wrapNegativeValue(monthlyBudgetF)} per month`);
+  }
+
+  const timeLimitItems: string[] = [];
+  const hasDailyTime = !isZeroOrEmpty(preCommitment.dailyTime);
+  const hasWeeklyTime = !isZeroOrEmpty(preCommitment.weeklyTime);
+  const hasMonthlyTime = !isZeroOrEmpty(preCommitment.monthlyTime);
+  if (hasDailyTime) {
+    const dailyTimeF = formatWithUnit(preCommitment.dailyTime, 'minutes');
+    if (dailyTimeF !== '–') timeLimitItems.push(`${wrapNegativeValue(dailyTimeF)} per day`);
+  }
+  if (hasWeeklyTime) {
+    const weeklyTimeF = formatWithUnit(preCommitment.weeklyTime, 'minutes');
+    if (weeklyTimeF !== '–') timeLimitItems.push(`${wrapNegativeValue(weeklyTimeF)} per week`);
+  }
+  if (hasMonthlyTime) {
+    const monthlyTimeF = formatWithUnit(preCommitment.monthlyTime, 'minutes');
+    if (monthlyTimeF !== '–') timeLimitItems.push(`${wrapNegativeValue(monthlyTimeF)} per month`);
+  }
+
+  const breakItems: string[] = [];
+  const minsF = formatWithUnit(preCommitment.mins, 'minutes');
+  const everyF = (preCommitment.every || '').toString().trim();
+  const hourF = formatWithUnit(preCommitment.hour, 'hours');
+  const hasMins = minsF !== '–' && !isZeroOrEmpty(preCommitment.mins);
+  const hasEvery = everyF !== '';
+  const hasHour = hourF !== '–' && !isZeroOrEmpty(preCommitment.hour);
+  
+  if (hasMins || hasEvery || hasHour) {
+    if (hasMins) breakItems.push(`Mins: ${minsF}`);
+    if (hasEvery) breakItems.push(`Every: ${everyF}`);
+    if (hasHour) breakItems.push(`Hour: ${hourF}`);
+  }
+
+  const scheduleItems: string[] = [];
+  const addPeriod = (day: string, start: unknown, end: unknown) => {
+    const s = formatExcelTime(start);
+    const e = formatExcelTime(end);
+    if (s && e) scheduleItems.push(`${day} ${s}-${e}`);
+  };
+  addPeriod('Monday', preCommitment.monStart, preCommitment.monEnd);
+  addPeriod('Tuesday', preCommitment.tueStart, preCommitment.tueEnd);
+  addPeriod('Wednesday', preCommitment.wedStart, preCommitment.wedEnd);
+  addPeriod('Thursday', preCommitment.thuStart, preCommitment.thuEnd);
+  addPeriod('Friday', preCommitment.friStart, preCommitment.friEnd);
+  addPeriod('Saturday', preCommitment.satStart, preCommitment.satEnd);
+  addPeriod('Sunday', preCommitment.sunStart, preCommitment.sunEnd);
+
+  const consecutiveDaysF = formatWithUnit(preCommitment.consecutiveDays, 'days');
+  const hasConsecutiveDays = !isZeroOrEmpty(preCommitment.consecutiveDays) && consecutiveDaysF !== '–';
   const sessionSummaries = preCommitment.sessionSummaries ?? [];
   
   // Split session rows: first 9 rows on first page, rest on next page
-  const firstPageRows = sessionSummaries.slice(0, 8).map((summary, index) => {
+  const firstPageRows = sessionSummaries.slice(0, 5).map((summary, index) => {
     const date = formatExcelDate(summary.session);
     const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
     return `
@@ -307,7 +325,7 @@ export function renderPreCommitmentPage(
     `;
   }).join('');
   
-  const nextPageRows = sessionSummaries.slice(8).map((summary, index) => {
+  const nextPageRows = sessionSummaries.slice(5).map((summary, index) => {
     const date = formatExcelDate(summary.session);
     const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
     return `
@@ -318,7 +336,7 @@ export function renderPreCommitmentPage(
     `;
   }).join('');
   
-  const hasNextPageRows = sessionSummaries.length > 8;
+  const hasNextPageRows = sessionSummaries.length > 5;
   
   const sessionRows = sessionSummaries.length
     ? firstPageRows
@@ -333,22 +351,39 @@ export function renderPreCommitmentPage(
 
     <p class="precommitment-intro">Dear ${displayName},</p>
 
-    <p>Please find below your Pre-commitment information for the period ${quarterStart} to ${quarterEnd}.</p>
-    <p>Please see our friendly staff at either the Rewards desk or Host desks to vary or confirm your limits. Your delivery preference can also be updated at these locations. We can send statements via post, email or onsite collection.</p>
-    <p class="precommitment-contact">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide’s Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
+    <p style="margin-top: -5px;">Please find below your Pre-commitment information for the period ${quarterStart} to ${quarterEnd}.</p>
+    <p style="margin-top: -5px;">Please see our friendly staff at either the Rewards desk or Host desks to vary or confirm your limits. Your delivery preference can also be updated at these locations. We can send statements via post, email or onsite collection.</p>
+    <p style="margin-top: -5px;">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide’s Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
 
-    <div class="precommitment-section">
+    <div>
       <h4>Your Active Pre-Commitment Rule/s as at ${quarterEnd}</h4>
-      <ul>
-        ${ruleItems}
-      </ul>
+      <div class="statement-details">
+        <p><strong>Expenditure Limits:</strong></p>
+        <ul>
+          ${renderList(expenditureItems)}
+        </ul>
+        <p><strong>Time Limits:</strong></p>
+        <ul>
+          ${renderList(timeLimitItems)}
+        </ul>
+        <p><strong>Break in Play Periods</strong></p>
+        <ul>
+          ${renderList(breakItems)}
+        </ul>
+        <p><strong>No Play Periods</strong></p>
+        <ul>
+          ${renderList(scheduleItems)}
+        </ul>
+        <p><strong>Consecutive Days:</strong></p>
+        <ul>
+          ${renderList(hasConsecutiveDays ? [consecutiveDaysF] : [])}
+        </ul>
+      </div>
     </div>
-
-    <p><strong>Number of Breaches:</strong> ${breaches}</p>
-
-    <div class="precommitment-section">
-      <h4>Statement Period: ${quarterStart} to ${quarterEnd}</h4>
-      <h4 style="margin-top: 15px;">Daily Amounts Won/Lost During the Period:</h4>
+    <p style="margin-top: -5px;"><strong>Number of Breaches:</strong> ${breaches}</p>
+    <div>
+      <h4 style="margin-top: -10px;">Statement Period: ${quarterStart} to ${quarterEnd}</h4>
+      <h4 style="margin-top: -15px;">Daily Amounts Won/Lost During the Period:</h4>
       <table class="precommitment-table">
         <thead>
           <tr>
@@ -368,10 +403,6 @@ export function renderPreCommitmentPage(
   ${hasNextPageRows && nextPageRows ? `
   <div class="page-break"></div>
   <div class="session-page">
-    <div class="session-title">Daily Amounts Won/Lost During the Period</div>
-    <div style="margin-bottom: 15px;">
-      <strong>Statement Period:</strong> ${quarterStart} to ${quarterEnd}
-    </div>
     <div style="flex: 1;">
       <table class="precommitment-table">
         <thead>
