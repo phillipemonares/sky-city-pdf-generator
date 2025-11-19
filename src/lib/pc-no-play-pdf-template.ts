@@ -300,7 +300,7 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   const everyF = (player.every || '').toString().trim();
   const hourF = formatWithUnit(player.hour, 'hours');
   const hasMins = minsF !== '–' && !isZeroOrEmpty(player.mins);
-  const hasEvery = everyF !== '';
+  const hasEvery = everyF !== '' && !isZeroOrEmpty(player.every);
   const hasHour = hourF !== '–' && !isZeroOrEmpty(player.hour);
   
   if (hasMins || hasEvery || hasHour) {
@@ -458,6 +458,7 @@ export function generatePreCommitmentPDFHTML(player: PreCommitmentPlayer, logoDa
 </html>
   `;
 }
+
 
 
 

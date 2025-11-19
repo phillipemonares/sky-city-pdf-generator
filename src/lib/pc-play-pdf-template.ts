@@ -286,7 +286,7 @@ export function renderPreCommitmentPage(
   const everyF = (preCommitment.every || '').toString().trim();
   const hourF = formatWithUnit(preCommitment.hour, 'hours');
   const hasMins = minsF !== '–' && !isZeroOrEmpty(preCommitment.mins);
-  const hasEvery = everyF !== '';
+  const hasEvery = everyF !== '' && !isZeroOrEmpty(preCommitment.every);
   const hasHour = hourF !== '–' && !isZeroOrEmpty(preCommitment.hour);
   
   if (hasMins || hasEvery || hasHour) {
