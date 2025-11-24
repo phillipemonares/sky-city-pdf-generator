@@ -137,24 +137,31 @@ export function generateCashlessStatements(
       const statementPeriod = `${monthName} ${statementYear}`;
 
       // Pagination logic:
-      // Page 1: 18 rows (or all rows if < 18)
+      // Page 1: 10 rows (or split if totalRows < 10)
       // Page 2+: 30 rows per page (max)
-      // Special case: If totalRows < 18, totals go on page 2 with footer
+      // Special case: If totalRows < 10, split rows between page 1 and page 2 (with totals + footer on page 2)
+      // Exception: If totalRows < 4 (less than 5 including total), footer goes on page 1
       // Last page: If less than 20 rows, add footer
       const totalRows = monthTransactions.length;
       const pages: DailyTransaction[][] = [];
-      const needsTotalsPage = totalRows > 0 && totalRows < 18; // Special case: totals on separate page if < 18 rows
+      const hasVeryFewRows = totalRows > 0 && totalRows < 4; // Less than 5 rows including total
+      const needsSplitPages = totalRows > 0 && totalRows < 10 && !hasVeryFewRows; // Split rows between pages if < 10 rows (but not if very few rows)
       
       if (totalRows > 0) {
-        if (needsTotalsPage) {
-          // Special case: All rows on page 1, totals will go on page 2
+        if (hasVeryFewRows) {
+          // Very few rows: All rows + totals + footer on page 1
           pages.push(monthTransactions);
+        } else if (needsSplitPages) {
+          // Split case: Split rows evenly or put first half on page 1, rest + totals + footer on page 2
+          const splitPoint = Math.floor(totalRows / 2);
+          pages.push(monthTransactions.slice(0, splitPoint));
+          pages.push(monthTransactions.slice(splitPoint));
         } else {
-          // Normal case: Page 1 has 18 rows
-          pages.push(monthTransactions.slice(0, 18));
+          // Normal case: Page 1 has 10 rows
+          pages.push(monthTransactions.slice(0, 10));
           
           // Remaining pages: 30 rows each
-          let startIndex = 18;
+          let startIndex = 10;
           while (startIndex < totalRows) {
             pages.push(monthTransactions.slice(startIndex, startIndex + 30));
             startIndex += 30;
@@ -193,17 +200,25 @@ export function generateCashlessStatements(
         const pageRowCount = pageRows.length;
         
         // Footer logic:
-        // - If special case (needsTotalsPage): footer only on page 2 (totals page)
+        // - If very few rows (< 4): footer on first page with totals
+        // - If split pages (needsSplitPages): footer on last page (page 2) with totals
         // - Otherwise: footer on last page if it has < 20 rows
-        const shouldShowFooter = needsTotalsPage 
-          ? false // Footer will be on the totals page (page 2)
-          : (isLastPage && pageRowCount < 20);
+        const shouldShowFooter = hasVeryFewRows && isFirstPage
+          ? true // Footer on first page for very few rows
+          : needsSplitPages && isLastPage
+            ? true // Footer on last page (page 2) for split pages
+            : (isLastPage && pageRowCount < 20);
         
         const tableRows = generateCashlessTableRows(pageRows);
         // Totals logic:
-        // - If special case: totals on separate page (page 2)
+        // - If very few rows: totals on first page
+        // - If split pages: totals on last page (page 2)
         // - Otherwise: totals on last page
-        const shouldShowTotals = needsTotalsPage ? false : isLastPage;
+        const shouldShowTotals = hasVeryFewRows && isFirstPage
+          ? true // Totals on first page for very few rows
+          : needsSplitPages && isLastPage
+            ? true // Totals on last page (page 2) for split pages
+            : isLastPage;
 
         if (isFirstPage) {
           // First page with header
@@ -312,38 +327,7 @@ export function generateCashlessStatements(
         }
       }).join('');
 
-      // Add totals page if needed (special case: totalRows < 18)
-      const totalsPageHTML = needsTotalsPage ? `
-    <div class="page-break"></div>
-    <div class="cashless-page">
-      <div class="cashless-statement">
-        <table class="cashless-table">
-          <thead>
-            <tr>
-              <th></th>
-              <th colspan="3">CASHLESS ACCOUNT ACTIVITY</th>
-              <th colspan="3">GAMING ACTIVITY</th>
-            </tr>
-            <tr>
-              <th>Date</th>
-              <th>Cashless Card Deposit</th>
-              <th>Credits Transferred From Card to Game</th>
-              <th>Credits Transferred From Game to Card</th>
-              <th>Total Amount Bet</th>
-              <th>Total Amount Won</th>
-              <th>Net Amount Won or -(Lost)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${totalsRow}
-          </tbody>
-        </table>
-        ${footerHTML}
-      </div>
-    </div>
-      ` : '';
-
-      return pagesHTML + totalsPageHTML;
+      return pagesHTML;
     })
     .join('');
 }
