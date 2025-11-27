@@ -282,17 +282,14 @@ export function renderPreCommitmentPage(
   }
 
   const breakItems: string[] = [];
-  const minsF = formatWithUnit(preCommitment.mins, 'minutes');
-  const everyF = (preCommitment.every || '').toString().trim();
-  const hourF = formatWithUnit(preCommitment.hour, 'hours');
-  const hasMins = minsF !== '–' && !isZeroOrEmpty(preCommitment.mins);
-  const hasEvery = everyF !== '' && !isZeroOrEmpty(preCommitment.every);
-  const hasHour = hourF !== '–' && !isZeroOrEmpty(preCommitment.hour);
+  // Extract numeric value from mins
+  const minsValue = preCommitment.mins ? String(preCommitment.mins).trim().replace(/,/g, '') : '';
+  const minsNum = minsValue ? Number(minsValue) : NaN;
+  const hasMins = !Number.isNaN(minsNum) && minsNum > 0;
   
-  if (hasMins || hasEvery || hasHour) {
-    if (hasMins) breakItems.push(`Mins: ${minsF}`);
-    if (hasEvery) breakItems.push(`Every: ${everyF}`);
-    if (hasHour) breakItems.push(`Hour: ${hourF}`);
+  // Build single line format: "10 minutes every hour"
+  if (hasMins) {
+    breakItems.push(`${minsNum} minutes every hour`);
   }
 
   const scheduleItems: string[] = [];

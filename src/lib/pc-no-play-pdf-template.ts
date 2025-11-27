@@ -296,17 +296,14 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   // If no time limit, timeLimitItems stays empty and will show "Nil"
 
   const breakItems: string[] = [];
-  const minsF = formatWithUnit(player.mins, 'minutes');
-  const everyF = (player.every || '').toString().trim();
-  const hourF = formatWithUnit(player.hour, 'hours');
-  const hasMins = minsF !== '–' && !isZeroOrEmpty(player.mins);
-  const hasEvery = everyF !== '' && !isZeroOrEmpty(player.every);
-  const hasHour = hourF !== '–' && !isZeroOrEmpty(player.hour);
+  // Extract numeric value from mins
+  const minsValue = player.mins ? String(player.mins).trim().replace(/,/g, '') : '';
+  const minsNum = minsValue ? Number(minsValue) : NaN;
+  const hasMins = !Number.isNaN(minsNum) && minsNum > 0;
   
-  if (hasMins || hasEvery || hasHour) {
-    if (hasMins) breakItems.push(`Mins: ${minsF}`);
-    if (hasEvery) breakItems.push(`Every: ${everyF}`);
-    if (hasHour) breakItems.push(`Hour: ${hourF}`);
+  // Build single line format: "10 minutes every hour"
+  if (hasMins) {
+    breakItems.push(`${minsNum} minutes every hour`);
   }
   // If no break items, breakItems stays empty and will show "Nil"
 
