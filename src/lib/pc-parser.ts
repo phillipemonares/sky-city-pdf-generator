@@ -512,10 +512,22 @@ function transformToPreCommitmentPlayers(
     const rawIsPlay = (n['is play'] ?? n['play status'] ?? n['isplay'] ?? '').toString().trim();
     const rawStatus = (n['status'] ?? '').toString().trim();
     const rawBreaches = (n['breaches'] ?? '').toString().trim();
-    let detectedPlayStatus = rawIsPlay || rawStatus || rawBreaches || 'No Play';
+    let detectedPlayStatus = rawIsPlay || rawStatus || rawBreaches || '';
+    
+    // Normalize the status to detect Play vs No Play
     const detectedNormalized = detectedPlayStatus.toLowerCase().replace(/[^a-z]/g, '');
-    if (detectedNormalized !== 'noplay') {
+    
+    // Check if it's explicitly "No Play"
+    if (detectedNormalized === 'noplay' || detectedNormalized === 'noplaystatus') {
       detectedPlayStatus = 'No Play';
+    } 
+    // Check if it's explicitly "Play" or has play indicators
+    else if (detectedNormalized === 'play' || detectedNormalized === 'playstatus' || detectedNormalized.includes('play')) {
+      detectedPlayStatus = 'Play';
+    }
+    // If empty or unclear, default to "Play" (since we're now including both)
+    else {
+      detectedPlayStatus = 'Play';
     }
 
     // Extract member information from template columns

@@ -372,7 +372,7 @@ export async function closePool(): Promise<void> {
 }
 
 // ============================================
-// No-Play Pre-Commitment Batch Functions
+// Play & No-Play Pre-Commitment Batch Functions
 // ============================================
 
 export interface NoPlayBatch {
@@ -398,7 +398,7 @@ export interface NoPlayPlayer {
 }
 
 /**
- * Save a no-play pre-commitment batch with players to the database
+ * Save a pre-commitment batch with players (both Play and No-Play) to the database
  */
 export async function saveNoPlayBatch(
   statementPeriod: string,
@@ -563,6 +563,109 @@ export async function deleteNoPlayBatch(batchId: string): Promise<boolean> {
     throw error;
   } finally {
     connection.release();
+  }
+}
+
+/**
+ * Interface for no-play member with batch info
+ */
+export interface NoPlayMemberWithBatch {
+  account_number: string;
+  latest_no_play_batch_id: string;
+  latest_no_play_generation_date: Date;
+  statement_period: string;
+  statement_date: string;
+  // Member info extracted from player_data
+  first_name: string;
+  last_name: string;
+  email: string;
+  address1: string;
+  address2: string;
+  suburb: string;
+}
+
+/**
+ * Get paginated no-play members directly from no-play batches
+ * Returns members with their latest no-play batch information
+ */
+export async function getNoPlayMembersPaginated(
+  page: number = 1,
+  pageSize: number = 50
+): Promise<{ members: NoPlayMemberWithBatch[]; total: number; totalPages: number }> {
+  try {
+    // Ensure page and pageSize are integers
+    const validPage = Math.max(1, Math.floor(page));
+    const validPageSize = Math.max(1, Math.floor(pageSize));
+    const offset = (validPage - 1) * validPageSize;
+    
+    // Get total count of unique accounts in no-play batches
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players`
+    );
+    const total = countRows[0]?.total || 0;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Get paginated no-play members with their latest batch info
+    // First get distinct accounts with pagination, then get latest batch info for each
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT 
+        latest_no_play.account_number,
+        latest_no_play.batch_id as latest_no_play_batch_id,
+        latest_no_play.generation_date as latest_no_play_generation_date,
+        latest_no_play.statement_period,
+        latest_no_play.statement_date,
+        latest_no_play.player_data
+       FROM (
+         SELECT 
+           npp.account_number,
+           npb.id as batch_id,
+           npb.generation_date,
+           npp.statement_period,
+           npp.statement_date,
+           npp.player_data,
+           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
+         FROM no_play_players npp
+         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
+       ) as latest_no_play
+       WHERE latest_no_play.rn = 1
+       ORDER BY latest_no_play.account_number ASC
+       LIMIT ${validPageSize} OFFSET ${offset}`
+    );
+    
+    const members = rows.map(row => {
+      // Extract member info from player_data
+      let playerData: any = {};
+      try {
+        playerData = JSON.parse(row.player_data);
+      } catch (error) {
+        console.error('Error parsing player_data:', error);
+      }
+      
+      const playerInfo = playerData.playerInfo || {};
+      
+      return {
+        account_number: row.account_number,
+        latest_no_play_batch_id: row.latest_no_play_batch_id,
+        latest_no_play_generation_date: new Date(row.latest_no_play_generation_date),
+        statement_period: row.statement_period || '',
+        statement_date: row.statement_date || '',
+        first_name: playerInfo.firstName || '',
+        last_name: playerInfo.lastName || '',
+        email: playerInfo.email || '',
+        address1: playerInfo.address1 || '',
+        address2: playerInfo.address2 || '',
+        suburb: playerInfo.suburb || '',
+      };
+    });
+    
+    return {
+      members,
+      total,
+      totalPages
+    };
+  } catch (error) {
+    console.error('Error getting paginated no-play members:', error);
+    throw error;
   }
 }
 
@@ -862,6 +965,8 @@ export interface MemberWithBatch extends Member {
   latest_quarter: number | null;
   latest_year: number | null;
   latest_generation_date: Date | null;
+  latest_no_play_batch_id: string | null;
+  latest_no_play_generation_date: Date | null;
 }
 
 /**
@@ -886,13 +991,16 @@ export async function getMembersPaginated(
     
     // Get paginated members with their latest batch info
     // Join with quarterly_user_statements and generation_batches to get the most recent batch per member
+    // Also join with no_play_players and no_play_batches to get the most recent no-play batch per member
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         m.*,
         latest_batch.batch_id as latest_batch_id,
         latest_batch.quarter as latest_quarter,
         latest_batch.year as latest_year,
-        latest_batch.generation_date as latest_generation_date
+        latest_batch.generation_date as latest_generation_date,
+        latest_no_play.batch_id as latest_no_play_batch_id,
+        latest_no_play.generation_date as latest_no_play_generation_date
        FROM members m
        LEFT JOIN (
          SELECT 
@@ -905,6 +1013,15 @@ export async function getMembersPaginated(
          FROM quarterly_user_statements qus
          INNER JOIN generation_batches gb ON qus.batch_id = gb.id
        ) as latest_batch ON m.account_number = latest_batch.account_number AND latest_batch.rn = 1
+       LEFT JOIN (
+         SELECT 
+           npp.account_number,
+           npb.id as batch_id,
+           npb.generation_date,
+           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
+         FROM no_play_players npp
+         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
+       ) as latest_no_play ON m.account_number = latest_no_play.account_number AND latest_no_play.rn = 1
        ORDER BY m.account_number ASC 
        LIMIT ${validPageSize} OFFSET ${offset}`
     );
@@ -930,6 +1047,8 @@ export async function getMembersPaginated(
       latest_quarter: row.latest_quarter || null,
       latest_year: row.latest_year || null,
       latest_generation_date: row.latest_generation_date ? new Date(row.latest_generation_date) : null,
+      latest_no_play_batch_id: row.latest_no_play_batch_id || null,
+      latest_no_play_generation_date: row.latest_no_play_generation_date ? new Date(row.latest_no_play_generation_date) : null,
     }));
     
     return {
