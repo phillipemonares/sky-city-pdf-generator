@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import puppeteer from 'puppeteer';
 import sgMail from '@sendgrid/mail';
 import { generatePreCommitmentPDFHTML } from '@/lib/pc-no-play-pdf-template';
+import { generatePlayPreCommitmentPDFHTML } from '@/lib/pc-play-pdf-template';
 import { PreCommitmentPDFRequest, PreCommitmentPlayer } from '@/types/player-data';
 import { getMemberByAccount } from '@/lib/db';
 import { readFileSync } from 'fs';
@@ -61,14 +62,20 @@ export async function POST(request: NextRequest) {
       // Set timeout for page operations
       page.setDefaultTimeout(10000);
       
-      // Convert logo to base64
-      const logoPath = join(process.cwd(), 'public', 'no-play-header.png');
+      // Determine which template to use based on player status
+      const isPlay = playerData.noPlayStatus === 'Play';
+      
+      // Convert appropriate logo to base64
+      const logoFileName = isPlay ? 'play-header.png' : 'no-play-header.png';
+      const logoPath = join(process.cwd(), 'public', logoFileName);
       const logoBuffer = readFileSync(logoPath);
       const logoBase64 = logoBuffer.toString('base64');
       const logoDataUrl = `data:image/png;base64,${logoBase64}`;
       
-      // Generate PDF
-      const html = generatePreCommitmentPDFHTML(playerData, logoDataUrl, memberData);
+      // Generate PDF using appropriate template
+      const html = isPlay 
+        ? generatePlayPreCommitmentPDFHTML(playerData, logoDataUrl, memberData)
+        : generatePreCommitmentPDFHTML(playerData, logoDataUrl, memberData);
       
       await page.setContent(html, { waitUntil: 'networkidle0' });
       

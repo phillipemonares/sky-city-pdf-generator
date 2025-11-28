@@ -47,8 +47,12 @@ export const PC_PLAY_STYLES = `
     padding-left: 20px;
   }
 
+  .statement-details > p:first-child {
+    margin-top: 0;
+  }
+
   .statement-details ul li {
-    margin-left: 35px;
+    margin-left: 20px;
   }
 
   .precommitment-table {
@@ -353,9 +357,9 @@ export function renderPreCommitmentPage(
     <p style="margin-top: -5px;">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide’s Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
 
     <div>
-      <h4>Your Active Pre-Commitment Rule/s as at ${quarterEnd}</h4>
+      <p style="margin-top: 10px;"><strong>Your Active Pre-Commitment Rule/s as at ${quarterEnd}</strong></p>
       <div class="statement-details">
-        <p><strong>Expenditure Limits:</strong></p>
+        <p style="margin-top: 0;"><strong>Expenditure Limits:</strong></p>
         <ul>
           ${renderList(expenditureItems)}
         </ul>
@@ -379,8 +383,8 @@ export function renderPreCommitmentPage(
     </div>
     <p style="margin-top: -5px;"><strong>Number of Breaches:</strong> ${breaches}</p>
     <div>
-      <h4 style="margin-top: -10px;">Statement Period: ${quarterStart} to ${quarterEnd}</h4>
-      <h4 style="margin-top: -15px;">Daily Amounts Won/Lost During the Period:</h4>
+      <p style="margin-top: -5px;"><strong>Statement Period:</strong> ${quarterStart} to ${quarterEnd}</p>
+      <p style="margin-top: -5px;"><strong>Daily Amounts Won/Lost During the Period:</strong></p>
       <table class="precommitment-table">
         <thead>
           <tr>
@@ -416,6 +420,266 @@ export function renderPreCommitmentPage(
     <p class="precommitment-footer">This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
   </div>
   ` : ''}
+  `;
+}
+
+/**
+ * Generate complete HTML for Play pre-commitment PDF
+ * This is a wrapper that creates a minimal QuarterlyData from the player's statementPeriod
+ */
+export function generatePlayPreCommitmentPDFHTML(
+  player: PreCommitmentPlayer,
+  playHeaderDataUrl?: string,
+  memberData?: any
+): string {
+  // Parse statement period to create minimal QuarterlyData
+  // Format: "DD Month YYYY - DD Month YYYY" or "Current Period"
+  let quarterStart = '';
+  let quarterEnd = '';
+  
+  if (player.statementPeriod && player.statementPeriod !== 'Current Period') {
+    // Try to parse the statement period
+    const parts = player.statementPeriod.split(' - ');
+    if (parts.length === 2) {
+      quarterStart = parts[0].trim();
+      quarterEnd = parts[1].trim();
+    }
+  }
+  
+  // If we couldn't parse, use statementDate or current date
+  if (!quarterEnd && player.statementDate) {
+    quarterEnd = player.statementDate;
+  }
+  if (!quarterStart) {
+    quarterStart = quarterEnd || new Date().toLocaleDateString();
+  }
+  
+  // Create minimal QuarterlyData
+  const quarterlyData: QuarterlyData = {
+    quarter: 1, // Default, not used when statementPeriod is provided
+    year: new Date().getFullYear(),
+    players: [],
+    monthlyBreakdown: [],
+    statementPeriod: {
+      startDate: quarterStart,
+      endDate: quarterEnd,
+    },
+  };
+  
+  const innerHTML = renderPreCommitmentPage(
+    player,
+    quarterlyData,
+    undefined, // salutationOverride
+    playHeaderDataUrl,
+    undefined // activity
+  );
+  
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkyCity Adelaide - Play Pre-Commitment Statement</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+      @media print {
+        * {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        .page {
+          margin: 0 !important;
+          padding: 0 40px 40px 40px !important;
+        }
+        .play-header {
+          position: relative !important;
+          top: auto !important;
+          left: auto !important;
+        }
+        @supports (-webkit-touch-callout: none) {
+          @page { margin: 0; }
+        }
+      }
+
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Montserrat', Arial, sans-serif;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #000;
+        background: white;
+      }
+
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        background: white;
+        padding: 40px;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .play-header {
+        width: 100%;
+      }
+
+      .member-info {
+        margin-bottom: 20px;
+      }
+
+      .member-number {
+        text-align: right;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .text-logo {
+        font-size: 24px;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .precommitment-intro {
+        margin-bottom: 15px;
+      }
+
+      .precommitment-contact {
+        margin-top: 15px;
+      }
+
+      .precommitment-section {
+        margin-top: 10px;
+      }
+
+      .precommitment-section h4 {
+        margin-bottom: 10px;
+        font-size: 13px;
+      }
+
+      .precommitment-section ul {
+        padding-left: 20px;
+        margin-top: 5px;
+      }
+
+      .precommitment-section li {
+        margin-bottom: 6px;
+      }
+
+      .statement-details {
+        padding-left: 20px;
+      }
+
+      .statement-details > p:first-child {
+        margin-top: 0;
+      }
+
+      .statement-details ul li {
+        margin-left: 50px;
+      }
+
+      .precommitment-table {
+        width: 40%;
+        border-collapse: collapse;
+        margin-top: 15px;
+      }
+
+      .precommitment-table th,
+      .precommitment-table td {
+        border: 1px solid #000;
+        padding: 6px;
+        font-size: 11px;
+      }
+
+      .precommitment-table th {
+        text-align: left;
+        font-weight: 600;
+      }
+
+      .precommitment-table td.amount {
+        text-align: right;
+      }
+
+      .precommitment-footer {
+        margin-top: auto;
+        text-align: center;
+        font-size: 10px;
+        line-height: 1.5;
+        padding-top: 20px;
+      }
+
+      .page-break {
+        page-break-before: always;
+      }
+
+      .session-page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        background: white;
+        padding: 40px;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .session-title {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 10px 0 20px 0;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .negative-value {
+        color: #c53030;
+      }
+
+      h4 {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 10px;
+      }
+
+      p {
+        margin-bottom: 10px;
+      }
+
+      ul {
+        list-style-type: disc;
+      }
+
+      li {
+        margin-bottom: 6px;
+      }
+
+      a {
+        color: #0066cc;
+        text-decoration: underline;
+      }
+    </style>
+</head>
+<body>
+  ${innerHTML}
+</body>
+</html>
   `;
 }
 

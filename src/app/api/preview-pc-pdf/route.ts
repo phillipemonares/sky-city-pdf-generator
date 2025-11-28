@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generatePreCommitmentPDFHTML } from '@/lib/pc-no-play-pdf-template';
+import { generatePlayPreCommitmentPDFHTML } from '@/lib/pc-play-pdf-template';
 import { PreCommitmentPDFRequest, PreCommitmentPlayer } from '@/types/player-data';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -16,17 +17,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Convert logo to base64
-    const logoPath = join(process.cwd(), 'public', 'no-play-header.png');
+    // Generate HTML for the first player (single player per request)
+    const playerData = players[0];
+    
+    // Determine which template to use based on player status
+    const isPlay = playerData.noPlayStatus === 'Play';
+    
+    // Convert appropriate logo to base64
+    const logoFileName = isPlay ? 'play-header.png' : 'no-play-header.png';
+    const logoPath = join(process.cwd(), 'public', logoFileName);
     const logoBuffer = readFileSync(logoPath);
     const logoBase64 = logoBuffer.toString('base64');
     const logoDataUrl = `data:image/png;base64,${logoBase64}`;
     
-    // Generate HTML for the first player (single player per request)
-    const playerData = players[0];
-    
-    // Member data is now included in the template, no need to fetch from database
-    const html = generatePreCommitmentPDFHTML(playerData, logoDataUrl, null);
+    // Generate HTML using appropriate template
+    const html = isPlay 
+      ? generatePlayPreCommitmentPDFHTML(playerData, logoDataUrl, null)
+      : generatePreCommitmentPDFHTML(playerData, logoDataUrl, null);
     
     return new NextResponse(html, {
       status: 200,
