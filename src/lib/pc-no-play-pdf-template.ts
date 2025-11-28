@@ -216,11 +216,62 @@ function formatExcelTime(value: unknown): string {
   return `${hh}:${mm}`;
 }
 
+// Format date to DD/MM/YYYY format
+function formatDateToDDMMYYYY(dateStr: string): string {
+  if (!dateStr) return dateStr;
+  
+  const trimmed = dateStr.trim();
+  
+  // If already in DD/MM/YYYY format, return as-is
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+    // Check if it's actually DD/MM/YYYY (day <= 31, month <= 12)
+    const parts = trimmed.split('/');
+    const first = parseInt(parts[0], 10);
+    const second = parseInt(parts[1], 10);
+    
+    // If first part > 12, it's likely already DD/MM/YYYY
+    if (first > 12) {
+      return trimmed;
+    }
+    
+    // If second part > 12, it's likely MM/DD/YYYY, so swap
+    if (second > 12) {
+      return `${parts[1]}/${parts[0]}/${parts[2]}`;
+    }
+    
+    // Ambiguous case - assume it's MM/DD/YYYY and swap to DD/MM/YYYY
+    // This handles cases like "9/30/2025" -> "30/09/2025"
+    return `${parts[1]}/${parts[0]}/${parts[2]}`;
+  }
+  
+  // Try to parse as MM/DD/YYYY first (common US format)
+  const mmddyyyyMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mmddyyyyMatch) {
+    const [, month, day, year] = mmddyyyyMatch;
+    return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`;
+  }
+  
+  // Try to parse the date string using Date constructor
+  const date = new Date(trimmed);
+  if (!isNaN(date.getTime())) {
+    // Format as DD/MM/YYYY
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  
+  // If parsing fails, try formatExcelDate as fallback
+  const formatted = formatExcelDate(trimmed);
+  return formatted !== '–' && formatted !== '-' ? formatted : dateStr;
+}
+
 export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUrl?: string, memberData?: Member | null): string {
   const { playerInfo, statementPeriod, statementDate } = player;
   
   // Member data is now included in the template columns, use playerInfo directly
   const displayName = [playerInfo.firstName, playerInfo.lastName].filter(Boolean).join(' ').trim() || 'Member';
+  const firstName = playerInfo.firstName?.trim() || 'Member';
   
   // Build address from playerInfo (Add1 and Add2 from template)
   const address = [playerInfo.address1, playerInfo.address2].filter(Boolean).join(', ').trim();
@@ -331,13 +382,13 @@ ${PRECOMMITMENT_STYLES}
         <img src="/no-play-header.png" alt="SkyCity Adelaide" class="header" />
         <table class="letterhead">
           <tr>
-            <td colspan="2">Member Account: ${playerInfo.playerAccount}</td>
+            <td colspan="2">${displayName}</td>
           </tr>
           <tr>
-            <td colspan="2">Streets: ${address}</td>
+            <td colspan="2">${address}</td>
           </tr>
           <tr>
-            <td colspan="2">Suburb: ${suburb}</td>
+            <td colspan="2">${suburb}</td>
           </tr>
           <tr>
             <td>South Australia XXXX</td>
@@ -346,7 +397,7 @@ ${PRECOMMITMENT_STYLES}
         </table>
         <br>
         <div class="content">
-        <p>Dear ${displayName},</p>
+        <p>Dear ${firstName},</p>
         <br>
         <p>
         <strong>We understand that you were enrolled in MyPlay during the period of ${statementPeriod}.</strong>
@@ -360,7 +411,7 @@ ${PRECOMMITMENT_STYLES}
             Please visit the Rewards Desk to confirm or vary your expenditure limit. If you wish to change the delivery method for your statements please see our friendly SkyCity Adelaide staff at either the Rewards Desk or your Host desk. An immediate change will be made to your account.
         </p>
         <br>
-        <p>Your Active Pre-Commitment Rule/s as at ${statementDate} are:</p>
+        <p>Your Active Pre-Commitment Rule/s as at ${formatDateToDDMMYYYY(statementDate)} are:</p>
             
         <div class="statement-details">
           <p><strong>Expenditure Limits:</strong></p>

@@ -192,7 +192,7 @@ export async function GET(request: NextRequest) {
     const logoDataUrl = `data:image/png;base64,${logoBase64}`;
 
     // Convert play-header to base64 for pre-commitment section
-    const playHeaderPath = join(process.cwd(), 'public', 'play-header.png');
+    const playHeaderPath = join(process.cwd(), 'public', 'no-play-header.png');
     const playHeaderBuffer = readFileSync(playHeaderPath);
     const playHeaderBase64 = playHeaderBuffer.toString('base64');
     const playHeaderDataUrl = `data:image/png;base64,${playHeaderBase64}`;

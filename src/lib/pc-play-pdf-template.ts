@@ -210,6 +210,30 @@ const formatMonthName = (monthName: string, quarterlyData: QuarterlyData, monthI
   return targetMonth ? targetMonth.name : '';
 };
 
+// Format date to DD/MM/YYYY format
+const formatDateToDDMMYYYY = (dateStr: string): string => {
+  if (!dateStr) return dateStr;
+  
+  // If already in DD/MM/YYYY format, return as-is
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr.trim())) {
+    return dateStr.trim();
+  }
+  
+  // Try to parse the date string
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    // If parsing fails, try formatExcelDate as fallback
+    const formatted = formatExcelDate(dateStr);
+    return formatted !== '-' ? formatted : dateStr;
+  }
+  
+  // Format as DD/MM/YYYY
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
 const getStatementPeriod = (quarterlyData: QuarterlyData): { start: string; end: string } => {
   // Use explicit statement period if provided
   if (quarterlyData.statementPeriod?.startDate && quarterlyData.statementPeriod?.endDate) {
@@ -242,6 +266,7 @@ export function renderPreCommitmentPage(
     .join(' ')
     .trim() || 'Member';
   const displayName = salutationOverride || fallbackDisplayName;
+  const firstName = playerInfo.firstName?.trim() || 'Member';
   const breachesRaw = wrapNegativeValue(sanitizeNumber(preCommitment.breaches));
   // Show "Nil" if breaches is "-", "0.00", "0", or empty (strip HTML tags for comparison)
   const breachesPlain = breachesRaw.replace(/<[^>]*>/g, '').trim();
@@ -350,14 +375,14 @@ export function renderPreCommitmentPage(
       <div class="member-number">Member Number: ${playerInfo.playerAccount || '-'}</div>
     </div>
 
-    <p class="precommitment-intro">Dear ${displayName},</p>
+    <p class="precommitment-intro">Dear ${firstName},</p>
 
     <p style="margin-top: -5px;">Please find below your Pre-commitment information for the period ${quarterStart} to ${quarterEnd}.</p>
     <p style="margin-top: -5px;">Please see our friendly staff at either the Rewards desk or Host desks to vary or confirm your limits. Your delivery preference can also be updated at these locations. We can send statements via post, email or onsite collection.</p>
     <p style="margin-top: -5px;">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide’s Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
 
     <div>
-      <p style="margin-top: 10px;"><strong>Your Active Pre-Commitment Rule/s as at ${quarterEnd}</strong></p>
+      <p style="margin-top: 10px;"><strong>Your Active Pre-Commitment Rule/s as at ${formatDateToDDMMYYYY(quarterEnd)}</strong></p>
       <div class="statement-details">
         <p style="margin-top: 0;"><strong>Expenditure Limits:</strong></p>
         <ul>
