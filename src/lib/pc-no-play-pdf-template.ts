@@ -222,26 +222,33 @@ function formatDateToDDMMYYYY(dateStr: string): string {
   
   const trimmed = dateStr.trim();
   
-  // If already in DD/MM/YYYY format, return as-is
+  // If already in DD/MM/YYYY or MM/DD/YYYY format, parse and normalize
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
-    // Check if it's actually DD/MM/YYYY (day <= 31, month <= 12)
     const parts = trimmed.split('/');
     const first = parseInt(parts[0], 10);
     const second = parseInt(parts[1], 10);
+    const year = parts[2];
+    
+    let day: number;
+    let month: number;
     
     // If first part > 12, it's likely already DD/MM/YYYY
     if (first > 12) {
-      return trimmed;
+      day = first;
+      month = second;
+    } else if (second > 12) {
+      // If second part > 12, it's likely MM/DD/YYYY, so swap
+      day = second;
+      month = first;
+    } else {
+      // Ambiguous case - assume it's MM/DD/YYYY and swap to DD/MM/YYYY
+      // This handles cases like "9/30/2025" -> "30/09/2025"
+      day = second;
+      month = first;
     }
     
-    // If second part > 12, it's likely MM/DD/YYYY, so swap
-    if (second > 12) {
-      return `${parts[1]}/${parts[0]}/${parts[2]}`;
-    }
-    
-    // Ambiguous case - assume it's MM/DD/YYYY and swap to DD/MM/YYYY
-    // This handles cases like "9/30/2025" -> "30/09/2025"
-    return `${parts[1]}/${parts[0]}/${parts[2]}`;
+    // Ensure zero-padding for day and month
+    return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
   }
   
   // Try to parse as MM/DD/YYYY first (common US format)
