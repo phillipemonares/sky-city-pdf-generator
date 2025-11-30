@@ -375,7 +375,7 @@ export function renderPreCommitmentPage(
       <div class="member-number">Member Number: ${playerInfo.playerAccount || '-'}</div>
     </div>
 
-    <p class="precommitment-intro">Dear ${firstName},</p>
+    <p class="precommitment-intro">Dear ${displayName},</p>
 
     <p style="margin-top: -5px;">Please find below your Pre-commitment information for the period ${quarterStart} to ${quarterEnd}.</p>
     <p style="margin-top: -5px;">Please see our friendly staff at either the Rewards desk or Host desks to vary or confirm your limits. Your delivery preference can also be updated at these locations. We can send statements via post, email or onsite collection.</p>

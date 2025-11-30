@@ -404,7 +404,7 @@ ${PRECOMMITMENT_STYLES}
         </table>
         <br>
         <div class="content">
-        <p>Dear ${firstName},</p>
+        <p>Dear ${displayName},</p>
         <br>
         <p>
         <strong>We understand that you were enrolled in MyPlay during the period of ${statementPeriod}.</strong>
