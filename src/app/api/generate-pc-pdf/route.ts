@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       const isPlay = playerData.noPlayStatus === 'Play';
       
       // Convert appropriate logo to base64
-      const logoFileName = isPlay ? 'no-play-header.png' : 'no-play-header.png';
+      const logoFileName = 'no-play-header.png';
       const logoPath = join(process.cwd(), 'public', logoFileName);
       const logoBuffer = readFileSync(logoPath);
       const logoBase64 = logoBuffer.toString('base64');

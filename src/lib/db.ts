@@ -585,6 +585,24 @@ export interface NoPlayMemberWithBatch {
 }
 
 /**
+ * Interface for play member with batch info (same structure as NoPlayMemberWithBatch)
+ */
+export interface PlayMemberWithBatch {
+  account_number: string;
+  latest_play_batch_id: string;
+  latest_play_generation_date: Date;
+  statement_period: string;
+  statement_date: string;
+  // Member info extracted from player_data
+  first_name: string;
+  last_name: string;
+  email: string;
+  address1: string;
+  address2: string;
+  suburb: string;
+}
+
+/**
  * Get paginated no-play members directly from no-play batches
  * Returns members with their latest no-play batch information
  */
@@ -598,9 +616,9 @@ export async function getNoPlayMembersPaginated(
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
     
-    // Get total count of unique accounts in no-play batches
+    // Get total count of unique accounts in no-play batches with No Play status
     const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players`
+      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'No Play'`
     );
     const total = countRows[0]?.total || 0;
     const totalPages = Math.ceil(total / validPageSize);
@@ -626,6 +644,7 @@ export async function getNoPlayMembersPaginated(
            ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
          FROM no_play_players npp
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
+         WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
        WHERE latest_no_play.rn = 1
        ORDER BY latest_no_play.account_number ASC
@@ -665,6 +684,92 @@ export async function getNoPlayMembersPaginated(
     };
   } catch (error) {
     console.error('Error getting paginated no-play members:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get paginated play members directly from no-play batches (filtered by Play status)
+ * Returns members with their latest play batch information
+ */
+export async function getPlayMembersPaginated(
+  page: number = 1,
+  pageSize: number = 50
+): Promise<{ members: PlayMemberWithBatch[]; total: number; totalPages: number }> {
+  try {
+    // Ensure page and pageSize are integers
+    const validPage = Math.max(1, Math.floor(page));
+    const validPageSize = Math.max(1, Math.floor(pageSize));
+    const offset = (validPage - 1) * validPageSize;
+    
+    // Get total count of unique accounts in no-play batches with Play status
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'Play'`
+    );
+    const total = countRows[0]?.total || 0;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Get paginated play members with their latest batch info
+    // First get distinct accounts with pagination, then get latest batch info for each
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT 
+        latest_play.account_number,
+        latest_play.batch_id as latest_play_batch_id,
+        latest_play.generation_date as latest_play_generation_date,
+        latest_play.statement_period,
+        latest_play.statement_date,
+        latest_play.player_data
+       FROM (
+         SELECT 
+           npp.account_number,
+           npb.id as batch_id,
+           npb.generation_date,
+           npp.statement_period,
+           npp.statement_date,
+           npp.player_data,
+           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
+         FROM no_play_players npp
+         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
+         WHERE npp.no_play_status = 'Play'
+       ) as latest_play
+       WHERE latest_play.rn = 1
+       ORDER BY latest_play.account_number ASC
+       LIMIT ${validPageSize} OFFSET ${offset}`
+    );
+    
+    const members = rows.map(row => {
+      // Extract member info from player_data
+      let playerData: any = {};
+      try {
+        playerData = JSON.parse(row.player_data);
+      } catch (error) {
+        console.error('Error parsing player_data:', error);
+      }
+      
+      const playerInfo = playerData.playerInfo || {};
+      
+      return {
+        account_number: row.account_number,
+        latest_play_batch_id: row.latest_play_batch_id,
+        latest_play_generation_date: new Date(row.latest_play_generation_date),
+        statement_period: row.statement_period || '',
+        statement_date: row.statement_date || '',
+        first_name: playerInfo.firstName || '',
+        last_name: playerInfo.lastName || '',
+        email: playerInfo.email || '',
+        address1: playerInfo.address1 || '',
+        address2: playerInfo.address2 || '',
+        suburb: playerInfo.suburb || '',
+      };
+    });
+    
+    return {
+      members,
+      total,
+      totalPages
+    };
+  } catch (error) {
+    console.error('Error getting paginated play members:', error);
     throw error;
   }
 }

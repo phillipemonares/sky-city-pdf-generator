@@ -68,6 +68,13 @@ const PRECOMMITMENT_STYLES = `
       width: 100%;
     }
 
+    .text-logo {
+      font-size: 24px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
     .letterhead {
       margin-top: -70px;
       padding-left: 50px;
@@ -299,7 +306,9 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   };
   const formattedFooterDate = statementDate ? formatFooterDate(statementDate) : '';
   const sessionSummaries = player.sessionSummaries ?? [];
-  const hasSessionSummaries = sessionSummaries.length > 0;
+  // Only show session summaries for Play status, not for No Play status
+  const isNoPlay = player.noPlayStatus === 'No Play';
+  const hasSessionSummaries = !isNoPlay && sessionSummaries.length > 0;
   
   // Split session rows: first 11 rows on first page, rest on next page
   const firstPageRows = sessionSummaries.slice(0, 11).map((summary, index) => {
@@ -386,7 +395,7 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   return `
 ${PRECOMMITMENT_STYLES}
     <div class="page">
-        <img src="/no-play-header.png" alt="SkyCity Adelaide" class="header" />
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="SkyCity Adelaide" class="header" />` : '<div class="text-logo">SKYCITY ADELAIDE</div>'}
         <table class="letterhead">
           <tr>
             <td colspan="2">${displayName}</td>

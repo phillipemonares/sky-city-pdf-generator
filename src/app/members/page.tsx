@@ -2,10 +2,11 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import Navigation from '@/components/Navigation';
-import { MemberWithBatch, NoPlayMemberWithBatch } from '@/lib/db';
+import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
 
 export default function MembersPage() {
   const [members, setMembers] = useState<MemberWithBatch[]>([]);
+  const [playMembers, setPlayMembers] = useState<PlayMemberWithBatch[]>([]);
   const [noPlayMembers, setNoPlayMembers] = useState<NoPlayMemberWithBatch[]>([]);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -14,7 +15,7 @@ export default function MembersPage() {
   const [totalPages, setTotalPages] = useState<number>(0);
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'quarterly' | 'no-play'>('quarterly');
+  const [activeTab, setActiveTab] = useState<'quarterly' | 'play' | 'no-play'>('quarterly');
 
   const loadMembers = useCallback(async (page: number, size: number) => {
     try {
@@ -31,6 +32,26 @@ export default function MembersPage() {
       }
     } catch (error) {
       console.error('Error loading members:', error);
+    } finally {
+      setLoadingMembers(false);
+    }
+  }, []);
+
+  const loadPlayMembers = useCallback(async (page: number, size: number) => {
+    try {
+      setLoadingMembers(true);
+      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setPlayMembers(data.members || []);
+          setTotalMembers(data.total || 0);
+          setTotalPages(data.totalPages || 0);
+          setCurrentPage(data.currentPage || 1);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading play members:', error);
     } finally {
       setLoadingMembers(false);
     }
@@ -72,12 +93,14 @@ export default function MembersPage() {
     if (checked) {
       const memberIds = activeTab === 'quarterly'
         ? members.map(m => m.id)
+        : activeTab === 'play'
+        ? playMembers.map(m => m.account_number)
         : noPlayMembers.map(m => m.account_number);
       setSelectedMembers(new Set(memberIds));
     } else {
       setSelectedMembers(new Set());
     }
-  }, [members, noPlayMembers, activeTab]);
+  }, [members, playMembers, noPlayMembers, activeTab]);
 
   const handleDeleteSelected = useCallback(async () => {
     if (selectedMembers.size === 0) {
@@ -85,8 +108,8 @@ export default function MembersPage() {
       return;
     }
 
-    // Only allow deletion for quarterly members (no-play members are not in the members table)
-    if (activeTab === 'no-play') {
+    // Only allow deletion for quarterly members (pre-commitment members are not in the members table)
+    if (activeTab === 'play' || activeTab === 'no-play') {
       alert('Deletion is not available for pre-commitment members. These are managed through batches.');
       return;
     }
@@ -176,6 +199,51 @@ export default function MembersPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+    } else if (activeTab === 'play') {
+      if (playMembers.length === 0) {
+        alert('No members to export');
+        return;
+      }
+
+      // Create CSV header for play
+      const headers = ['Account', 'Name', 'Email', 'Address', 'Suburb', 'Statement Period', 'Statement Date', 'PDF Link'];
+      
+      // Create CSV rows
+      const rows = playMembers.map(member => {
+        const fullName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Name unavailable';
+        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || '';
+        const pdfLink = member.latest_play_batch_id 
+          ? `https://skycity.dailypress.agency/content/play/${member.account_number}/${member.latest_play_batch_id}/`
+          : 'N/A';
+        
+        return [
+          member.account_number,
+          fullName,
+          member.email || '',
+          address,
+          member.suburb || '',
+          member.statement_period || '',
+          member.statement_date || '',
+          pdfLink
+        ];
+      });
+
+      // Combine headers and rows
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      ].join('\n');
+
+      // Create and download file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `play_members_export_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } else {
       if (noPlayMembers.length === 0) {
         alert('No members to export');
@@ -222,12 +290,14 @@ export default function MembersPage() {
       link.click();
       document.body.removeChild(link);
     }
-  }, [members, noPlayMembers, activeTab]);
+  }, [members, playMembers, noPlayMembers, activeTab]);
 
   // Load members on component mount and when page/tab changes
   useEffect(() => {
     if (activeTab === 'quarterly') {
       loadMembers(currentPage, pageSize);
+    } else if (activeTab === 'play') {
+      loadPlayMembers(currentPage, pageSize);
     } else {
       loadNoPlayMembers(currentPage, pageSize);
     }
@@ -267,6 +337,20 @@ export default function MembersPage() {
               </button>
               <button
                 onClick={() => {
+                  setActiveTab('play');
+                  setCurrentPage(1);
+                  setSelectedMembers(new Set());
+                }}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'play'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Play Pre-Commitment
+              </button>
+              <button
+                onClick={() => {
                   setActiveTab('no-play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
@@ -277,7 +361,7 @@ export default function MembersPage() {
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                Play & No-Play Pre-Commitment
+                No-Play Pre-Commitment
               </button>
             </nav>
           </div>
@@ -292,7 +376,7 @@ export default function MembersPage() {
                   {loadingMembers ? (
                     'Loading...'
                   ) : (
-                    `Showing ${activeTab === 'quarterly' ? members.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
+                    `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
                   )}
                 </p>
               </div>
@@ -308,7 +392,7 @@ export default function MembersPage() {
                 )}
                 <button
                   onClick={exportToCSV}
-                  disabled={loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : noPlayMembers.length === 0)}
+                  disabled={loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
                   className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400"
                 >
                   Export to CSV
@@ -330,6 +414,8 @@ export default function MembersPage() {
                   onClick={() => {
                     if (activeTab === 'quarterly') {
                       loadMembers(currentPage, pageSize);
+                    } else if (activeTab === 'play') {
+                      loadPlayMembers(currentPage, pageSize);
                     } else {
                       loadNoPlayMembers(currentPage, pageSize);
                     }
@@ -346,9 +432,9 @@ export default function MembersPage() {
               <div className="text-center py-12 text-gray-500">
                 <p>Loading members...</p>
               </div>
-            ) : (activeTab === 'quarterly' ? members.length === 0 : noPlayMembers.length === 0) ? (
+            ) : (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0) ? (
               <div className="text-center py-12 text-gray-500">
-                <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : 'Play & No-Play Pre-Commitment'}</p>
+                <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
                 <p className="text-sm">
                   {activeTab === 'quarterly' 
                     ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
@@ -363,10 +449,10 @@ export default function MembersPage() {
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs w-12">
                         <input
                           type="checkbox"
-                          checked={(activeTab === 'quarterly' ? members.length : noPlayMembers.length) > 0 && selectedMembers.size === (activeTab === 'quarterly' ? members.length : noPlayMembers.length)}
+                          checked={(activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length) > 0 && selectedMembers.size === (activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length)}
                           ref={(input) => {
                             if (input) {
-                              const total = activeTab === 'quarterly' ? members.length : noPlayMembers.length;
+                              const total = activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length;
                               input.indeterminate = 
                                 selectedMembers.size > 0 && 
                                 selectedMembers.size < total;
@@ -436,6 +522,46 @@ export default function MembersPage() {
                                 {member.is_postal ? 'Yes' : 'No'}
                               </span>
                             </td>
+                            <td className="px-3 py-1.5 border border-gray-200">
+                              {previewUrl ? (
+                                <a
+                                  href={previewUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:text-blue-800 text-xs underline"
+                                >
+                                  Preview
+                                </a>
+                              ) : (
+                                <span className="text-gray-400 text-xs">No PDF available</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : activeTab === 'play' ? (
+                      playMembers.map((member) => {
+                        const previewUrl = member.latest_play_batch_id
+                          ? `/content/play/${member.account_number}/${member.latest_play_batch_id}/`
+                          : null;
+                        const fullName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Name unavailable';
+                        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || '-';
+                      
+                        return (
+                          <tr key={member.account_number} className="hover:bg-gray-50">
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">
+                              <input
+                                type="checkbox"
+                                checked={selectedMembers.has(member.account_number)}
+                                onChange={() => handleSelectMember(member.account_number)}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.account_number}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{fullName}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || '-'}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{address}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || '-'}</td>
                             <td className="px-3 py-1.5 border border-gray-200">
                               {previewUrl ? (
                                 <a

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getNoPlayMembersPaginated } from '@/lib/db';
+import { getPlayMembersPaginated } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const validPage = Math.max(1, page);
     const validPageSize = Math.min(Math.max(1, pageSize), 100); // Max 100 per page
     
-    const result = await getNoPlayMembersPaginated(validPage, validPageSize);
+    const result = await getPlayMembersPaginated(validPage, validPageSize);
     
     return NextResponse.json({
       success: true,
@@ -22,14 +22,11 @@ export async function GET(request: NextRequest) {
       pageSize: validPageSize,
     });
   } catch (error) {
-    console.error('Error fetching no-play members:', error);
+    console.error('Error fetching play members:', error);
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch no-play members from database' },
+      { success: false, error: 'Failed to fetch play members from database' },
       { status: 500 }
     );
   }
 }
-
-
-
 
