@@ -50,7 +50,8 @@ export async function GET(request: NextRequest) {
       'Every',
       'Hour',
       'Total Amount Spent',
-      'Net Win/Loss'
+      'Net Win/Loss',
+      'Total Amount Bet'
     ];
 
     // Create sample data rows
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
         'Every',
         '3',
         '0',
+        '0',
         '0'
       ],
       [
@@ -137,6 +139,7 @@ export async function GET(request: NextRequest) {
         'Every',
         '1',
         '0',
+        '0',
         '0'
       ],
       [
@@ -177,6 +180,7 @@ export async function GET(request: NextRequest) {
         '0.5',
         '5',
         'Every',
+        '0',
         '0',
         '0'
       ]
@@ -230,7 +234,8 @@ export async function GET(request: NextRequest) {
       { wch: 8 },  // Every
       { wch: 8 },  // Hour
       { wch: 18 }, // Total Amount Spent
-      { wch: 15 }  // Net Win/Loss
+      { wch: 15 }, // Net Win/Loss
+      { wch: 18 }  // Total Amount Bet
     ];
     
     worksheet['!cols'] = colWidths;

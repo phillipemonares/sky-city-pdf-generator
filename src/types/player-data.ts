@@ -181,6 +181,8 @@ export interface PreCommitmentPlayer {
   every?: string;
   hour?: string;
   sessionSummaries?: PreCommitmentSessionSummary[];
+  totalAmountBet?: string;
+  netWinLoss?: string;
 }
 
 export interface PreCommitmentCSVRow {
@@ -228,6 +230,7 @@ export interface PreCommitmentCSVRow {
   'Every Hour': string;
   'Total Amount Spent': string;
   'Net Win/Loss': string;
+  'Total Amount Bet': string;
   // Legacy support
   'Every'?: string;
   'Hour'?: string;

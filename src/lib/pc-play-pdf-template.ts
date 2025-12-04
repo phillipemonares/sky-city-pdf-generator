@@ -368,6 +368,10 @@ export function renderPreCommitmentPage(
     ? firstPageRows
     : '<tr><td colspan="2">No daily activity recorded for this period.</td></tr>';
 
+  // Get Total Amount Bet and Net/Win Loss from preCommitment or fallback to activity data
+  const totalAmountBet = preCommitment.totalAmountBet?.trim() || activity?.totalTurnover?.trim() || '';
+  const netWinLoss = preCommitment.netWinLoss?.trim() || activity?.playerWin?.trim() || '';
+
   return `
   <div class="page">
     ${playHeaderDataUrl ? `<img src="${playHeaderDataUrl}" alt="SkyCity Adelaide" class="play-header" />` : '<div class="text-logo">SKYCITY ADELAIDE</div>'}
@@ -379,9 +383,11 @@ export function renderPreCommitmentPage(
 
     <p style="margin-top: -5px;">Please find below your Pre-commitment information for the period ${quarterStart} to ${quarterEnd}.</p>
     <p style="margin-top: -5px;">Please see our friendly staff at either the Rewards desk or Host desks to vary or confirm your limits. Your delivery preference can also be updated at these locations. We can send statements via post, email or onsite collection.</p>
-    <p style="margin-top: -5px;">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide’s Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
+    <p style="margin-top: -5px;">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide's Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
 
     <div>
+      ${totalAmountBet ? `<p style="margin-top: 10px;"><strong>Total Amount Bet:</strong> ${wrapNegativeValue(formatCurrency(totalAmountBet))}</p>` : ''}
+      ${netWinLoss ? `<p style="margin-top: -5px;"><strong>Net/Win Loss:</strong> ${wrapNegativeValue(formatCurrency(netWinLoss))}</p>` : ''}
       <p style="margin-top: 10px;"><strong>Your Active Pre-Commitment Rule/s as at ${formatDateToDDMMYYYY(quarterEnd)}</strong></p>
       <div class="statement-details">
         <p style="margin-top: 0;"><strong>Expenditure Limits:</strong></p>

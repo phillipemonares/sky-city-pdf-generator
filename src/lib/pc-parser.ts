@@ -593,6 +593,8 @@ function transformToPreCommitmentPlayers(
       every: (n['every hour'] ?? n['every'] ?? '').toString(), // Support both "Every Hour" and "Every"
       hour: (n['hour'] ?? '').toString(),
       sessionSummaries: sessions.length ? [...sessions] : undefined,
+      totalAmountBet: (n['total amount bet'] ?? '').toString(),
+      netWinLoss: (n['net win/loss'] ?? '').toString(),
     } as PreCommitmentPlayer;
   });
 }
