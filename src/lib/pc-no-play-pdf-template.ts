@@ -290,6 +290,13 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   // Build address from playerInfo (Add1 and Add2 from template)
   const address = [playerInfo.address1, playerInfo.address2].filter(Boolean).join(', ').trim();
   const suburb = playerInfo.suburb || '';
+  // Build state and postcode together (same approach as other templates)
+  const state = playerInfo.state || 'South Australia';
+  // Filter out "XXXX" placeholder postcodes
+  const rawPostcode = (playerInfo.postCode || '').trim();
+  const postcode = (rawPostcode && rawPostcode !== 'XXXX') ? rawPostcode : '';
+  // Combine state and postcode like other templates do
+  const statePostcode = [state, postcode].filter(Boolean).join(' ').trim();
   
   // Format statement date for footer (last day of the period)
   const formatFooterDate = (dateStr: string): string => {
@@ -407,7 +414,7 @@ ${PRECOMMITMENT_STYLES}
             <td colspan="2">${suburb}</td>
           </tr>
           <tr>
-            <td>South Australia XXXX</td>
+            <td>${statePostcode}</td>
             <td class="member-number">Member Number: ${playerInfo.playerAccount}</td>
           </tr>
         </table>
