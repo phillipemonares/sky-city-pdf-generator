@@ -12,6 +12,9 @@ import {
   wrapNegativeValue,
 } from './pdf-shared';
 
+// Flag to show one-time legal text for 4-month period adjustment
+const SHOW_LEGAL_TEXT_ADDITION = true;
+
 export const PC_PLAY_STYLES = `
   .play-header {
     width: 100%;
@@ -382,6 +385,11 @@ export function renderPreCommitmentPage(
     <p class="precommitment-intro">Dear ${displayName},</p>
 
     <p style="margin-top: -5px;">Please find below your Pre-commitment information for the period ${quarterStart} to ${quarterEnd}.</p>
+    ${SHOW_LEGAL_TEXT_ADDITION ? `
+    <p style="margin-top: -5px;">We would like to inform you that the enclosed statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.</p>
+    <p style="margin-top: -5px;">The period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.</p>
+    <p style="margin-top: -5px;">If you would like information on your current MyPlay limits please email statements@skycity.com.au or visit the Rewards or Host desk.</p>
+    ` : ''}
     <p style="margin-top: -5px;">Please see our friendly staff at either the Rewards desk or Host desks to vary or confirm your limits. Your delivery preference can also be updated at these locations. We can send statements via post, email or onsite collection.</p>
     <p style="margin-top: -5px;">If you would like to have your pre-commitment statement produced in another language please contact SkyCity Adelaide's Rewards department either at the Rewards desks onsite or by emailing <a href="mailto:customercompliance@skycity.com.au">customercompliance@skycity.com.au</a>.</p>
 
