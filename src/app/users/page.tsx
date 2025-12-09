@@ -214,9 +214,9 @@ export default function UsersPage() {
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
-                  minLength={8}
+                  minLength={14}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Minimum 8 characters"
+                  placeholder="Minimum 14 characters"
                   disabled={addingUser}
                 />
               </div>
