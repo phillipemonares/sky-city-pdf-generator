@@ -351,19 +351,24 @@ export default function EditMemberModal({ isOpen, onClose, account, batchId, onS
                   <div className="grid grid-cols-2 gap-4">
                     {Object.keys(preCommitment)
                       .filter(key => key !== 'playerInfo' && key !== 'sessionSummaries')
-                      .map((key) => (
-                        <div key={key}>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-                          </label>
-                          <input
-                            type="text"
-                            value={preCommitment[key as keyof PreCommitmentPlayer] || ''}
-                            onChange={(e) => handlePreCommitmentChange(key as keyof PreCommitmentPlayer, e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </div>
-                      ))}
+                      .map((key) => {
+                        const value = preCommitment[key as keyof PreCommitmentPlayer];
+                        // Convert to string, handling null/undefined
+                        const stringValue = value != null ? String(value) : '';
+                        return (
+                          <div key={key}>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                              {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
+                            </label>
+                            <input
+                              type="text"
+                              value={stringValue}
+                              onChange={(e) => handlePreCommitmentChange(key as keyof PreCommitmentPlayer, e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                        );
+                      })}
                   </div>
                 </div>
               )}
