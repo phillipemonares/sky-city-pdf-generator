@@ -1,6 +1,6 @@
 import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
-import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow } from '@/types/player-data';
+import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow, PlayerData } from '@/types/player-data';
 import { normalizeAccount } from './pdf-shared';
 
 // Database connection configuration
@@ -336,6 +336,80 @@ export async function getQuarterlyDataFromBatch(batchId: string): Promise<Quarte
   } catch (error) {
     console.error('Error fetching quarterly data from batch:', error);
     throw error;
+  }
+}
+
+/**
+ * Update account data in quarterly_user_statements table
+ * Preserves existing data fields not being updated
+ */
+export async function updateAccountData(
+  batchId: string,
+  accountNumber: string,
+  updates: {
+    activity_statement?: ActivityStatementRow | null;
+    pre_commitment?: PreCommitmentPlayer | null;
+    cashless_statement?: PlayerData | null;
+    quarterlyData?: QuarterlyData | null;
+  }
+): Promise<boolean> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // Get existing data
+    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT data FROM quarterly_user_statements
+       WHERE batch_id = ? AND account_number = ?
+       LIMIT 1`,
+      [batchId, accountNumber]
+    );
+
+    if (rows.length === 0) {
+      throw new Error('Account not found in batch');
+    }
+
+    // Parse existing data
+    const existingData = JSON.parse(rows[0].data) as {
+      activity_statement?: ActivityStatementRow;
+      pre_commitment?: PreCommitmentPlayer;
+      cashless_statement?: PlayerData;
+      quarterlyData?: QuarterlyData;
+    };
+
+    // Merge updates with existing data
+    const updatedData = {
+      activity_statement: updates.activity_statement !== undefined 
+        ? updates.activity_statement 
+        : existingData.activity_statement || null,
+      pre_commitment: updates.pre_commitment !== undefined 
+        ? updates.pre_commitment 
+        : existingData.pre_commitment || null,
+      cashless_statement: updates.cashless_statement !== undefined 
+        ? updates.cashless_statement 
+        : existingData.cashless_statement || null,
+      quarterlyData: updates.quarterlyData !== undefined 
+        ? updates.quarterlyData 
+        : existingData.quarterlyData || null,
+    };
+
+    // Update the record
+    await connection.execute(
+      `UPDATE quarterly_user_statements
+       SET data = ?, updated_at = NOW()
+       WHERE batch_id = ? AND account_number = ?`,
+      [JSON.stringify(updatedData), batchId, accountNumber]
+    );
+
+    await connection.commit();
+    return true;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error updating account data:', error);
+    throw error;
+  } finally {
+    connection.release();
   }
 }
 

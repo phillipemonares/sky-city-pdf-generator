@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import Navigation from '@/components/Navigation';
+import EditMemberModal from '@/components/EditMemberModal';
 import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
 
 export default function MembersPage() {
@@ -16,6 +17,7 @@ export default function MembersPage() {
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'quarterly' | 'play' | 'no-play'>('quarterly');
+  const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number) => {
     try {
@@ -524,14 +526,23 @@ export default function MembersPage() {
                             </td>
                             <td className="px-3 py-1.5 border border-gray-200">
                               {previewUrl ? (
-                                <a
-                                  href={previewUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 text-xs underline"
-                                >
-                                  Preview
-                                </a>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => setEditingMember({ account: member.account_number, batchId: member.latest_batch_id! })}
+                                    className="text-blue-600 hover:text-blue-800 text-xs underline"
+                                  >
+                                    Edit
+                                  </button>
+                                  <span className="text-gray-300">|</span>
+                                  <a
+                                    href={previewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 text-xs underline"
+                                  >
+                                    Preview
+                                  </a>
+                                </div>
                               ) : (
                                 <span className="text-gray-400 text-xs">No PDF available</span>
                               )}
@@ -668,6 +679,26 @@ export default function MembersPage() {
             )}
           </div>
       </div>
+
+      {/* Edit Member Modal */}
+      {editingMember && (
+        <EditMemberModal
+          isOpen={!!editingMember}
+          onClose={() => setEditingMember(null)}
+          account={editingMember.account}
+          batchId={editingMember.batchId}
+          onSave={() => {
+            // Refresh the current tab's data
+            if (activeTab === 'quarterly') {
+              loadMembers(currentPage, pageSize);
+            } else if (activeTab === 'play') {
+              loadPlayMembers(currentPage, pageSize);
+            } else {
+              loadNoPlayMembers(currentPage, pageSize);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
