@@ -918,17 +918,6 @@ export default function NoPlayPage() {
                       <option value="50">50 per page</option>
                       <option value="100">100 per page</option>
                     </select>
-                    <button
-                      onClick={generateAllPDFs}
-                      disabled={isGenerating || isPreviewing || isSending}
-                      className={`px-4 py-2 rounded-lg font-medium transition-colors text-white ${
-                        isGenerating || isPreviewing || isSending
-                          ? 'bg-gray-400 cursor-not-allowed'
-                          : 'bg-purple-600 hover:bg-purple-700'
-                      }`}
-                    >
-                      {isGenerating ? 'Exporting...' : `Export All ${playStatusTab === 'play' ? 'Play' : 'No-Play'} (${totalPlayers})`}
-                    </button>
                   </div>
                 </div>
 

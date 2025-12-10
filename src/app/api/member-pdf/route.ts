@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMatchedAccountsByBatch, getBatchById } from '@/lib/db';
-import { generateAnnotatedHTML } from '@/lib/annotated-pdf-template';
+import { getAccountFromBatch, getBatchById } from '@/lib/db';
+import { generatePreviewHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import puppeteer from 'puppeteer';
+import mysql from 'mysql2/promise';
+
+const dbConfig = {
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'dp-skycity',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+};
+
+const pool = mysql.createPool(dbConfig);
 
 export async function GET(request: NextRequest) {
   try {
@@ -36,14 +49,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get matched accounts for this batch
-    const matchedAccounts = await getMatchedAccountsByBatch(batchId);
-    
-    // Find the specific account
+    // Get the specific account data (same approach as preview route)
     const normalizedAccount = normalizeAccount(accountNumber);
-    const targetAccount = matchedAccounts.find(
-      acc => normalizeAccount(acc.account_number) === normalizedAccount
-    );
+    let targetAccount = await getAccountFromBatch(batchId, normalizedAccount);
+
+    if (!targetAccount) {
+      // Try with original account number (not normalized) in case normalization changes it
+      const targetAccountOriginal = await getAccountFromBatch(batchId, accountNumber);
+      if (targetAccountOriginal) {
+        targetAccount = targetAccountOriginal;
+      }
+    }
 
     if (!targetAccount) {
       return NextResponse.json(
@@ -52,16 +68,119 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Extract quarterly data from the account data
-    const accountData = targetAccount.account_data;
-    const quarterlyData = accountData.quarterlyData;
-
+    // Get quarterlyData - same approach as preview route
+    let quarterlyData = null;
+    
+    // First, try to get from batch metadata
+    try {
+      const [batchRows] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT quarterly_data FROM generation_batches WHERE id = ?`,
+        [batchId]
+      );
+      
+      if (batchRows.length > 0 && batchRows[0].quarterly_data) {
+        const metadata = JSON.parse(batchRows[0].quarterly_data);
+        quarterlyData = metadata.quarterlyData || null;
+      }
+    } catch (error: any) {
+      // Column might not exist (for existing batches created before this feature)
+      if (error.code !== 'ER_BAD_FIELD_ERROR') {
+        console.log('Could not fetch quarterly_data from batch metadata:', error);
+      }
+    }
+    
+    // If not found, try to get from stored records (old format)
+    if (!quarterlyData) {
+      try {
+        const [sampleRow] = await pool.execute<mysql.RowDataPacket[]>(
+          `SELECT data FROM quarterly_user_statements WHERE batch_id = ? LIMIT 1`,
+          [batchId]
+        );
+        if (sampleRow.length > 0) {
+          const sampleData = JSON.parse(sampleRow[0].data) as { quarterlyData?: any };
+          if (sampleData.quarterlyData) {
+            quarterlyData = sampleData.quarterlyData;
+          }
+        }
+      } catch (error) {
+        // Ignore
+      }
+    }
+    
+    // If still not found, reconstruct from all cashless statements (same as preview)
+    if (!quarterlyData) {
+      try {
+        const [allRows] = await pool.execute<mysql.RowDataPacket[]>(
+          `SELECT data FROM quarterly_user_statements WHERE batch_id = ?`,
+          [batchId]
+        );
+        
+        const cashlessPlayersMap = new Map<string, any>();
+        
+        for (const row of allRows) {
+          try {
+            const userData = JSON.parse(row.data) as { cashless_statement?: any };
+            
+            if (userData.cashless_statement) {
+              const account = userData.cashless_statement.playerInfo?.playerAccount;
+              if (account && !cashlessPlayersMap.has(account)) {
+                cashlessPlayersMap.set(account, userData.cashless_statement);
+              }
+            }
+          } catch (error) {
+            // Ignore parsing errors
+          }
+        }
+        
+        // Reconstruct quarterlyData from collected cashless players
+        if (cashlessPlayersMap.size > 0) {
+          const allCashlessPlayers = Array.from(cashlessPlayersMap.values());
+          quarterlyData = {
+            quarter: batch.quarter,
+            year: batch.year,
+            players: allCashlessPlayers,
+            monthlyBreakdown: [],
+          };
+        }
+      } catch (error) {
+        console.error('Error reconstructing quarterlyData:', error);
+      }
+    }
+    
     if (!quarterlyData) {
       return NextResponse.json(
-        { success: false, error: 'Quarterly data not found for this account' },
-        { status: 404 }
+        { success: false, error: 'No quarterly data found in batch' },
+        { status: 400 }
       );
     }
+
+    // Format dates from batch to DD/MM/YYYY format for statementPeriod (same as preview)
+    const formatDateToDDMMYYYY = (date: Date | null): string | null => {
+      if (!date) return null;
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      return `${day}/${month}/${year}`;
+    };
+
+    // If batch has start_date and end_date, use them to populate quarterlyData.statementPeriod
+    if (batch.start_date && batch.end_date) {
+      const startDateFormatted = formatDateToDDMMYYYY(batch.start_date);
+      const endDateFormatted = formatDateToDDMMYYYY(batch.end_date);
+      
+      if (startDateFormatted && endDateFormatted) {
+        quarterlyData = {
+          ...quarterlyData,
+          statementPeriod: {
+            startDate: startDateFormatted,
+            endDate: endDateFormatted,
+          },
+        };
+      }
+    }
+
+    // Extract the target player data
+    const accountData = targetAccount.account_data;
 
     // Convert logo to base64
     const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');
@@ -69,8 +188,14 @@ export async function GET(request: NextRequest) {
     const logoBase64 = logoBuffer.toString('base64');
     const logoDataUrl = `data:image/png;base64,${logoBase64}`;
 
-    // Generate HTML
-    const html = generateAnnotatedHTML(accountData, quarterlyData, logoDataUrl);
+    // Convert play-header to base64 for pre-commitment section (same as preview)
+    const playHeaderPath = join(process.cwd(), 'public', 'no-play-header.png');
+    const playHeaderBuffer = readFileSync(playHeaderPath);
+    const playHeaderBase64 = playHeaderBuffer.toString('base64');
+    const playHeaderDataUrl = `data:image/png;base64,${playHeaderBase64}`;
+
+    // Generate HTML using preview function (same as preview route)
+    const html = generatePreviewHTML(accountData, quarterlyData, logoDataUrl, playHeaderDataUrl);
 
     // If action is preview, return HTML with print button
     if (action === 'preview') {
