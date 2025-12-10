@@ -554,6 +554,13 @@ export default function MembersPage() {
                     </button>
                   );
                 })()}
+                <button
+                  onClick={() => exportPDFs(true)}
+                  disabled={exporting || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                >
+                  {exporting ? (exportProgress ? `Exporting... ${exportProgress.current}/${exportProgress.total}` : 'Exporting...') : 'Export All'}
+                </button>
                 {exportProgress && (
                   <div className="text-sm text-gray-600 flex items-center">
                     <div className="w-32 bg-gray-200 rounded-full h-2 mr-2">
