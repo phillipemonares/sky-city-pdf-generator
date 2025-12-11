@@ -21,6 +21,9 @@ export default function MembersPage() {
   const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const loadMembers = useCallback(async (page: number, size: number) => {
     try {
@@ -444,6 +447,132 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
+  // Filter and sort members
+  const getFilteredAndSortedMembers = useCallback(() => {
+    let currentMembers: any[] = [];
+    if (activeTab === 'quarterly') {
+      currentMembers = [...members];
+    } else if (activeTab === 'play') {
+      currentMembers = [...playMembers];
+    } else {
+      currentMembers = [...noPlayMembers];
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      currentMembers = currentMembers.filter((member) => {
+        if (activeTab === 'quarterly') {
+          const name = [member.title, member.first_name, member.last_name].filter(Boolean).join(' ').toLowerCase();
+          return (
+            member.account_number?.toLowerCase().includes(query) ||
+            name.includes(query) ||
+            member.email?.toLowerCase().includes(query) ||
+            member.address?.toLowerCase().includes(query) ||
+            member.suburb?.toLowerCase().includes(query) ||
+            member.state?.toLowerCase().includes(query) ||
+            member.post_code?.toLowerCase().includes(query)
+          );
+        } else {
+          const name = [member.first_name, member.last_name].filter(Boolean).join(' ').toLowerCase();
+          const address = [member.address1, member.address2].filter(Boolean).join(' ').toLowerCase();
+          return (
+            member.account_number?.toLowerCase().includes(query) ||
+            name.includes(query) ||
+            member.email?.toLowerCase().includes(query) ||
+            address.includes(query) ||
+            member.suburb?.toLowerCase().includes(query)
+          );
+        }
+      });
+    }
+
+    // Apply sorting
+    if (sortColumn) {
+      currentMembers.sort((a, b) => {
+        let aValue: any;
+        let bValue: any;
+
+        if (activeTab === 'quarterly') {
+          switch (sortColumn) {
+            case 'account':
+              aValue = a.account_number || '';
+              bValue = b.account_number || '';
+              break;
+            case 'name':
+              aValue = [a.title, a.first_name, a.last_name].filter(Boolean).join(' ').toLowerCase();
+              bValue = [b.title, b.first_name, b.last_name].filter(Boolean).join(' ').toLowerCase();
+              break;
+            case 'email':
+              aValue = (a.email || '').toLowerCase();
+              bValue = (b.email || '').toLowerCase();
+              break;
+            case 'address':
+              aValue = (a.address || '').toLowerCase();
+              bValue = (b.address || '').toLowerCase();
+              break;
+            case 'suburb':
+              aValue = (a.suburb || '').toLowerCase();
+              bValue = (b.suburb || '').toLowerCase();
+              break;
+            case 'state':
+              aValue = (a.state || '').toLowerCase();
+              bValue = (b.state || '').toLowerCase();
+              break;
+            case 'post_code':
+              aValue = (a.post_code || '').toLowerCase();
+              bValue = (b.post_code || '').toLowerCase();
+              break;
+            default:
+              return 0;
+          }
+        } else {
+          switch (sortColumn) {
+            case 'account':
+              aValue = a.account_number || '';
+              bValue = b.account_number || '';
+              break;
+            case 'name':
+              aValue = [a.first_name, a.last_name].filter(Boolean).join(' ').toLowerCase();
+              bValue = [b.first_name, b.last_name].filter(Boolean).join(' ').toLowerCase();
+              break;
+            case 'email':
+              aValue = (a.email || '').toLowerCase();
+              bValue = (b.email || '').toLowerCase();
+              break;
+            case 'address':
+              aValue = [a.address1, a.address2].filter(Boolean).join(' ').toLowerCase();
+              bValue = [b.address1, b.address2].filter(Boolean).join(' ').toLowerCase();
+              break;
+            case 'suburb':
+              aValue = (a.suburb || '').toLowerCase();
+              bValue = (b.suburb || '').toLowerCase();
+              break;
+            default:
+              return 0;
+          }
+        }
+
+        if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return currentMembers;
+  }, [members, playMembers, noPlayMembers, activeTab, searchQuery, sortColumn, sortDirection]);
+
+  const handleSort = useCallback((column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  }, [sortColumn]);
+
+  const filteredAndSortedMembers = getFilteredAndSortedMembers();
+
   // Load members on component mount and when page/tab changes
   useEffect(() => {
     if (activeTab === 'quarterly') {
@@ -478,6 +607,9 @@ export default function MembersPage() {
                   setActiveTab('quarterly');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
+                  setSearchQuery('');
+                  setSortColumn(null);
+                  setSortDirection('asc');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'quarterly'
@@ -492,6 +624,9 @@ export default function MembersPage() {
                   setActiveTab('play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
+                  setSearchQuery('');
+                  setSortColumn(null);
+                  setSortDirection('asc');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'play'
@@ -506,6 +641,9 @@ export default function MembersPage() {
                   setActiveTab('no-play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
+                  setSearchQuery('');
+                  setSortColumn(null);
+                  setSortDirection('asc');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'no-play'
@@ -528,7 +666,9 @@ export default function MembersPage() {
                   {loadingMembers ? (
                     'Loading...'
                   ) : (
-                    `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
+                    searchQuery.trim() 
+                      ? `Showing ${filteredAndSortedMembers.length} of ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} loaded members (${totalMembers.toLocaleString()} total)`
+                      : `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
                   )}
                 </p>
               </div>
@@ -603,6 +743,38 @@ export default function MembersPage() {
               </div>
             </div>
 
+            {/* Search Input */}
+            <div className="mb-4">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search by account, name, email, address, suburb..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  disabled={loadingMembers}
+                />
+                <svg
+                  className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
             {loadingMembers ? (
               <div className="text-center py-12 text-gray-500">
                 <p>Loading members...</p>
@@ -616,6 +788,11 @@ export default function MembersPage() {
                     : 'Members with pre-commitment statements will appear here after batches are generated.'}
                 </p>
               </div>
+            ) : filteredAndSortedMembers.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-lg mb-2">No members match your search criteria</p>
+                <p className="text-sm">Try adjusting your search query</p>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full border border-gray-200 text-sm">
@@ -624,28 +801,135 @@ export default function MembersPage() {
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs w-12">
                         <input
                           type="checkbox"
-                          checked={(activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length) > 0 && selectedMembers.size === (activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length)}
+                          checked={filteredAndSortedMembers.length > 0 && filteredAndSortedMembers.every(m => {
+                            const id = activeTab === 'quarterly' ? m.id : m.account_number;
+                            return selectedMembers.has(id);
+                          })}
                           ref={(input) => {
                             if (input) {
-                              const total = activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length;
+                              const selectedCount = filteredAndSortedMembers.filter(m => {
+                                const id = activeTab === 'quarterly' ? m.id : m.account_number;
+                                return selectedMembers.has(id);
+                              }).length;
                               input.indeterminate = 
-                                selectedMembers.size > 0 && 
-                                selectedMembers.size < total;
+                                selectedCount > 0 && 
+                                selectedCount < filteredAndSortedMembers.length;
                             }
                           }}
-                          onChange={(e) => handleSelectAll(e.target.checked)}
+                          onChange={(e) => {
+                            const memberIds = filteredAndSortedMembers.map(m => 
+                              activeTab === 'quarterly' ? m.id : m.account_number
+                            );
+                            if (e.target.checked) {
+                              setSelectedMembers(prev => {
+                                const newSet = new Set(prev);
+                                memberIds.forEach(id => newSet.add(id));
+                                return newSet;
+                              });
+                            } else {
+                              setSelectedMembers(prev => {
+                                const newSet = new Set(prev);
+                                memberIds.forEach(id => newSet.delete(id));
+                                return newSet;
+                              });
+                            }
+                          }}
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                       </th>
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Account</th>
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Name</th>
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Email</th>
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Address</th>
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Suburb</th>
+                      <th 
+                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('account')}
+                      >
+                        <div className="flex items-center gap-1">
+                          Account
+                          {sortColumn === 'account' && (
+                            <span className="text-blue-600">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('name')}
+                      >
+                        <div className="flex items-center gap-1">
+                          Name
+                          {sortColumn === 'name' && (
+                            <span className="text-blue-600">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('email')}
+                      >
+                        <div className="flex items-center gap-1">
+                          Email
+                          {sortColumn === 'email' && (
+                            <span className="text-blue-600">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('address')}
+                      >
+                        <div className="flex items-center gap-1">
+                          Address
+                          {sortColumn === 'address' && (
+                            <span className="text-blue-600">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                      <th 
+                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                        onClick={() => handleSort('suburb')}
+                      >
+                        <div className="flex items-center gap-1">
+                          Suburb
+                          {sortColumn === 'suburb' && (
+                            <span className="text-blue-600">
+                              {sortDirection === 'asc' ? '↑' : '↓'}
+                            </span>
+                          )}
+                        </div>
+                      </th>
                       {activeTab === 'quarterly' && (
                         <>
-                          <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">State</th>
-                          <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Post Code</th>
+                          <th 
+                            className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                            onClick={() => handleSort('state')}
+                          >
+                            <div className="flex items-center gap-1">
+                              State
+                              {sortColumn === 'state' && (
+                                <span className="text-blue-600">
+                                  {sortDirection === 'asc' ? '↑' : '↓'}
+                                </span>
+                              )}
+                            </div>
+                          </th>
+                          <th 
+                            className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
+                            onClick={() => handleSort('post_code')}
+                          >
+                            <div className="flex items-center gap-1">
+                              Post Code
+                              {sortColumn === 'post_code' && (
+                                <span className="text-blue-600">
+                                  {sortDirection === 'asc' ? '↑' : '↓'}
+                                </span>
+                              )}
+                            </div>
+                          </th>
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Email</th>
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Postal</th>
                         </>
@@ -655,7 +939,7 @@ export default function MembersPage() {
                   </thead>
                   <tbody>
                     {activeTab === 'quarterly' ? (
-                      members.map((member) => {
+                      filteredAndSortedMembers.map((member) => {
                         const previewUrl = member.latest_batch_id
                           ? `/content/files/${member.account_number}/${member.latest_batch_id}/`
                           : null;
@@ -724,7 +1008,7 @@ export default function MembersPage() {
                         );
                       })
                     ) : activeTab === 'play' ? (
-                      playMembers.map((member) => {
+                      filteredAndSortedMembers.map((member) => {
                         const previewUrl = member.latest_play_batch_id
                           ? `/content/play/${member.account_number}/${member.latest_play_batch_id}/`
                           : null;
@@ -764,7 +1048,7 @@ export default function MembersPage() {
                         );
                       })
                     ) : (
-                      noPlayMembers.map((member) => {
+                      filteredAndSortedMembers.map((member) => {
                         const previewUrl = member.latest_no_play_batch_id
                           ? `/content/no-play/${member.account_number}/${member.latest_no_play_batch_id}/`
                           : null;
