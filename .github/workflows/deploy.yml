@@ -22,12 +22,12 @@ jobs:
           script: |
             cd /var/www/sky-city-pdf-generator
             
-            echo "Pulling latest changes..."
-            git pull origin main
-            
             echo "Cleaning node_modules and package-lock..."
             rm -rf node_modules
             rm -f package-lock.json
+
+            echo "Pulling latest changes..."
+            git pull origin main
             
             echo "Clearing npm cache..."
             npm cache clean --force
