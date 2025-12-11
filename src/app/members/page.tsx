@@ -447,6 +447,42 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
+  // Helper function for natural/numeric sorting
+  const naturalCompare = useCallback((a: string, b: string): number => {
+    // If both are pure numbers, compare numerically
+    const aNum = parseFloat(a);
+    const bNum = parseFloat(b);
+    if (!isNaN(aNum) && !isNaN(bNum) && a === aNum.toString() && b === bNum.toString()) {
+      return aNum - bNum;
+    }
+    
+    // Natural sort: split into text and number parts
+    const aParts = a.match(/(\d+|\D+)/g) || [];
+    const bParts = b.match(/(\d+|\D+)/g) || [];
+    
+    const minLength = Math.min(aParts.length, bParts.length);
+    for (let i = 0; i < minLength; i++) {
+      const aPart = aParts[i];
+      const bPart = bParts[i];
+      
+      const aIsNum = !isNaN(parseFloat(aPart));
+      const bIsNum = !isNaN(parseFloat(bPart));
+      
+      if (aIsNum && bIsNum) {
+        // Both are numbers, compare numerically
+        const diff = parseFloat(aPart) - parseFloat(bPart);
+        if (diff !== 0) return diff;
+      } else {
+        // At least one is text, compare as strings
+        const diff = aPart.localeCompare(bPart, undefined, { numeric: true, sensitivity: 'base' });
+        if (diff !== 0) return diff;
+      }
+    }
+    
+    // If all parts match up to minLength, shorter string comes first
+    return aParts.length - bParts.length;
+  }, []);
+
   // Filter and sort members
   const getFilteredAndSortedMembers = useCallback(() => {
     let currentMembers: any[] = [];
@@ -496,9 +532,14 @@ export default function MembersPage() {
         if (activeTab === 'quarterly') {
           switch (sortColumn) {
             case 'account':
-              aValue = a.account_number || '';
-              bValue = b.account_number || '';
-              break;
+              aValue = (a.account_number || '').toString();
+              bValue = (b.account_number || '').toString();
+              // Use natural sort for account numbers
+              const accountCompare = naturalCompare(aValue, bValue);
+              if (accountCompare !== 0) {
+                return sortDirection === 'asc' ? accountCompare : -accountCompare;
+              }
+              return 0;
             case 'name':
               aValue = [a.title, a.first_name, a.last_name].filter(Boolean).join(' ').toLowerCase();
               bValue = [b.title, b.first_name, b.last_name].filter(Boolean).join(' ').toLowerCase();
@@ -520,18 +561,28 @@ export default function MembersPage() {
               bValue = (b.state || '').toLowerCase();
               break;
             case 'post_code':
-              aValue = (a.post_code || '').toLowerCase();
-              bValue = (b.post_code || '').toLowerCase();
-              break;
+              aValue = (a.post_code || '').toString();
+              bValue = (b.post_code || '').toString();
+              // Use natural sort for post codes
+              const postCodeCompare = naturalCompare(aValue, bValue);
+              if (postCodeCompare !== 0) {
+                return sortDirection === 'asc' ? postCodeCompare : -postCodeCompare;
+              }
+              return 0;
             default:
               return 0;
           }
         } else {
           switch (sortColumn) {
             case 'account':
-              aValue = a.account_number || '';
-              bValue = b.account_number || '';
-              break;
+              aValue = (a.account_number || '').toString();
+              bValue = (b.account_number || '').toString();
+              // Use natural sort for account numbers
+              const accountComparePlay = naturalCompare(aValue, bValue);
+              if (accountComparePlay !== 0) {
+                return sortDirection === 'asc' ? accountComparePlay : -accountComparePlay;
+              }
+              return 0;
             case 'name':
               aValue = [a.first_name, a.last_name].filter(Boolean).join(' ').toLowerCase();
               bValue = [b.first_name, b.last_name].filter(Boolean).join(' ').toLowerCase();
@@ -553,6 +604,15 @@ export default function MembersPage() {
           }
         }
 
+        // Handle null/undefined values
+        if (aValue === null || aValue === undefined || aValue === '') {
+          return sortDirection === 'asc' ? 1 : -1;
+        }
+        if (bValue === null || bValue === undefined || bValue === '') {
+          return sortDirection === 'asc' ? -1 : 1;
+        }
+
+        // String comparison
         if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
         return 0;
@@ -560,7 +620,7 @@ export default function MembersPage() {
     }
 
     return currentMembers;
-  }, [members, playMembers, noPlayMembers, activeTab, searchQuery, sortColumn, sortDirection]);
+  }, [members, playMembers, noPlayMembers, activeTab, searchQuery, sortColumn, sortDirection, naturalCompare]);
 
   const handleSort = useCallback((column: string) => {
     if (sortColumn === column) {
