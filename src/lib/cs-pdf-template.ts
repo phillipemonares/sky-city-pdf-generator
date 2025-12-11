@@ -131,7 +131,7 @@ export function generateCashlessStatements(
         monthPlayerData?.dailyTransactions ??
         filterTransactionsByMonth(playerData.dailyTransactions, month, statementYear);
       
-      // Deduplicate transactions by date - if same date exists, aggregate the values
+      // Deduplicate transactions by date - if same date exists, keep only the first occurrence
       monthTransactions = deduplicateTransactionsByDate(monthTransactions);
       
       const statementPeriod = `${monthName} ${statementYear}`;
@@ -395,7 +395,7 @@ function deduplicateTransactionsByDate(transactions: DailyTransaction[]): DailyT
     return transactions;
   }
 
-  // Use a Map to aggregate transactions by date
+  // Use a Map to keep only the first occurrence of each date
   const dateMap = new Map<string, DailyTransaction>();
 
   transactions.forEach(transaction => {
@@ -405,22 +405,11 @@ function deduplicateTransactionsByDate(transactions: DailyTransaction[]): DailyT
 
     const dateKey = transaction.gamingDate.trim();
     
-    if (dateMap.has(dateKey)) {
-      // Aggregate values for duplicate dates
-      const existing = dateMap.get(dateKey)!;
-      dateMap.set(dateKey, {
-        gamingDate: dateKey,
-        cashToCard: (existing.cashToCard || 0) + (transaction.cashToCard || 0),
-        cardCreditToGame: (existing.cardCreditToGame || 0) + (transaction.cardCreditToGame || 0),
-        gameCreditToCard: (existing.gameCreditToCard || 0) + (transaction.gameCreditToCard || 0),
-        betsPlaced: (existing.betsPlaced || 0) + (transaction.betsPlaced || 0),
-        deviceWin: (existing.deviceWin || 0) + (transaction.deviceWin || 0),
-        netWinLoss: (existing.netWinLoss || 0) + (transaction.netWinLoss || 0),
-      });
-    } else {
-      // First occurrence of this date
+    // Only keep the first occurrence of each date, skip duplicates
+    if (!dateMap.has(dateKey)) {
       dateMap.set(dateKey, { ...transaction });
     }
+    // If duplicate date exists, we simply ignore it (don't add or aggregate)
   });
 
   // Convert back to array and sort by date
