@@ -402,6 +402,76 @@ export async function updateAccountData(
       [JSON.stringify(updatedData), batchId, accountNumber]
     );
 
+    // If activity_statement was updated, also update the members table
+    if (updates.activity_statement !== undefined && updates.activity_statement !== null) {
+      const activity = updates.activity_statement;
+      const normalizedAccount = normalizeAccount(accountNumber);
+      
+      // Check if member exists
+      const [existing] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT id FROM members WHERE account_number = ?`,
+        [normalizedAccount]
+      );
+      
+      // Convert emailTick and postalTick to boolean (1 or 0)
+      const isEmail = activity.emailTick && (activity.emailTick.toLowerCase() === 'yes' || activity.emailTick === '1' || activity.emailTick.toLowerCase() === 'true') ? 1 : 0;
+      const isPostal = activity.postalTick && (activity.postalTick.toLowerCase() === 'yes' || activity.postalTick === '1' || activity.postalTick.toLowerCase() === 'true') ? 1 : 0;
+      
+      if (existing.length > 0) {
+        // Update existing member
+        await connection.execute(
+          `UPDATE members 
+           SET title = ?, first_name = ?, last_name = ?, email = ?, 
+               address = ?, suburb = ?, state = ?, post_code = ?, 
+               country = ?, player_type = ?, 
+               is_email = COALESCE(?, is_email), 
+               is_postal = COALESCE(?, is_postal), 
+               updated_at = NOW()
+           WHERE account_number = ?`,
+          [
+            activity.title || '',
+            activity.firstName || '',
+            activity.lastName || '',
+            activity.email || '',
+            activity.address || '',
+            activity.suburb || '',
+            activity.state || '',
+            activity.postCode || '',
+            activity.country || '',
+            activity.playerType || '',
+            isEmail,
+            isPostal,
+            normalizedAccount
+          ]
+        );
+      } else {
+        // Insert new member if it doesn't exist
+        const memberId = randomUUID();
+        await connection.execute(
+          `INSERT INTO members 
+           (id, account_number, title, first_name, last_name, email, 
+            address, suburb, state, post_code, country, player_type, is_email, is_postal)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            memberId,
+            normalizedAccount,
+            activity.title || '',
+            activity.firstName || '',
+            activity.lastName || '',
+            activity.email || '',
+            activity.address || '',
+            activity.suburb || '',
+            activity.state || '',
+            activity.postCode || '',
+            activity.country || '',
+            activity.playerType || '',
+            isEmail,
+            isPostal
+          ]
+        );
+      }
+    }
+
     await connection.commit();
     return true;
   } catch (error) {
@@ -682,7 +752,8 @@ export interface PlayMemberWithBatch {
  */
 export async function getNoPlayMembersPaginated(
   page: number = 1,
-  pageSize: number = 50
+  pageSize: number = 50,
+  search: string = ''
 ): Promise<{ members: NoPlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
@@ -690,17 +761,43 @@ export async function getNoPlayMembersPaginated(
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
     
+    // Build search WHERE clause - search in account_number and JSON fields
+    let searchWhere = '';
+    const searchParams: any[] = [];
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      // Search in account_number and JSON fields (player_data contains firstName, lastName, email, etc.)
+      searchWhere = `AND (
+        latest_no_play.account_number LIKE ? OR
+        latest_no_play.player_data LIKE ?
+      )`;
+      searchParams.push(searchTerm, searchTerm);
+    }
+    
     // Get total count of unique accounts in no-play batches with No Play status
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'No Play'`
-    );
+    const countQuery = `SELECT COUNT(DISTINCT latest_no_play.account_number) as total
+       FROM (
+         SELECT 
+           npp.account_number,
+           npb.id as batch_id,
+           npb.generation_date,
+           npp.statement_period,
+           npp.statement_date,
+           npp.player_data,
+           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
+         FROM no_play_players npp
+         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
+         WHERE npp.no_play_status = 'No Play'
+       ) as latest_no_play
+       WHERE latest_no_play.rn = 1 ${searchWhere}`;
+    
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(countQuery, searchParams);
     const total = countRows[0]?.total || 0;
     const totalPages = Math.ceil(total / validPageSize);
     
     // Get paginated no-play members with their latest batch info
     // First get distinct accounts with pagination, then get latest batch info for each
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT 
+    const query = `SELECT 
         latest_no_play.account_number,
         latest_no_play.batch_id as latest_no_play_batch_id,
         latest_no_play.generation_date as latest_no_play_generation_date,
@@ -720,10 +817,11 @@ export async function getNoPlayMembersPaginated(
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
-       WHERE latest_no_play.rn = 1
+       WHERE latest_no_play.rn = 1 ${searchWhere}
        ORDER BY latest_no_play.account_number ASC
-       LIMIT ${validPageSize} OFFSET ${offset}`
-    );
+       LIMIT ${validPageSize} OFFSET ${offset}`;
+    
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
     
     const members = rows.map(row => {
       // Extract member info from player_data
@@ -768,7 +866,8 @@ export async function getNoPlayMembersPaginated(
  */
 export async function getPlayMembersPaginated(
   page: number = 1,
-  pageSize: number = 50
+  pageSize: number = 50,
+  search: string = ''
 ): Promise<{ members: PlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
@@ -776,17 +875,43 @@ export async function getPlayMembersPaginated(
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
     
+    // Build search WHERE clause - search in account_number and JSON fields
+    let searchWhere = '';
+    const searchParams: any[] = [];
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      // Search in account_number and JSON fields (player_data contains firstName, lastName, email, etc.)
+      searchWhere = `AND (
+        latest_play.account_number LIKE ? OR
+        latest_play.player_data LIKE ?
+      )`;
+      searchParams.push(searchTerm, searchTerm);
+    }
+    
     // Get total count of unique accounts in no-play batches with Play status
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'Play'`
-    );
+    const countQuery = `SELECT COUNT(DISTINCT latest_play.account_number) as total
+       FROM (
+         SELECT 
+           npp.account_number,
+           npb.id as batch_id,
+           npb.generation_date,
+           npp.statement_period,
+           npp.statement_date,
+           npp.player_data,
+           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
+         FROM no_play_players npp
+         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
+         WHERE npp.no_play_status = 'Play'
+       ) as latest_play
+       WHERE latest_play.rn = 1 ${searchWhere}`;
+    
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(countQuery, searchParams);
     const total = countRows[0]?.total || 0;
     const totalPages = Math.ceil(total / validPageSize);
     
     // Get paginated play members with their latest batch info
     // First get distinct accounts with pagination, then get latest batch info for each
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT 
+    const query = `SELECT 
         latest_play.account_number,
         latest_play.batch_id as latest_play_batch_id,
         latest_play.generation_date as latest_play_generation_date,
@@ -806,10 +931,11 @@ export async function getPlayMembersPaginated(
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'Play'
        ) as latest_play
-       WHERE latest_play.rn = 1
+       WHERE latest_play.rn = 1 ${searchWhere}
        ORDER BY latest_play.account_number ASC
-       LIMIT ${validPageSize} OFFSET ${offset}`
-    );
+       LIMIT ${validPageSize} OFFSET ${offset}`;
+    
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
     
     const members = rows.map(row => {
       // Extract member info from player_data
@@ -1153,7 +1279,8 @@ export interface MemberWithBatch extends Member {
  */
 export async function getMembersPaginated(
   page: number = 1,
-  pageSize: number = 50
+  pageSize: number = 50,
+  search: string = ''
 ): Promise<{ members: MemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
@@ -1161,18 +1288,33 @@ export async function getMembersPaginated(
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
     
-    // Get total count
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(*) as total FROM members`
-    );
+    // Build search WHERE clause
+    let searchWhere = '';
+    const searchParams: any[] = [];
+    if (search && search.trim()) {
+      const searchTerm = `%${search.trim()}%`;
+      searchWhere = `WHERE (
+        m.account_number LIKE ? OR
+        CONCAT(COALESCE(m.title, ''), ' ', COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, '')) LIKE ? OR
+        m.email LIKE ? OR
+        m.address LIKE ? OR
+        m.suburb LIKE ? OR
+        m.state LIKE ? OR
+        m.post_code LIKE ?
+      )`;
+      searchParams.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+    
+    // Get total count with search filter
+    const countQuery = `SELECT COUNT(*) as total FROM members m ${searchWhere}`;
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(countQuery, searchParams);
     const total = countRows[0]?.total || 0;
     const totalPages = Math.ceil(total / validPageSize);
     
     // Get paginated members with their latest batch info
     // Join with quarterly_user_statements and generation_batches to get the most recent batch per member
     // Also join with no_play_players and no_play_batches to get the most recent no-play batch per member
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT 
+    const query = `SELECT 
         m.*,
         latest_batch.batch_id as latest_batch_id,
         latest_batch.quarter as latest_quarter,
@@ -1201,9 +1343,11 @@ export async function getMembersPaginated(
          FROM no_play_players npp
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
        ) as latest_no_play ON m.account_number = latest_no_play.account_number AND latest_no_play.rn = 1
+       ${searchWhere}
        ORDER BY m.account_number ASC 
-       LIMIT ${validPageSize} OFFSET ${offset}`
-    );
+       LIMIT ${validPageSize} OFFSET ${offset}`;
+    
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
     
     const members = rows.map(row => ({
       id: row.id,

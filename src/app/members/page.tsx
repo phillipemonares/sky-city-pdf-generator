@@ -22,13 +22,15 @@ export default function MembersPage() {
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activeSearch, setActiveSearch] = useState<string>(''); // The actual search being performed
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
-  const loadMembers = useCallback(async (page: number, size: number) => {
+  const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
       setLoadingMembers(true);
-      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}`);
+      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}${searchParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -45,10 +47,11 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadPlayMembers = useCallback(async (page: number, size: number) => {
+  const loadPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
       setLoadingMembers(true);
-      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}`);
+      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}${searchParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -65,10 +68,11 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadNoPlayMembers = useCallback(async (page: number, size: number) => {
+  const loadNoPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
       setLoadingMembers(true);
-      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}`);
+      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}${searchParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -143,7 +147,7 @@ export default function MembersPage() {
       if (data.success) {
         // Clear selection and reload members
         setSelectedMembers(new Set());
-        await loadMembers(currentPage, pageSize);
+        await loadMembers(currentPage, pageSize, activeSearch);
         alert(`Successfully deleted ${data.deletedCount} member(s)`);
       } else {
         alert(`Error: ${data.error || 'Failed to delete members'}`);
@@ -483,7 +487,7 @@ export default function MembersPage() {
     return aParts.length - bParts.length;
   }, []);
 
-  // Filter and sort members
+  // Sort members (filtering is now done server-side)
   const getFilteredAndSortedMembers = useCallback(() => {
     let currentMembers: any[] = [];
     if (activeTab === 'quarterly') {
@@ -492,35 +496,6 @@ export default function MembersPage() {
       currentMembers = [...playMembers];
     } else {
       currentMembers = [...noPlayMembers];
-    }
-
-    // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim();
-      currentMembers = currentMembers.filter((member) => {
-        if (activeTab === 'quarterly') {
-          const name = [member.title, member.first_name, member.last_name].filter(Boolean).join(' ').toLowerCase();
-          return (
-            member.account_number?.toLowerCase().includes(query) ||
-            name.includes(query) ||
-            member.email?.toLowerCase().includes(query) ||
-            member.address?.toLowerCase().includes(query) ||
-            member.suburb?.toLowerCase().includes(query) ||
-            member.state?.toLowerCase().includes(query) ||
-            member.post_code?.toLowerCase().includes(query)
-          );
-        } else {
-          const name = [member.first_name, member.last_name].filter(Boolean).join(' ').toLowerCase();
-          const address = [member.address1, member.address2].filter(Boolean).join(' ').toLowerCase();
-          return (
-            member.account_number?.toLowerCase().includes(query) ||
-            name.includes(query) ||
-            member.email?.toLowerCase().includes(query) ||
-            address.includes(query) ||
-            member.suburb?.toLowerCase().includes(query)
-          );
-        }
-      });
     }
 
     // Apply sorting
@@ -620,7 +595,7 @@ export default function MembersPage() {
     }
 
     return currentMembers;
-  }, [members, playMembers, noPlayMembers, activeTab, searchQuery, sortColumn, sortDirection, naturalCompare]);
+  }, [members, playMembers, noPlayMembers, activeTab, sortColumn, sortDirection, naturalCompare]);
 
   const handleSort = useCallback((column: string) => {
     if (sortColumn === column) {
@@ -633,17 +608,35 @@ export default function MembersPage() {
 
   const filteredAndSortedMembers = getFilteredAndSortedMembers();
 
-  // Load members on component mount and when page/tab changes
+  // Handle search button click
+  const handleSearch = useCallback(() => {
+    setActiveSearch(searchQuery);
+    setCurrentPage(1);
+  }, [searchQuery]);
+
+  // Handle Enter key in search input
+  const handleSearchKeyPress = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  }, [handleSearch]);
+
+  // Reset to page 1 when active search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeSearch]);
+
+  // Load members on component mount and when page/tab/activeSearch changes
   useEffect(() => {
     if (activeTab === 'quarterly') {
-      loadMembers(currentPage, pageSize);
+      loadMembers(currentPage, pageSize, activeSearch);
     } else if (activeTab === 'play') {
-      loadPlayMembers(currentPage, pageSize);
+      loadPlayMembers(currentPage, pageSize, activeSearch);
     } else {
-      loadNoPlayMembers(currentPage, pageSize);
+      loadNoPlayMembers(currentPage, pageSize, activeSearch);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, activeTab]);
+  }, [currentPage, pageSize, activeTab, activeSearch]);
 
   // Clear selection when page changes
   useEffect(() => {
@@ -668,6 +661,7 @@ export default function MembersPage() {
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
                   setSearchQuery('');
+                  setActiveSearch('');
                   setSortColumn(null);
                   setSortDirection('asc');
                 }}
@@ -685,6 +679,7 @@ export default function MembersPage() {
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
                   setSearchQuery('');
+                  setActiveSearch('');
                   setSortColumn(null);
                   setSortDirection('asc');
                 }}
@@ -702,6 +697,7 @@ export default function MembersPage() {
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
                   setSearchQuery('');
+                  setActiveSearch('');
                   setSortColumn(null);
                   setSortDirection('asc');
                 }}
@@ -726,8 +722,8 @@ export default function MembersPage() {
                   {loadingMembers ? (
                     'Loading...'
                   ) : (
-                    searchQuery.trim() 
-                      ? `Showing ${filteredAndSortedMembers.length} of ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} loaded members (${totalMembers.toLocaleString()} total)`
+                    activeSearch.trim() 
+                      ? `Showing ${filteredAndSortedMembers.length} of ${totalMembers.toLocaleString()} matching members (Page ${currentPage} of ${totalPages})`
                       : `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
                   )}
                 </p>
@@ -788,11 +784,11 @@ export default function MembersPage() {
                 <button
                   onClick={() => {
                     if (activeTab === 'quarterly') {
-                      loadMembers(currentPage, pageSize);
+                      loadMembers(currentPage, pageSize, activeSearch);
                     } else if (activeTab === 'play') {
-                      loadPlayMembers(currentPage, pageSize);
+                      loadPlayMembers(currentPage, pageSize, activeSearch);
                     } else {
-                      loadNoPlayMembers(currentPage, pageSize);
+                      loadNoPlayMembers(currentPage, pageSize, activeSearch);
                     }
                   }}
                   disabled={loadingMembers}
@@ -805,33 +801,47 @@ export default function MembersPage() {
 
             {/* Search Input */}
             <div className="mb-4">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search by account, name, email, address, suburb..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                  disabled={loadingMembers}
-                />
-                <svg
-                  className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="Search by account, name, email, address, suburb..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyPress={handleSearchKeyPress}
+                    className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    disabled={loadingMembers}
+                  />
+                  <svg
+                    className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
                   >
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  {searchQuery && (
+                    <button
+                      onClick={() => {
+                        setSearchQuery('');
+                        setActiveSearch('');
+                        setCurrentPage(1);
+                      }}
+                      className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={handleSearch}
+                  disabled={loadingMembers}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  Search
+                </button>
               </div>
             </div>
 
@@ -840,19 +850,21 @@ export default function MembersPage() {
                 <p>Loading members...</p>
               </div>
             ) : (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0) ? (
-              <div className="text-center py-12 text-gray-500">
-                <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
-                <p className="text-sm">
-                  {activeTab === 'quarterly' 
-                    ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
-                    : 'Members with pre-commitment statements will appear here after batches are generated.'}
-                </p>
-              </div>
-            ) : filteredAndSortedMembers.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                <p className="text-lg mb-2">No members match your search criteria</p>
-                <p className="text-sm">Try adjusting your search query</p>
-              </div>
+              activeSearch.trim() ? (
+                <div className="text-center py-12 text-gray-500">
+                  <p className="text-lg mb-2">No members match your search criteria</p>
+                  <p className="text-sm">Try adjusting your search query</p>
+                </div>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
+                  <p className="text-sm">
+                    {activeTab === 'quarterly' 
+                      ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
+                      : 'Members with pre-commitment statements will appear here after batches are generated.'}
+                  </p>
+                </div>
+              )
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full border border-gray-200 text-sm">
@@ -1207,11 +1219,11 @@ export default function MembersPage() {
           onSave={() => {
             // Refresh the current tab's data
             if (activeTab === 'quarterly') {
-              loadMembers(currentPage, pageSize);
+              loadMembers(currentPage, pageSize, activeSearch);
             } else if (activeTab === 'play') {
-              loadPlayMembers(currentPage, pageSize);
+              loadPlayMembers(currentPage, pageSize, activeSearch);
             } else {
-              loadNoPlayMembers(currentPage, pageSize);
+              loadNoPlayMembers(currentPage, pageSize, activeSearch);
             }
           }}
         />
