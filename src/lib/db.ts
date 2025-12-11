@@ -15,7 +15,7 @@ const dbConfig = {
 };
 
 // Create connection pool
-const pool = mysql.createPool(dbConfig);
+export const pool = mysql.createPool(dbConfig);
 
 export interface GenerationBatch {
   id: string;
