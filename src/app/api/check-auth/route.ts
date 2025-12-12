@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionToken, getSession } from '@/lib/auth';
+import { getSessionToken, getSession, getCurrentUserWithRole } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,9 +21,20 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Get user with role
+    const user = await getCurrentUserWithRole();
+    
+    if (!user) {
+      return NextResponse.json(
+        { authenticated: false },
+        { status: 200 }
+      );
+    }
+
     return NextResponse.json({
       authenticated: true,
-      username: session.username,
+      username: user.username,
+      role: user.role,
     });
   } catch (error) {
     console.error('Error checking authentication:', error);

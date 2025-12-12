@@ -8,6 +8,7 @@ export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
   const [username, setUsername] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'team_member' | null>(null);
   const [loading, setLoading] = useState(true);
   const [isReportDropdownOpen, setIsReportDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -19,6 +20,7 @@ export default function Navigation() {
         const data = await response.json();
         if (data.authenticated) {
           setUsername(data.username);
+          setUserRole(data.role || 'team_member');
         } else {
           // Not authenticated - redirect to login
           window.location.href = `/login?redirect=${encodeURIComponent(pathname)}`;
@@ -82,7 +84,7 @@ export default function Navigation() {
               <button
                 onClick={() => setIsReportDropdownOpen(!isReportDropdownOpen)}
                 className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 ${
-                  pathname === '/' || pathname === '/no-play'
+                  pathname === '/' || pathname === '/no-play' || pathname === '/export-history'
                     ? 'border-blue-600 text-blue-600 bg-blue-50'
                     : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
                 }`}
@@ -122,6 +124,17 @@ export default function Navigation() {
                   >
                     Play & No-Play Pre-Commitment
                   </Link>
+                  <Link
+                    href="/export-history"
+                    onClick={() => setIsReportDropdownOpen(false)}
+                    className={`block px-4 py-3 text-sm transition-colors ${
+                      pathname === '/export-history'
+                        ? 'bg-blue-50 text-blue-600 font-medium'
+                        : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Export History
+                  </Link>
                 </div>
               )}
             </div>
@@ -137,15 +150,28 @@ export default function Navigation() {
               Member Information
             </Link>
 
+            {userRole === 'admin' && (
+              <Link
+                href="/users"
+                className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 ${
+                  pathname === '/users'
+                    ? 'border-blue-600 text-blue-600 bg-blue-50'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+                }`}
+              >
+                Users
+              </Link>
+            )}
+
             <Link
-              href="/users"
+              href="/settings"
               className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 ${
-                pathname === '/users'
+                pathname === '/settings'
                   ? 'border-blue-600 text-blue-600 bg-blue-50'
                   : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
               }`}
             >
-              Users
+              Settings
             </Link>
           </div>
 

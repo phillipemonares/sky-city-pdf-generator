@@ -1,30 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { authenticateUser, createSessionToken, createSession, setSessionCookie } from '@/lib/auth';
 import { getUserByUsername } from '@/lib/db';
+import { verifyTotpToken } from '@/lib/auth';
+import { createSessionToken, createSession, setSessionCookie } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { username, password } = body;
+    const { username, token } = body;
 
-    if (!username || !password) {
+    if (!username || !token) {
       return NextResponse.json(
-        { success: false, error: 'Username and password are required' },
+        { success: false, error: 'Username and token are required' },
         { status: 400 }
       );
     }
 
-    // Authenticate user
-    const isValid = await authenticateUser(username, password);
-    
-    if (!isValid) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid username or password' },
-        { status: 401 }
-      );
-    }
-
-    // Check if user has 2FA enabled
+    // Get user from database
     const user = await getUserByUsername(username);
     if (!user) {
       return NextResponse.json(
@@ -33,23 +24,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // If 2FA is enabled, require 2FA verification
-    if (user.totp_enabled) {
-      return NextResponse.json({
-        success: true,
-        requires2FA: true,
-        message: '2FA verification required',
-      });
+    // Check if 2FA is enabled
+    if (!user.totp_enabled || !user.totp_secret) {
+      return NextResponse.json(
+        { success: false, error: '2FA is not enabled for this user' },
+        { status: 400 }
+      );
     }
 
-    // Create session (2FA not enabled)
+    // Verify the TOTP token
+    const isValid = verifyTotpToken(user.totp_secret, token);
+    
+    if (!isValid) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid verification code' },
+        { status: 401 }
+      );
+    }
+
+    // Create session
     const sessionToken = createSessionToken();
     await createSession(sessionToken, username);
     
     // Create response
     const response = NextResponse.json({
       success: true,
-      requires2FA: false,
       message: 'Login successful',
     });
     
@@ -62,13 +61,13 @@ export async function POST(request: NextRequest) {
       path: '/',
     });
 
-    console.log('Login successful, session created:', { token: sessionToken.substring(0, 10) + '...', username });
+    console.log('2FA login successful, session created:', { token: sessionToken.substring(0, 10) + '...', username });
 
     return response;
   } catch (error) {
-    console.error('Error during login:', error);
+    console.error('Error verifying 2FA login:', error);
     return NextResponse.json(
-      { success: false, error: 'An error occurred during login' },
+      { success: false, error: 'An error occurred during 2FA verification' },
       { status: 500 }
     );
   }

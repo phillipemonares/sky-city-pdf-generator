@@ -8,9 +8,11 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [requires2FA, setRequires2FA] = useState(false);
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -39,6 +41,34 @@ function LoginForm() {
     setLoading(true);
 
     try {
+      // If 2FA is required, verify the TOTP code
+      if (requires2FA) {
+        const response = await fetch('/api/verify-2fa-login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, token: totpCode }),
+          credentials: 'include',
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          // Get redirect URL from query params or default to home
+          const redirect = searchParams.get('redirect') || '/';
+          // Small delay to ensure cookie is set before redirect
+          setTimeout(() => {
+            window.location.href = redirect;
+          }, 100);
+        } else {
+          setError(data.error || 'Invalid verification code');
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Initial login with username and password
       const response = await fetch('/api/login', {
         method: 'POST',
         headers: {
@@ -51,6 +81,13 @@ function LoginForm() {
       const data = await response.json();
 
       if (data.success) {
+        // Check if 2FA is required
+        if (data.requires2FA) {
+          setRequires2FA(true);
+          setLoading(false);
+          return;
+        }
+
         // Get redirect URL from query params or default to home
         const redirect = searchParams.get('redirect') || '/';
         // Small delay to ensure cookie is set before redirect
@@ -96,40 +133,72 @@ function LoginForm() {
           </h2>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="username" className="sr-only">
-                Username
-              </label>
-              <input
-                id="username"
-                name="username"
-                type="text"
-                autoComplete="username"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-          </div>
+          {!requires2FA ? (
+            <>
+              <div className="rounded-md shadow-sm -space-y-px">
+                <div>
+                  <label htmlFor="username" className="sr-only">
+                    Username
+                  </label>
+                  <input
+                    id="username"
+                    name="username"
+                    type="text"
+                    autoComplete="username"
+                    required
+                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    placeholder="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="password" className="sr-only">
+                    Password
+                  </label>
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="rounded-md shadow-sm">
+                <div>
+                  <label htmlFor="totpCode" className="sr-only">
+                    Verification Code
+                  </label>
+                  <input
+                    id="totpCode"
+                    name="totpCode"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    autoComplete="one-time-code"
+                    required
+                    className="appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm text-center text-2xl tracking-widest"
+                    placeholder="000000"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    autoFocus
+                  />
+                </div>
+              </div>
+              <div className="text-sm text-gray-600 text-center">
+                <p>Enter the 6-digit code from your authenticator app</p>
+              </div>
+            </>
+          )}
 
           {error && (
             <div className="rounded-md bg-red-50 p-4">
@@ -149,9 +218,24 @@ function LoginForm() {
                 loading ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? (requires2FA ? 'Verifying...' : 'Signing in...') : (requires2FA ? 'Verify' : 'Sign in')}
             </button>
           </div>
+          {requires2FA && (
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setRequires2FA(false);
+                  setTotpCode('');
+                  setError('');
+                }}
+                className="text-sm text-blue-600 hover:text-blue-500"
+              >
+                Back to login
+              </button>
+            </div>
+          )}
         </form>
       </div>
     </div>

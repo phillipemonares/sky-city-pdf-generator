@@ -25,8 +25,8 @@ export async function POST(request: NextRequest) {
     // Hash the password
     const passwordHash = await hashPassword(DEFAULT_PASSWORD);
 
-    // Create the user
-    await createUser(DEFAULT_USERNAME, passwordHash);
+    // Create the user as admin
+    await createUser(DEFAULT_USERNAME, passwordHash, 'admin');
 
     return NextResponse.json({
       success: true,

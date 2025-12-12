@@ -21,10 +21,19 @@ export default function MembersPage() {
   const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [bulkExportId, setBulkExportId] = useState<string | null>(null);
+  const [bulkExportStatus, setBulkExportStatus] = useState<{
+    status: string;
+    processed: number;
+    total: number;
+    progress: number;
+  } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSearch, setActiveSearch] = useState<string>(''); // The actual search being performed
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [showExportConfirm, setShowExportConfirm] = useState<boolean>(false);
+  const [pendingExport, setPendingExport] = useState<{ type: 'selected' | 'all' } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
@@ -160,7 +169,22 @@ export default function MembersPage() {
     }
   }, [selectedMembers, currentPage, pageSize, loadMembers, activeTab]);
 
-  const exportPDFs = useCallback(async (exportAll: boolean = false) => {
+  // Calculate export count based on selected members only
+  const getExportCount = useCallback(() => {
+    if (selectedMembers.size === 0) {
+      return 0;
+    }
+    if (activeTab === 'quarterly') {
+      return members.filter(m => selectedMembers.has(m.id) && m.latest_batch_id).length;
+    } else if (activeTab === 'play') {
+      return playMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id).length;
+    } else {
+      return noPlayMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id).length;
+    }
+  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
+
+  // Actual export function that performs the export
+  const performExport = useCallback(async (exportAll: boolean = false) => {
     const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
     
     if (currentMembers.length === 0) {
@@ -437,19 +461,152 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, totalMembers, selectedMembers]);
 
-  // Calculate export count based on selected members only
-  const getExportCount = useCallback(() => {
-    if (selectedMembers.size === 0) {
-      return 0;
+  // Poll export status
+  const pollExportStatus = useCallback(async (exportId: string) => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/export-pdfs-bulk/${exportId}/status`);
+        if (!response.ok) {
+          clearInterval(pollInterval);
+          return;
+        }
+
+        const data = await response.json();
+        if (data.success && data.export) {
+          const exportData = data.export;
+          setBulkExportStatus({
+            status: exportData.status,
+            processed: exportData.processed_members,
+            total: exportData.total_members,
+            progress: exportData.progress_percentage,
+          });
+
+          if (exportData.status === 'completed' || exportData.status === 'failed') {
+            clearInterval(pollInterval);
+            if (exportData.status === 'failed') {
+              alert(`Export failed: ${exportData.error_message || 'Unknown error'}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error polling export status:', error);
+        clearInterval(pollInterval);
+      }
+    }, 2000); // Poll every 2 seconds
+  }, []);
+
+  // Wrapper function that shows confirmation dialog first
+  const exportPDFs = useCallback(async (exportAll: boolean = false) => {
+    const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
+    
+    if (currentMembers.length === 0) {
+      alert('No members to export');
+      return;
     }
-    if (activeTab === 'quarterly') {
-      return members.filter(m => selectedMembers.has(m.id) && m.latest_batch_id).length;
-    } else if (activeTab === 'play') {
-      return playMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id).length;
+
+    // Show confirmation dialog first
+    if (!exportAll) {
+      const exportCount = getExportCount();
+      if (exportCount === 0) {
+        alert('No members selected to export');
+        return;
+      }
+      setPendingExport({ type: 'selected' });
+      setShowExportConfirm(true);
+      return;
+    }
+    
+    // For exportAll, proceed directly (it's handled by startBulkExport)
+    await performExport(exportAll);
+  }, [members, playMembers, noPlayMembers, activeTab, getExportCount, performExport]);
+
+  // Start bulk export job
+  const startBulkExport = useCallback(async () => {
+    // Show confirmation dialog first
+    setPendingExport({ type: 'all' });
+    setShowExportConfirm(true);
+  }, [activeTab, totalMembers]);
+
+  // Confirm and proceed with export
+  const confirmExport = useCallback(async () => {
+    setShowExportConfirm(false);
+    
+    if (!pendingExport) return;
+
+    if (pendingExport.type === 'all') {
+      // Proceed with bulk export
+      try {
+        const response = await fetch('/api/export-pdfs-bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tab: activeTab }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          alert(`Failed to start export: ${error.error || 'Unknown error'}`);
+          setPendingExport(null);
+          return;
+        }
+
+        const data = await response.json();
+        if (data.success) {
+          setBulkExportId(data.exportId);
+          setBulkExportStatus({
+            status: 'processing',
+            processed: 0,
+            total: data.totalMembers,
+            progress: 0,
+          });
+
+          // Start polling for status
+          pollExportStatus(data.exportId);
+        }
+      } catch (error) {
+        console.error('Error starting bulk export:', error);
+        alert('Failed to start bulk export. Please try again.');
+      }
     } else {
-      return noPlayMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id).length;
+      // Proceed with selected export
+      await performExport(false);
     }
-  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
+    
+    setPendingExport(null);
+  }, [pendingExport, activeTab, pollExportStatus, performExport]);
+
+  // Cancel export confirmation
+  const cancelExport = useCallback(() => {
+    setShowExportConfirm(false);
+    setPendingExport(null);
+  }, []);
+
+  // Download completed export
+  const downloadBulkExport = useCallback(async (exportId?: string) => {
+    const id = exportId || bulkExportId;
+    if (!id) return;
+
+    try {
+      const response = await fetch(`/api/export-pdfs-bulk/${id}/download`);
+      if (!response.ok) {
+        alert('Failed to download export. It may not be ready yet.');
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bulk_export_${id.substring(0, 8)}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading export:', error);
+      alert('Failed to download export. Please try again.');
+    }
+  }, [bulkExportId]);
+
 
   // Helper function for natural/numeric sorting
   const naturalCompare = useCallback((a: string, b: string): number => {
@@ -751,11 +908,12 @@ export default function MembersPage() {
                   );
                 })()}
                 <button
-                  onClick={() => exportPDFs(true)}
-                  disabled={exporting || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
+                  onClick={startBulkExport}
+                  disabled={exporting || loadingMembers || bulkExportId !== null || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
                   className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                  title="Server-side export for large batches (35k+ PDFs)"
                 >
-                  {exporting ? (exportProgress ? `Exporting... ${exportProgress.current}/${exportProgress.total}` : 'Exporting...') : 'Export All'}
+                  {bulkExportId ? 'Exporting...' : `Export All (${totalMembers.toLocaleString()})`}
                 </button>
                 {exportProgress && (
                   <div className="text-sm text-gray-600 flex items-center">
@@ -766,6 +924,42 @@ export default function MembersPage() {
                       ></div>
                     </div>
                     <span>{Math.round((exportProgress.current / exportProgress.total) * 100)}%</span>
+                  </div>
+                )}
+                {bulkExportStatus && (
+                  <div className="flex items-center gap-3">
+                    <div className="text-sm text-gray-600 flex items-center">
+                      <div className="w-32 bg-gray-200 rounded-full h-2 mr-2">
+                        <div 
+                          className={`h-2 rounded-full transition-all duration-300 ${
+                            bulkExportStatus.status === 'completed' ? 'bg-green-600' :
+                            bulkExportStatus.status === 'failed' ? 'bg-red-600' :
+                            'bg-green-600'
+                          }`}
+                          style={{ width: `${bulkExportStatus.progress}%` }}
+                        ></div>
+                      </div>
+                      <span>{bulkExportStatus.progress}% ({bulkExportStatus.processed.toLocaleString()}/{bulkExportStatus.total.toLocaleString()})</span>
+                    </div>
+                    {bulkExportStatus.status === 'completed' && (
+                      <button
+                        onClick={() => downloadBulkExport()}
+                        className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
+                      >
+                        Download
+                      </button>
+                    )}
+                    {bulkExportStatus.status === 'failed' && (
+                      <button
+                        onClick={() => {
+                          setBulkExportId(null);
+                          setBulkExportStatus(null);
+                        }}
+                        className="px-3 py-1 bg-gray-600 text-white rounded text-xs hover:bg-gray-700"
+                      >
+                        Dismiss
+                      </button>
+                    )}
                   </div>
                 )}
                 <select
@@ -1227,6 +1421,77 @@ export default function MembersPage() {
             }
           }}
         />
+      )}
+
+      {/* Export Confirmation Dialog */}
+      {showExportConfirm && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              cancelExport();
+            }
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold">Confirm Export</h2>
+            </div>
+            <div className="px-6 py-4">
+              {pendingExport?.type === 'all' ? (
+                <div>
+                  <p className="text-gray-700 mb-4">
+                    You are about to export <strong>{totalMembers.toLocaleString()}</strong> member PDFs.
+                  </p>
+                  <p className="text-sm text-gray-600 mb-4">
+                    This is a server-side bulk export that will process all members in the background. 
+                    You can monitor the progress and download the completed export when ready.
+                  </p>
+                  {totalMembers > 1000 && (
+                    <p className="text-sm text-yellow-600 bg-yellow-50 p-3 rounded-md mb-4">
+                      ⚠️ Large export detected. This may take a significant amount of time to complete.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  {(() => {
+                    const exportCount = getExportCount();
+                    return (
+                      <>
+                        <p className="text-gray-700 mb-4">
+                          You are about to export <strong>{exportCount}</strong> selected member PDF{exportCount !== 1 ? 's' : ''}.
+                        </p>
+                        <p className="text-sm text-gray-600 mb-4">
+                          The export will be downloaded as a ZIP file. This may take several minutes depending on the number of PDFs.
+                        </p>
+                        {exportCount > 500 && (
+                          <p className="text-sm text-yellow-600 bg-yellow-50 p-3 rounded-md mb-4">
+                            ⚠️ Large export detected. This may cause your browser to become unresponsive during the export process.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={cancelExport}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmExport}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Confirm Export
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

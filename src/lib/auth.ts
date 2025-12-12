@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { getUserByUsername, createSession as createDbSession, getSessionByToken, deleteSession as deleteDbSession } from './db';
 import { randomBytes } from 'crypto';
+import speakeasy from 'speakeasy';
 
 const SESSION_COOKIE_NAME = 'skycity_session';
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
@@ -142,5 +143,107 @@ export async function getCurrentUser(): Promise<{ username: string } | null> {
   }
   
   return await getSession(sessionToken);
+}
+
+/**
+ * Get current authenticated user with role
+ */
+export async function getCurrentUserWithRole(): Promise<{ username: string; role: 'admin' | 'team_member' } | null> {
+  const sessionToken = await getSessionToken();
+  if (!sessionToken) {
+    return null;
+  }
+  
+  const session = await getSession(sessionToken);
+  if (!session) {
+    return null;
+  }
+  
+  const user = await getUserByUsername(session.username);
+  if (!user) {
+    return null;
+  }
+  
+  return {
+    username: user.username,
+    role: user.role,
+  };
+}
+
+/**
+ * Check if current user is admin
+ */
+export async function isAdmin(): Promise<boolean> {
+  const user = await getCurrentUserWithRole();
+  return user?.role === 'admin';
+}
+
+/**
+ * Require admin role - returns error response if not admin
+ */
+export async function requireAdmin(request: NextRequest): Promise<{ authorized: boolean; response?: NextResponse }> {
+  const authResult = await requireAuth(request);
+  if (!authResult.authenticated) {
+    return authResult;
+  }
+  
+  const user = await getCurrentUserWithRole();
+  if (!user || user.role !== 'admin') {
+    return {
+      authorized: false,
+      response: NextResponse.json(
+        { success: false, error: 'Admin access required' },
+        { status: 403 }
+      ),
+    };
+  }
+  
+  return { authorized: true };
+}
+
+/**
+ * Generate a TOTP secret for a user
+ */
+export function generateTotpSecret(): { secret: string; base32: string } {
+  const secret = speakeasy.generateSecret({
+    name: process.env.TOTP_ISSUER || 'SkyCity Adelaide',
+    length: 32,
+  });
+  
+  return {
+    secret: secret.base32 || '',
+    base32: secret.base32 || '',
+  };
+}
+
+/**
+ * Generate TOTP URL for QR code
+ */
+export function generateTotpUrl(secret: string, username: string): string {
+  const issuer = process.env.TOTP_ISSUER || 'SkyCity Adelaide';
+  return speakeasy.otpauthURL({
+    secret: secret,
+    label: username,
+    issuer: issuer,
+    encoding: 'base32',
+  });
+}
+
+/**
+ * Verify a TOTP token against a secret
+ */
+export function verifyTotpToken(secret: string, token: string): boolean {
+  try {
+    const verified = speakeasy.totp.verify({
+      secret: secret,
+      encoding: 'base32',
+      token: token,
+      window: 1, // Allow ±1 time step (30 seconds) for clock drift
+    });
+    return verified === true;
+  } catch (error) {
+    console.error('Error verifying TOTP token:', error);
+    return false;
+  }
 }
 

@@ -6,6 +6,7 @@ import Navigation from '@/components/Navigation';
 interface User {
   id: string;
   username: string;
+  role: 'admin' | 'team_member';
   created_at: string;
 }
 
@@ -16,9 +17,11 @@ export default function UsersPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newRole, setNewRole] = useState<'admin' | 'team_member'>('team_member');
   const [addingUser, setAddingUser] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'team_member' | null>(null);
 
   const fetchUsers = async () => {
     try {
@@ -39,6 +42,21 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
+    
+    // Check current user role
+    const checkUserRole = async () => {
+      try {
+        const response = await fetch('/api/check-auth');
+        const data = await response.json();
+        if (data.authenticated && data.role) {
+          setCurrentUserRole(data.role);
+        }
+      } catch (err) {
+        console.error('Error checking user role:', err);
+      }
+    };
+    
+    checkUserRole();
   }, []);
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -56,6 +74,7 @@ export default function UsersPage() {
         body: JSON.stringify({
           username: newUsername,
           password: newPassword,
+          role: newRole,
         }),
       });
 
@@ -68,6 +87,7 @@ export default function UsersPage() {
       setAddSuccess(true);
       setNewUsername('');
       setNewPassword('');
+      setNewRole('team_member');
       
       // Refresh users list
       await fetchUsers();
@@ -123,12 +143,14 @@ export default function UsersPage() {
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-semibold">System Users</h2>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Add User
-            </button>
+            {currentUserRole === 'admin' && (
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Add User
+              </button>
+            )}
           </div>
 
           {loading ? (
@@ -145,6 +167,7 @@ export default function UsersPage() {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left border border-gray-200 font-semibold text-sm text-gray-700">Username</th>
+                    <th className="px-4 py-3 text-left border border-gray-200 font-semibold text-sm text-gray-700">Role</th>
                     <th className="px-4 py-3 text-left border border-gray-200 font-semibold text-sm text-gray-700">Created At</th>
                     <th className="px-4 py-3 text-right border border-gray-200 font-semibold text-sm text-gray-700">Actions</th>
                   </tr>
@@ -152,7 +175,7 @@ export default function UsersPage() {
                 <tbody>
                   {users.length === 0 ? (
                     <tr>
-                      <td colSpan={3} className="text-center py-8 text-gray-500 border border-gray-200">
+                      <td colSpan={4} className="text-center py-8 text-gray-500 border border-gray-200">
                         No users found
                       </td>
                     </tr>
@@ -160,16 +183,27 @@ export default function UsersPage() {
                     users.map((user) => (
                       <tr key={user.id} className="hover:bg-gray-50">
                         <td className="px-4 py-2 border border-gray-200 text-sm">{user.username}</td>
+                        <td className="px-4 py-2 border border-gray-200 text-sm">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            user.role === 'admin' 
+                              ? 'bg-purple-100 text-purple-800' 
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {user.role === 'admin' ? 'Admin' : 'Team Member'}
+                          </span>
+                        </td>
                         <td className="px-4 py-2 border border-gray-200 text-sm text-gray-600">
                           {new Date(user.created_at).toLocaleString()}
                         </td>
                         <td className="px-4 py-2 border border-gray-200 text-right">
-                          <button
-                            onClick={() => handleDeleteUser(user.id, user.username)}
-                            className="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
-                          >
-                            Delete
-                          </button>
+                          {currentUserRole === 'admin' && (
+                            <button
+                              onClick={() => handleDeleteUser(user.id, user.username)}
+                              className="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -221,6 +255,26 @@ export default function UsersPage() {
                 />
               </div>
 
+              <div className="mb-6">
+                <label htmlFor="role" className="block text-sm font-medium text-gray-700 mb-2">
+                  Role
+                </label>
+                <select
+                  id="role"
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value as 'admin' | 'team_member')}
+                  required
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={addingUser}
+                >
+                  <option value="team_member">Team Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Team Members can access reports and member information but cannot create users.
+                </p>
+              </div>
+
               {addError && (
                 <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 text-sm">
                   {addError}
@@ -240,6 +294,7 @@ export default function UsersPage() {
                     setShowAddModal(false);
                     setNewUsername('');
                     setNewPassword('');
+                    setNewRole('team_member');
                     setAddError(null);
                     setAddSuccess(false);
                   }}

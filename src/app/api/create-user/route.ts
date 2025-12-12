@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createUser } from '@/lib/db';
-import { hashPassword } from '@/lib/auth';
+import { hashPassword, requireAdmin } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    // Check if user is admin
+    const adminCheck = await requireAdmin(request);
+    if (!adminCheck.authorized) {
+      return adminCheck.response || NextResponse.json(
+        { success: false, error: 'Admin access required' },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
-    const { username, password } = body;
+    const { username, password, role } = body;
 
     if (!username || !password) {
       return NextResponse.json(
@@ -21,11 +30,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate role
+    const userRole = role === 'admin' ? 'admin' : 'team_member';
+
     // Hash the password
     const passwordHash = await hashPassword(password);
 
     // Create user in database
-    const userId = await createUser(username, passwordHash);
+    const userId = await createUser(username, passwordHash, userRole);
 
     return NextResponse.json({
       success: true,

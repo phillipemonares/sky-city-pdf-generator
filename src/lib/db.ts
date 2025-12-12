@@ -10,8 +10,11 @@ const dbConfig = {
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'dp-skycity',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 20, // Increased from 10 to handle concurrent PDF generation
   queueLimit: 0,
+  acquireTimeout: 60000, // 60 seconds to acquire connection
+  timeout: 60000, // 60 seconds query timeout
+  reconnect: true, // Auto-reconnect on connection loss
 };
 
 // Create connection pool
@@ -1425,6 +1428,9 @@ export interface User {
   id: string;
   username: string;
   password_hash: string;
+  role: 'admin' | 'team_member';
+  totp_secret?: string | null;
+  totp_enabled: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -1435,7 +1441,7 @@ export interface User {
 export async function getUserByUsername(username: string): Promise<User | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, username, password_hash, created_at, updated_at
+      `SELECT id, username, password_hash, role, totp_secret, totp_enabled, created_at, updated_at
        FROM users
        WHERE username = ?`,
       [username]
@@ -1450,6 +1456,9 @@ export async function getUserByUsername(username: string): Promise<User | null> 
       id: row.id,
       username: row.username,
       password_hash: row.password_hash,
+      role: (row.role || 'team_member') as 'admin' | 'team_member',
+      totp_secret: row.totp_secret || null,
+      totp_enabled: Boolean(row.totp_enabled),
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -1462,7 +1471,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 /**
  * Create a new user (for admin use only - no registration endpoint)
  */
-export async function createUser(username: string, passwordHash: string): Promise<string> {
+export async function createUser(username: string, passwordHash: string, role: 'admin' | 'team_member' = 'team_member'): Promise<string> {
   const connection = await pool.getConnection();
   
   try {
@@ -1479,9 +1488,9 @@ export async function createUser(username: string, passwordHash: string): Promis
 
     // Insert user
     await connection.execute(
-      `INSERT INTO users (id, username, password_hash)
-       VALUES (?, ?, ?)`,
-      [userId, username, passwordHash]
+      `INSERT INTO users (id, username, password_hash, role)
+       VALUES (?, ?, ?, ?)`,
+      [userId, username, passwordHash, role]
     );
 
     await connection.commit();
@@ -1501,7 +1510,7 @@ export async function createUser(username: string, passwordHash: string): Promis
 export async function getAllUsers(): Promise<Omit<User, 'password_hash'>[]> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, username, created_at, updated_at
+      `SELECT id, username, role, created_at, updated_at
        FROM users
        ORDER BY created_at DESC`
     );
@@ -1509,6 +1518,9 @@ export async function getAllUsers(): Promise<Omit<User, 'password_hash'>[]> {
     return rows.map(row => ({
       id: row.id,
       username: row.username,
+      role: (row.role || 'team_member') as 'admin' | 'team_member',
+      totp_secret: null,
+      totp_enabled: false,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     }));
@@ -1543,6 +1555,58 @@ export async function deleteUser(userId: string): Promise<void> {
   } catch (error) {
     await connection.rollback();
     console.error('Error deleting user:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Update user's TOTP secret and enable 2FA
+ */
+export async function updateUserTotpSecret(username: string, secret: string): Promise<void> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    await connection.execute(
+      `UPDATE users 
+       SET totp_secret = ?, totp_enabled = TRUE, updated_at = NOW()
+       WHERE username = ?`,
+      [secret, username]
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error updating user TOTP secret:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Disable TOTP for a user (clear secret and disable flag)
+ */
+export async function disableUserTotp(username: string): Promise<void> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    await connection.execute(
+      `UPDATE users 
+       SET totp_secret = NULL, totp_enabled = FALSE, updated_at = NOW()
+       WHERE username = ?`,
+      [username]
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error disabling user TOTP:', error);
     throw error;
   } finally {
     connection.release();
@@ -1650,6 +1714,226 @@ export async function cleanupExpiredSessions(): Promise<void> {
     );
   } catch (error) {
     console.error('Error cleaning up expired sessions:', error);
+    throw error;
+  }
+}
+
+// ============================================
+// PDF Export Job Tracking Functions
+// ============================================
+
+export interface PdfExport {
+  id: string;
+  tab_type: 'quarterly' | 'play' | 'no-play';
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  total_members: number;
+  processed_members: number;
+  failed_members: number;
+  file_path: string | null;
+  file_size: number | null;
+  error_message: string | null;
+  created_by: string | null;
+  created_at: Date;
+  updated_at: Date;
+  started_at: Date | null;
+  completed_at: Date | null;
+}
+
+/**
+ * Create a new PDF export job
+ */
+export async function createPdfExport(
+  tabType: 'quarterly' | 'play' | 'no-play',
+  totalMembers: number,
+  createdBy?: string
+): Promise<string> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    const exportId = randomUUID();
+
+    await connection.execute(
+      `INSERT INTO pdf_exports (id, tab_type, status, total_members, created_by)
+       VALUES (?, ?, 'pending', ?, ?)`,
+      [exportId, tabType, totalMembers, createdBy || null]
+    );
+
+    await connection.commit();
+    return exportId;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error creating PDF export:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get PDF export by ID
+ */
+export async function getPdfExport(exportId: string): Promise<PdfExport | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT * FROM pdf_exports WHERE id = ?`,
+      [exportId]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      tab_type: row.tab_type,
+      status: row.status,
+      total_members: row.total_members,
+      processed_members: row.processed_members || 0,
+      failed_members: row.failed_members || 0,
+      file_path: row.file_path || null,
+      file_size: row.file_size || null,
+      error_message: row.error_message || null,
+      created_by: row.created_by || null,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+      started_at: row.started_at ? new Date(row.started_at) : null,
+      completed_at: row.completed_at ? new Date(row.completed_at) : null,
+    };
+  } catch (error) {
+    console.error('Error getting PDF export:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update PDF export status
+ */
+export async function updatePdfExportStatus(
+  exportId: string,
+  updates: {
+    status?: 'pending' | 'processing' | 'completed' | 'failed';
+    processed_members?: number;
+    failed_members?: number;
+    file_path?: string | null;
+    file_size?: number | null;
+    error_message?: string | null;
+    started_at?: Date | null;
+    completed_at?: Date | null;
+  }
+): Promise<void> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    const updateFields: string[] = [];
+    const updateValues: any[] = [];
+
+    if (updates.status !== undefined) {
+      updateFields.push('status = ?');
+      updateValues.push(updates.status);
+      
+      // Set started_at when status changes to processing
+      if (updates.status === 'processing' && !updates.started_at) {
+        updateFields.push('started_at = NOW()');
+      }
+      
+      // Set completed_at when status changes to completed or failed
+      if ((updates.status === 'completed' || updates.status === 'failed') && !updates.completed_at) {
+        updateFields.push('completed_at = NOW()');
+      }
+    }
+
+    if (updates.processed_members !== undefined) {
+      updateFields.push('processed_members = ?');
+      updateValues.push(updates.processed_members);
+    }
+
+    if (updates.failed_members !== undefined) {
+      updateFields.push('failed_members = ?');
+      updateValues.push(updates.failed_members);
+    }
+
+    if (updates.file_path !== undefined) {
+      updateFields.push('file_path = ?');
+      updateValues.push(updates.file_path);
+    }
+
+    if (updates.file_size !== undefined) {
+      updateFields.push('file_size = ?');
+      updateValues.push(updates.file_size);
+    }
+
+    if (updates.error_message !== undefined) {
+      updateFields.push('error_message = ?');
+      updateValues.push(updates.error_message);
+    }
+
+    if (updates.started_at !== undefined) {
+      updateFields.push('started_at = ?');
+      updateValues.push(updates.started_at);
+    }
+
+    if (updates.completed_at !== undefined) {
+      updateFields.push('completed_at = ?');
+      updateValues.push(updates.completed_at);
+    }
+
+    if (updateFields.length === 0) {
+      await connection.commit();
+      return;
+    }
+
+    updateFields.push('updated_at = NOW()');
+    updateValues.push(exportId);
+
+    await connection.execute(
+      `UPDATE pdf_exports SET ${updateFields.join(', ')} WHERE id = ?`,
+      updateValues
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error updating PDF export status:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get all PDF exports ordered by most recent first
+ */
+export async function getAllPdfExports(limit: number = 50): Promise<PdfExport[]> {
+  try {
+    // LIMIT must be a literal integer, not a parameter
+    const limitValue = Math.max(1, Math.floor(limit));
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT * FROM pdf_exports ORDER BY created_at DESC LIMIT ${limitValue}`
+    );
+
+    return rows.map(row => ({
+      id: row.id,
+      tab_type: row.tab_type,
+      status: row.status,
+      total_members: row.total_members,
+      processed_members: row.processed_members || 0,
+      failed_members: row.failed_members || 0,
+      file_path: row.file_path || null,
+      file_size: row.file_size || null,
+      error_message: row.error_message || null,
+      created_by: row.created_by || null,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+      started_at: row.started_at ? new Date(row.started_at) : null,
+      completed_at: row.completed_at ? new Date(row.completed_at) : null,
+    }));
+  } catch (error) {
+    console.error('Error getting all PDF exports:', error);
     throw error;
   }
 }
