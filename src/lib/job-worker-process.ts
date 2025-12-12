@@ -96,7 +96,7 @@ export function startWorker(): void {
 /**
  * Stop the worker
  */
-export function stopWorker(): void {
+export function stopWorker(): Promise<void> {
   console.log('[Worker] Stopping worker...');
   isRunning = false;
   

@@ -297,7 +297,7 @@ export async function getQueueStats(queueName: string = 'default'): Promise<{
 
     for (const row of rows) {
       const status = row.status as JobStatus;
-      if (status in stats) {
+      if (status === 'pending' || status === 'processing' || status === 'completed' || status === 'failed') {
         stats[status] = row.count;
       }
     }

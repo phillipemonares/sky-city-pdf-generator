@@ -184,7 +184,10 @@ export async function isAdmin(): Promise<boolean> {
 export async function requireAdmin(request: NextRequest): Promise<{ authorized: boolean; response?: NextResponse }> {
   const authResult = await requireAuth(request);
   if (!authResult.authenticated) {
-    return authResult;
+    return {
+      authorized: false,
+      response: authResult.response,
+    };
   }
   
   const user = await getCurrentUserWithRole();

@@ -55,13 +55,10 @@ export async function GET(
     const dateStr = new Date(exportJob.created_at).toISOString().split('T')[0];
     const filename = `${exportJob.tab_type}_members_pdfs_${dateStr}_${exportId.substring(0, 8)}.zip`;
 
-    // Convert Buffer to ArrayBuffer for NextResponse
-    const arrayBuffer = fileBuffer.buffer.slice(
-      fileBuffer.byteOffset,
-      fileBuffer.byteOffset + fileBuffer.byteLength
-    );
+    // Convert Buffer to Uint8Array for NextResponse (Uint8Array is a valid BodyInit)
+    const uint8Array = new Uint8Array(fileBuffer);
 
-    return new NextResponse(arrayBuffer, {
+    return new NextResponse(uint8Array, {
       status: 200,
       headers: {
         'Content-Type': 'application/zip',

@@ -5,7 +5,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import JSZip from 'jszip';
-import puppeteer from 'puppeteer';
+import puppeteer, { Browser } from 'puppeteer';
 import { generatePreviewHTML } from './annotated-pdf-template';
 import { generatePlayPreCommitmentPDFHTML } from './pc-play-pdf-template';
 import { generatePreCommitmentPDFHTML } from './pc-no-play-pdf-template';
@@ -67,7 +67,7 @@ async function retryDbOperation<T>(
 async function generateQuarterlyPdf(
   accountNumber: string,
   batchId: string,
-  browser: puppeteer.Browser
+  browser: Browser
 ): Promise<Buffer> {
   const batch = await retryDbOperation(() => getBatchById(batchId));
   if (!batch) {
@@ -272,7 +272,7 @@ async function generateQuarterlyPdf(
 async function generatePlayPdf(
   accountNumber: string,
   batchId: string,
-  browser: puppeteer.Browser
+  browser: Browser
 ): Promise<Buffer> {
   const batch = await retryDbOperation(() => getNoPlayBatchById(batchId));
   if (!batch) {
@@ -329,7 +329,7 @@ async function generatePlayPdf(
 async function generateNoPlayPdf(
   accountNumber: string,
   batchId: string,
-  browser: puppeteer.Browser
+  browser: Browser
 ): Promise<Buffer> {
   const batch = await retryDbOperation(() => getNoPlayBatchById(batchId));
   if (!batch) {
@@ -387,7 +387,7 @@ async function generatePdfForMember(
   accountNumber: string,
   batchId: string,
   tab: 'quarterly' | 'play' | 'no-play',
-  browser: puppeteer.Browser
+  browser: Browser
 ): Promise<Buffer> {
   if (tab === 'quarterly') {
     return generateQuarterlyPdf(accountNumber, batchId, browser);
