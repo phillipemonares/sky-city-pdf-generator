@@ -1469,6 +1469,39 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 }
 
 /**
+ * Get user by ID
+ */
+export async function getUserById(userId: string): Promise<User | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT id, username, password_hash, role, totp_secret, totp_enabled, created_at, updated_at
+       FROM users
+       WHERE id = ?`,
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      username: row.username,
+      password_hash: row.password_hash,
+      role: (row.role || 'team_member') as 'admin' | 'team_member',
+      totp_secret: row.totp_secret || null,
+      totp_enabled: Boolean(row.totp_enabled),
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+    };
+  } catch (error) {
+    console.error('Error getting user by ID:', error);
+    throw error;
+  }
+}
+
+/**
  * Create a new user (for admin use only - no registration endpoint)
  */
 export async function createUser(username: string, passwordHash: string, role: 'admin' | 'team_member' = 'team_member'): Promise<string> {
@@ -1527,6 +1560,81 @@ export async function getAllUsers(): Promise<Omit<User, 'password_hash'>[]> {
   } catch (error) {
     console.error('Error getting all users:', error);
     throw error;
+  }
+}
+
+/**
+ * Update user information (email/username, password, role)
+ */
+export async function updateUser(
+  userId: string,
+  updates: {
+    username?: string;
+    passwordHash?: string;
+    role?: 'admin' | 'team_member';
+  }
+): Promise<void> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // Check if user exists
+    const existing = await getUserById(userId);
+    if (!existing) {
+      throw new Error('User not found');
+    }
+
+    // If username is being updated, check if new username already exists
+    if (updates.username && updates.username !== existing.username) {
+      const userWithNewUsername = await getUserByUsername(updates.username);
+      if (userWithNewUsername) {
+        throw new Error('A user with this username already exists');
+      }
+    }
+
+    // Build update query dynamically based on what's being updated
+    const updateFields: string[] = [];
+    const updateValues: any[] = [];
+
+    if (updates.username) {
+      updateFields.push('username = ?');
+      updateValues.push(updates.username);
+    }
+
+    if (updates.passwordHash) {
+      updateFields.push('password_hash = ?');
+      updateValues.push(updates.passwordHash);
+    }
+
+    if (updates.role !== undefined) {
+      updateFields.push('role = ?');
+      updateValues.push(updates.role);
+    }
+
+    if (updateFields.length === 0) {
+      await connection.rollback();
+      return; // Nothing to update
+    }
+
+    // Always update the updated_at timestamp
+    updateFields.push('updated_at = NOW()');
+    updateValues.push(userId);
+
+    await connection.execute(
+      `UPDATE users 
+       SET ${updateFields.join(', ')}
+       WHERE id = ?`,
+      updateValues
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error updating user:', error);
+    throw error;
+  } finally {
+    connection.release();
   }
 }
 

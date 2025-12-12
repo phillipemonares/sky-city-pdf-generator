@@ -22,6 +22,14 @@ export default function UsersPage() {
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState(false);
   const [currentUserRole, setCurrentUserRole] = useState<'admin' | 'team_member' | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editRole, setEditRole] = useState<'admin' | 'team_member'>('team_member');
+  const [updatingUser, setUpdatingUser] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSuccess, setEditSuccess] = useState(false);
 
   const fetchUsers = async () => {
     try {
@@ -101,6 +109,80 @@ export default function UsersPage() {
       setAddError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setAddingUser(false);
+    }
+  };
+
+  const handleEditUser = (user: User) => {
+    setEditingUser(user);
+    setEditEmail(user.username);
+    setEditPassword('');
+    setEditRole(user.role);
+    setEditError(null);
+    setEditSuccess(false);
+    setShowEditModal(true);
+  };
+
+  const handleUpdateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+
+    setUpdatingUser(true);
+    setEditError(null);
+    setEditSuccess(false);
+
+    try {
+      const updateData: {
+        userId: string;
+        email?: string;
+        password?: string;
+        role?: 'admin' | 'team_member';
+      } = {
+        userId: editingUser.id,
+      };
+
+      // Only include fields that have changed
+      if (editEmail !== editingUser.username) {
+        updateData.email = editEmail;
+      }
+      if (editPassword) {
+        updateData.password = editPassword;
+      }
+      if (editRole !== editingUser.role) {
+        updateData.role = editRole;
+      }
+
+      const response = await fetch('/api/update-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update user');
+      }
+
+      setEditSuccess(true);
+      
+      // Refresh users list
+      await fetchUsers();
+      
+      // Close modal after a short delay
+      setTimeout(() => {
+        setShowEditModal(false);
+        setEditingUser(null);
+        setEditEmail('');
+        setEditPassword('');
+        setEditRole('team_member');
+        setEditSuccess(false);
+      }, 1500);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setUpdatingUser(false);
     }
   };
 
@@ -197,12 +279,20 @@ export default function UsersPage() {
                         </td>
                         <td className="px-4 py-2 border border-gray-200 text-right">
                           {currentUserRole === 'admin' && (
-                            <button
-                              onClick={() => handleDeleteUser(user.id, user.username)}
-                              className="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
-                            >
-                              Delete
-                            </button>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => handleEditUser(user)}
+                                className="px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(user.id, user.username)}
+                                className="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -309,6 +399,110 @@ export default function UsersPage() {
                   disabled={addingUser}
                 >
                   {addingUser ? 'Adding...' : 'Add User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {showEditModal && editingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">Edit User</h2>
+            
+            <form onSubmit={handleUpdateUser}>
+              <div className="mb-4">
+                <label htmlFor="edit-email" className="block text-sm font-medium text-gray-700 mb-2">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  id="edit-email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  required
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="user@example.com"
+                  disabled={updatingUser}
+                />
+              </div>
+
+              <div className="mb-4">
+                <label htmlFor="edit-password" className="block text-sm font-medium text-gray-700 mb-2">
+                  Password (leave blank to keep current)
+                </label>
+                <input
+                  type="password"
+                  id="edit-password"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  minLength={14}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Minimum 14 characters (optional)"
+                  disabled={updatingUser}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Only fill this if you want to change the password
+                </p>
+              </div>
+
+              <div className="mb-6">
+                <label htmlFor="edit-role" className="block text-sm font-medium text-gray-700 mb-2">
+                  Role
+                </label>
+                <select
+                  id="edit-role"
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value as 'admin' | 'team_member')}
+                  required
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={updatingUser}
+                >
+                  <option value="team_member">Team Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  Team Members can access reports and member information but cannot create users.
+                </p>
+              </div>
+
+              {editError && (
+                <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 text-sm">
+                  {editError}
+                </div>
+              )}
+
+              {editSuccess && (
+                <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 text-green-800 text-sm">
+                  User updated successfully!
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingUser(null);
+                    setEditEmail('');
+                    setEditPassword('');
+                    setEditRole('team_member');
+                    setEditError(null);
+                    setEditSuccess(false);
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={updatingUser}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  disabled={updatingUser}
+                >
+                  {updatingUser ? 'Updating...' : 'Update User'}
                 </button>
               </div>
             </form>
