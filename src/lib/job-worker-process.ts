@@ -132,3 +132,4 @@ process.on('SIGINT', async () => {
 if (require.main === module) {
   startWorker();
 }
+

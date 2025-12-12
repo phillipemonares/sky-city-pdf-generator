@@ -21,25 +21,11 @@ export default function MembersPage() {
   const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
-  const [bulkExportId, setBulkExportId] = useState<string | null>(null);
-  const [bulkExportStatus, setBulkExportStatus] = useState<{
-    status: string;
-    processed: number;
-    total: number;
-    progress: number;
-  } | null>(null);
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [activeSearch, setActiveSearch] = useState<string>(''); // The actual search being performed
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [showExportConfirm, setShowExportConfirm] = useState<boolean>(false);
-  const [pendingExport, setPendingExport] = useState<{ type: 'selected' | 'all' } | null>(null);
 
-  const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
+  const loadMembers = useCallback(async (page: number, size: number) => {
     try {
       setLoadingMembers(true);
-      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}${searchParam}`);
+      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -56,11 +42,10 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
+  const loadPlayMembers = useCallback(async (page: number, size: number) => {
     try {
       setLoadingMembers(true);
-      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}${searchParam}`);
+      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -77,11 +62,10 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadNoPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
+  const loadNoPlayMembers = useCallback(async (page: number, size: number) => {
     try {
       setLoadingMembers(true);
-      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}${searchParam}`);
+      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -156,7 +140,7 @@ export default function MembersPage() {
       if (data.success) {
         // Clear selection and reload members
         setSelectedMembers(new Set());
-        await loadMembers(currentPage, pageSize, activeSearch);
+        await loadMembers(currentPage, pageSize);
         alert(`Successfully deleted ${data.deletedCount} member(s)`);
       } else {
         alert(`Error: ${data.error || 'Failed to delete members'}`);
@@ -169,22 +153,7 @@ export default function MembersPage() {
     }
   }, [selectedMembers, currentPage, pageSize, loadMembers, activeTab]);
 
-  // Calculate export count based on selected members only
-  const getExportCount = useCallback(() => {
-    if (selectedMembers.size === 0) {
-      return 0;
-    }
-    if (activeTab === 'quarterly') {
-      return members.filter(m => selectedMembers.has(m.id) && m.latest_batch_id).length;
-    } else if (activeTab === 'play') {
-      return playMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id).length;
-    } else {
-      return noPlayMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id).length;
-    }
-  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
-
-  // Actual export function that performs the export
-  const performExport = useCallback(async (exportAll: boolean = false) => {
+  const exportPDFs = useCallback(async (exportAll: boolean = false) => {
     const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
     
     if (currentMembers.length === 0) {
@@ -461,339 +430,31 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, totalMembers, selectedMembers]);
 
-  // Poll export status
-  const pollExportStatus = useCallback(async (exportId: string) => {
-    const pollInterval = setInterval(async () => {
-      try {
-        const response = await fetch(`/api/export-pdfs-bulk/${exportId}/status`);
-        if (!response.ok) {
-          clearInterval(pollInterval);
-          return;
-        }
-
-        const data = await response.json();
-        if (data.success && data.export) {
-          const exportData = data.export;
-          setBulkExportStatus({
-            status: exportData.status,
-            processed: exportData.processed_members,
-            total: exportData.total_members,
-            progress: exportData.progress_percentage,
-          });
-
-          if (exportData.status === 'completed' || exportData.status === 'failed') {
-            clearInterval(pollInterval);
-            if (exportData.status === 'failed') {
-              alert(`Export failed: ${exportData.error_message || 'Unknown error'}`);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error polling export status:', error);
-        clearInterval(pollInterval);
-      }
-    }, 2000); // Poll every 2 seconds
-  }, []);
-
-  // Wrapper function that shows confirmation dialog first
-  const exportPDFs = useCallback(async (exportAll: boolean = false) => {
-    const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
-    
-    if (currentMembers.length === 0) {
-      alert('No members to export');
-      return;
+  // Calculate export count based on selected members only
+  const getExportCount = useCallback(() => {
+    if (selectedMembers.size === 0) {
+      return 0;
     }
-
-    // Show confirmation dialog first
-    if (!exportAll) {
-      const exportCount = getExportCount();
-      if (exportCount === 0) {
-        alert('No members selected to export');
-        return;
-      }
-      setPendingExport({ type: 'selected' });
-      setShowExportConfirm(true);
-      return;
-    }
-    
-    // For exportAll, proceed directly (it's handled by startBulkExport)
-    await performExport(exportAll);
-  }, [members, playMembers, noPlayMembers, activeTab, getExportCount, performExport]);
-
-  // Start bulk export job
-  const startBulkExport = useCallback(async () => {
-    // Show confirmation dialog first
-    setPendingExport({ type: 'all' });
-    setShowExportConfirm(true);
-  }, [activeTab, totalMembers]);
-
-  // Confirm and proceed with export
-  const confirmExport = useCallback(async () => {
-    setShowExportConfirm(false);
-    
-    if (!pendingExport) return;
-
-    if (pendingExport.type === 'all') {
-      // Proceed with bulk export
-      try {
-        const response = await fetch('/api/export-pdfs-bulk', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tab: activeTab }),
-        });
-
-        if (!response.ok) {
-          const error = await response.json();
-          alert(`Failed to start export: ${error.error || 'Unknown error'}`);
-          setPendingExport(null);
-          return;
-        }
-
-        const data = await response.json();
-        if (data.success) {
-          setBulkExportId(data.exportId);
-          setBulkExportStatus({
-            status: 'processing',
-            processed: 0,
-            total: data.totalMembers,
-            progress: 0,
-          });
-
-          // Start polling for status
-          pollExportStatus(data.exportId);
-        }
-      } catch (error) {
-        console.error('Error starting bulk export:', error);
-        alert('Failed to start bulk export. Please try again.');
-      }
-    } else {
-      // Proceed with selected export
-      await performExport(false);
-    }
-    
-    setPendingExport(null);
-  }, [pendingExport, activeTab, pollExportStatus, performExport]);
-
-  // Cancel export confirmation
-  const cancelExport = useCallback(() => {
-    setShowExportConfirm(false);
-    setPendingExport(null);
-  }, []);
-
-  // Download completed export
-  const downloadBulkExport = useCallback(async (exportId?: string) => {
-    const id = exportId || bulkExportId;
-    if (!id) return;
-
-    try {
-      const response = await fetch(`/api/export-pdfs-bulk/${id}/download`);
-      if (!response.ok) {
-        alert('Failed to download export. It may not be ready yet.');
-        return;
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `bulk_export_${id.substring(0, 8)}.zip`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error downloading export:', error);
-      alert('Failed to download export. Please try again.');
-    }
-  }, [bulkExportId]);
-
-
-  // Helper function for natural/numeric sorting
-  const naturalCompare = useCallback((a: string, b: string): number => {
-    // If both are pure numbers, compare numerically
-    const aNum = parseFloat(a);
-    const bNum = parseFloat(b);
-    if (!isNaN(aNum) && !isNaN(bNum) && a === aNum.toString() && b === bNum.toString()) {
-      return aNum - bNum;
-    }
-    
-    // Natural sort: split into text and number parts
-    const aParts = a.match(/(\d+|\D+)/g) || [];
-    const bParts = b.match(/(\d+|\D+)/g) || [];
-    
-    const minLength = Math.min(aParts.length, bParts.length);
-    for (let i = 0; i < minLength; i++) {
-      const aPart = aParts[i];
-      const bPart = bParts[i];
-      
-      const aIsNum = !isNaN(parseFloat(aPart));
-      const bIsNum = !isNaN(parseFloat(bPart));
-      
-      if (aIsNum && bIsNum) {
-        // Both are numbers, compare numerically
-        const diff = parseFloat(aPart) - parseFloat(bPart);
-        if (diff !== 0) return diff;
-      } else {
-        // At least one is text, compare as strings
-        const diff = aPart.localeCompare(bPart, undefined, { numeric: true, sensitivity: 'base' });
-        if (diff !== 0) return diff;
-      }
-    }
-    
-    // If all parts match up to minLength, shorter string comes first
-    return aParts.length - bParts.length;
-  }, []);
-
-  // Sort members (filtering is now done server-side)
-  const getFilteredAndSortedMembers = useCallback(() => {
-    let currentMembers: any[] = [];
     if (activeTab === 'quarterly') {
-      currentMembers = [...members];
+      return members.filter(m => selectedMembers.has(m.id) && m.latest_batch_id).length;
     } else if (activeTab === 'play') {
-      currentMembers = [...playMembers];
+      return playMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id).length;
     } else {
-      currentMembers = [...noPlayMembers];
+      return noPlayMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id).length;
     }
+  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
-    // Apply sorting
-    if (sortColumn) {
-      currentMembers.sort((a, b) => {
-        let aValue: any;
-        let bValue: any;
-
-        if (activeTab === 'quarterly') {
-          switch (sortColumn) {
-            case 'account':
-              aValue = (a.account_number || '').toString();
-              bValue = (b.account_number || '').toString();
-              // Use natural sort for account numbers
-              const accountCompare = naturalCompare(aValue, bValue);
-              if (accountCompare !== 0) {
-                return sortDirection === 'asc' ? accountCompare : -accountCompare;
-              }
-              return 0;
-            case 'name':
-              aValue = [a.title, a.first_name, a.last_name].filter(Boolean).join(' ').toLowerCase();
-              bValue = [b.title, b.first_name, b.last_name].filter(Boolean).join(' ').toLowerCase();
-              break;
-            case 'email':
-              aValue = (a.email || '').toLowerCase();
-              bValue = (b.email || '').toLowerCase();
-              break;
-            case 'address':
-              aValue = (a.address || '').toLowerCase();
-              bValue = (b.address || '').toLowerCase();
-              break;
-            case 'suburb':
-              aValue = (a.suburb || '').toLowerCase();
-              bValue = (b.suburb || '').toLowerCase();
-              break;
-            case 'state':
-              aValue = (a.state || '').toLowerCase();
-              bValue = (b.state || '').toLowerCase();
-              break;
-            case 'post_code':
-              aValue = (a.post_code || '').toString();
-              bValue = (b.post_code || '').toString();
-              // Use natural sort for post codes
-              const postCodeCompare = naturalCompare(aValue, bValue);
-              if (postCodeCompare !== 0) {
-                return sortDirection === 'asc' ? postCodeCompare : -postCodeCompare;
-              }
-              return 0;
-            default:
-              return 0;
-          }
-        } else {
-          switch (sortColumn) {
-            case 'account':
-              aValue = (a.account_number || '').toString();
-              bValue = (b.account_number || '').toString();
-              // Use natural sort for account numbers
-              const accountComparePlay = naturalCompare(aValue, bValue);
-              if (accountComparePlay !== 0) {
-                return sortDirection === 'asc' ? accountComparePlay : -accountComparePlay;
-              }
-              return 0;
-            case 'name':
-              aValue = [a.first_name, a.last_name].filter(Boolean).join(' ').toLowerCase();
-              bValue = [b.first_name, b.last_name].filter(Boolean).join(' ').toLowerCase();
-              break;
-            case 'email':
-              aValue = (a.email || '').toLowerCase();
-              bValue = (b.email || '').toLowerCase();
-              break;
-            case 'address':
-              aValue = [a.address1, a.address2].filter(Boolean).join(' ').toLowerCase();
-              bValue = [b.address1, b.address2].filter(Boolean).join(' ').toLowerCase();
-              break;
-            case 'suburb':
-              aValue = (a.suburb || '').toLowerCase();
-              bValue = (b.suburb || '').toLowerCase();
-              break;
-            default:
-              return 0;
-          }
-        }
-
-        // Handle null/undefined values
-        if (aValue === null || aValue === undefined || aValue === '') {
-          return sortDirection === 'asc' ? 1 : -1;
-        }
-        if (bValue === null || bValue === undefined || bValue === '') {
-          return sortDirection === 'asc' ? -1 : 1;
-        }
-
-        // String comparison
-        if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-        if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-        return 0;
-      });
-    }
-
-    return currentMembers;
-  }, [members, playMembers, noPlayMembers, activeTab, sortColumn, sortDirection, naturalCompare]);
-
-  const handleSort = useCallback((column: string) => {
-    if (sortColumn === column) {
-      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortColumn(column);
-      setSortDirection('asc');
-    }
-  }, [sortColumn]);
-
-  const filteredAndSortedMembers = getFilteredAndSortedMembers();
-
-  // Handle search button click
-  const handleSearch = useCallback(() => {
-    setActiveSearch(searchQuery);
-    setCurrentPage(1);
-  }, [searchQuery]);
-
-  // Handle Enter key in search input
-  const handleSearchKeyPress = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      handleSearch();
-    }
-  }, [handleSearch]);
-
-  // Reset to page 1 when active search changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [activeSearch]);
-
-  // Load members on component mount and when page/tab/activeSearch changes
+  // Load members on component mount and when page/tab changes
   useEffect(() => {
     if (activeTab === 'quarterly') {
-      loadMembers(currentPage, pageSize, activeSearch);
+      loadMembers(currentPage, pageSize);
     } else if (activeTab === 'play') {
-      loadPlayMembers(currentPage, pageSize, activeSearch);
+      loadPlayMembers(currentPage, pageSize);
     } else {
-      loadNoPlayMembers(currentPage, pageSize, activeSearch);
+      loadNoPlayMembers(currentPage, pageSize);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, activeTab, activeSearch]);
+  }, [currentPage, pageSize, activeTab]);
 
   // Clear selection when page changes
   useEffect(() => {
@@ -817,10 +478,6 @@ export default function MembersPage() {
                   setActiveTab('quarterly');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
-                  setSearchQuery('');
-                  setActiveSearch('');
-                  setSortColumn(null);
-                  setSortDirection('asc');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'quarterly'
@@ -835,10 +492,6 @@ export default function MembersPage() {
                   setActiveTab('play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
-                  setSearchQuery('');
-                  setActiveSearch('');
-                  setSortColumn(null);
-                  setSortDirection('asc');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'play'
@@ -853,10 +506,6 @@ export default function MembersPage() {
                   setActiveTab('no-play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
-                  setSearchQuery('');
-                  setActiveSearch('');
-                  setSortColumn(null);
-                  setSortDirection('asc');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'no-play'
@@ -879,9 +528,7 @@ export default function MembersPage() {
                   {loadingMembers ? (
                     'Loading...'
                   ) : (
-                    activeSearch.trim() 
-                      ? `Showing ${filteredAndSortedMembers.length} of ${totalMembers.toLocaleString()} matching members (Page ${currentPage} of ${totalPages})`
-                      : `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
+                    `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
                   )}
                 </p>
               </div>
@@ -908,12 +555,11 @@ export default function MembersPage() {
                   );
                 })()}
                 <button
-                  onClick={startBulkExport}
-                  disabled={exporting || loadingMembers || bulkExportId !== null || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
+                  onClick={() => exportPDFs(true)}
+                  disabled={exporting || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
                   className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400"
-                  title="Server-side export for large batches (35k+ PDFs)"
                 >
-                  {bulkExportId ? 'Exporting...' : `Export All (${totalMembers.toLocaleString()})`}
+                  {exporting ? (exportProgress ? `Exporting... ${exportProgress.current}/${exportProgress.total}` : 'Exporting...') : 'Export All'}
                 </button>
                 {exportProgress && (
                   <div className="text-sm text-gray-600 flex items-center">
@@ -924,42 +570,6 @@ export default function MembersPage() {
                       ></div>
                     </div>
                     <span>{Math.round((exportProgress.current / exportProgress.total) * 100)}%</span>
-                  </div>
-                )}
-                {bulkExportStatus && (
-                  <div className="flex items-center gap-3">
-                    <div className="text-sm text-gray-600 flex items-center">
-                      <div className="w-32 bg-gray-200 rounded-full h-2 mr-2">
-                        <div 
-                          className={`h-2 rounded-full transition-all duration-300 ${
-                            bulkExportStatus.status === 'completed' ? 'bg-green-600' :
-                            bulkExportStatus.status === 'failed' ? 'bg-red-600' :
-                            'bg-green-600'
-                          }`}
-                          style={{ width: `${bulkExportStatus.progress}%` }}
-                        ></div>
-                      </div>
-                      <span>{bulkExportStatus.progress}% ({bulkExportStatus.processed.toLocaleString()}/{bulkExportStatus.total.toLocaleString()})</span>
-                    </div>
-                    {bulkExportStatus.status === 'completed' && (
-                      <button
-                        onClick={() => downloadBulkExport()}
-                        className="px-3 py-1 bg-green-600 text-white rounded text-xs hover:bg-green-700"
-                      >
-                        Download
-                      </button>
-                    )}
-                    {bulkExportStatus.status === 'failed' && (
-                      <button
-                        onClick={() => {
-                          setBulkExportId(null);
-                          setBulkExportStatus(null);
-                        }}
-                        className="px-3 py-1 bg-gray-600 text-white rounded text-xs hover:bg-gray-700"
-                      >
-                        Dismiss
-                      </button>
-                    )}
                   </div>
                 )}
                 <select
@@ -978,11 +588,11 @@ export default function MembersPage() {
                 <button
                   onClick={() => {
                     if (activeTab === 'quarterly') {
-                      loadMembers(currentPage, pageSize, activeSearch);
+                      loadMembers(currentPage, pageSize);
                     } else if (activeTab === 'play') {
-                      loadPlayMembers(currentPage, pageSize, activeSearch);
+                      loadPlayMembers(currentPage, pageSize);
                     } else {
-                      loadNoPlayMembers(currentPage, pageSize, activeSearch);
+                      loadNoPlayMembers(currentPage, pageSize);
                     }
                   }}
                   disabled={loadingMembers}
@@ -993,72 +603,19 @@ export default function MembersPage() {
               </div>
             </div>
 
-            {/* Search Input */}
-            <div className="mb-4">
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    placeholder="Search by account, name, email, address, suburb..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyPress={handleSearchKeyPress}
-                    className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                    disabled={loadingMembers}
-                  />
-                  <svg
-                    className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                  {searchQuery && (
-                    <button
-                      onClick={() => {
-                        setSearchQuery('');
-                        setActiveSearch('');
-                        setCurrentPage(1);
-                      }}
-                      className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
-                    >
-                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-                <button
-                  onClick={handleSearch}
-                  disabled={loadingMembers}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  Search
-                </button>
-              </div>
-            </div>
-
             {loadingMembers ? (
               <div className="text-center py-12 text-gray-500">
                 <p>Loading members...</p>
               </div>
             ) : (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0) ? (
-              activeSearch.trim() ? (
-                <div className="text-center py-12 text-gray-500">
-                  <p className="text-lg mb-2">No members match your search criteria</p>
-                  <p className="text-sm">Try adjusting your search query</p>
-                </div>
-              ) : (
-                <div className="text-center py-12 text-gray-500">
-                  <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
-                  <p className="text-sm">
-                    {activeTab === 'quarterly' 
-                      ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
-                      : 'Members with pre-commitment statements will appear here after batches are generated.'}
-                  </p>
-                </div>
-              )
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
+                <p className="text-sm">
+                  {activeTab === 'quarterly' 
+                    ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
+                    : 'Members with pre-commitment statements will appear here after batches are generated.'}
+                </p>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full border border-gray-200 text-sm">
@@ -1067,135 +624,28 @@ export default function MembersPage() {
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs w-12">
                         <input
                           type="checkbox"
-                          checked={filteredAndSortedMembers.length > 0 && filteredAndSortedMembers.every(m => {
-                            const id = activeTab === 'quarterly' ? m.id : m.account_number;
-                            return selectedMembers.has(id);
-                          })}
+                          checked={(activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length) > 0 && selectedMembers.size === (activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length)}
                           ref={(input) => {
                             if (input) {
-                              const selectedCount = filteredAndSortedMembers.filter(m => {
-                                const id = activeTab === 'quarterly' ? m.id : m.account_number;
-                                return selectedMembers.has(id);
-                              }).length;
+                              const total = activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length;
                               input.indeterminate = 
-                                selectedCount > 0 && 
-                                selectedCount < filteredAndSortedMembers.length;
+                                selectedMembers.size > 0 && 
+                                selectedMembers.size < total;
                             }
                           }}
-                          onChange={(e) => {
-                            const memberIds = filteredAndSortedMembers.map(m => 
-                              activeTab === 'quarterly' ? m.id : m.account_number
-                            );
-                            if (e.target.checked) {
-                              setSelectedMembers(prev => {
-                                const newSet = new Set(prev);
-                                memberIds.forEach(id => newSet.add(id));
-                                return newSet;
-                              });
-                            } else {
-                              setSelectedMembers(prev => {
-                                const newSet = new Set(prev);
-                                memberIds.forEach(id => newSet.delete(id));
-                                return newSet;
-                              });
-                            }
-                          }}
+                          onChange={(e) => handleSelectAll(e.target.checked)}
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
                       </th>
-                      <th 
-                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                        onClick={() => handleSort('account')}
-                      >
-                        <div className="flex items-center gap-1">
-                          Account
-                          {sortColumn === 'account' && (
-                            <span className="text-blue-600">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
-                            </span>
-                          )}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                        onClick={() => handleSort('name')}
-                      >
-                        <div className="flex items-center gap-1">
-                          Name
-                          {sortColumn === 'name' && (
-                            <span className="text-blue-600">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
-                            </span>
-                          )}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                        onClick={() => handleSort('email')}
-                      >
-                        <div className="flex items-center gap-1">
-                          Email
-                          {sortColumn === 'email' && (
-                            <span className="text-blue-600">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
-                            </span>
-                          )}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                        onClick={() => handleSort('address')}
-                      >
-                        <div className="flex items-center gap-1">
-                          Address
-                          {sortColumn === 'address' && (
-                            <span className="text-blue-600">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
-                            </span>
-                          )}
-                        </div>
-                      </th>
-                      <th 
-                        className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                        onClick={() => handleSort('suburb')}
-                      >
-                        <div className="flex items-center gap-1">
-                          Suburb
-                          {sortColumn === 'suburb' && (
-                            <span className="text-blue-600">
-                              {sortDirection === 'asc' ? '↑' : '↓'}
-                            </span>
-                          )}
-                        </div>
-                      </th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Account</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Name</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Email</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Address</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Suburb</th>
                       {activeTab === 'quarterly' && (
                         <>
-                          <th 
-                            className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                            onClick={() => handleSort('state')}
-                          >
-                            <div className="flex items-center gap-1">
-                              State
-                              {sortColumn === 'state' && (
-                                <span className="text-blue-600">
-                                  {sortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
-                          <th 
-                            className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs cursor-pointer hover:bg-gray-100 select-none"
-                            onClick={() => handleSort('post_code')}
-                          >
-                            <div className="flex items-center gap-1">
-                              Post Code
-                              {sortColumn === 'post_code' && (
-                                <span className="text-blue-600">
-                                  {sortDirection === 'asc' ? '↑' : '↓'}
-                                </span>
-                              )}
-                            </div>
-                          </th>
+                          <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">State</th>
+                          <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Post Code</th>
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Email</th>
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Postal</th>
                         </>
@@ -1205,7 +655,7 @@ export default function MembersPage() {
                   </thead>
                   <tbody>
                     {activeTab === 'quarterly' ? (
-                      filteredAndSortedMembers.map((member) => {
+                      members.map((member) => {
                         const previewUrl = member.latest_batch_id
                           ? `/content/files/${member.account_number}/${member.latest_batch_id}/`
                           : null;
@@ -1274,7 +724,7 @@ export default function MembersPage() {
                         );
                       })
                     ) : activeTab === 'play' ? (
-                      filteredAndSortedMembers.map((member) => {
+                      playMembers.map((member) => {
                         const previewUrl = member.latest_play_batch_id
                           ? `/content/play/${member.account_number}/${member.latest_play_batch_id}/`
                           : null;
@@ -1314,7 +764,7 @@ export default function MembersPage() {
                         );
                       })
                     ) : (
-                      filteredAndSortedMembers.map((member) => {
+                      noPlayMembers.map((member) => {
                         const previewUrl = member.latest_no_play_batch_id
                           ? `/content/no-play/${member.account_number}/${member.latest_no_play_batch_id}/`
                           : null;
@@ -1413,85 +863,14 @@ export default function MembersPage() {
           onSave={() => {
             // Refresh the current tab's data
             if (activeTab === 'quarterly') {
-              loadMembers(currentPage, pageSize, activeSearch);
+              loadMembers(currentPage, pageSize);
             } else if (activeTab === 'play') {
-              loadPlayMembers(currentPage, pageSize, activeSearch);
+              loadPlayMembers(currentPage, pageSize);
             } else {
-              loadNoPlayMembers(currentPage, pageSize, activeSearch);
+              loadNoPlayMembers(currentPage, pageSize);
             }
           }}
         />
-      )}
-
-      {/* Export Confirmation Dialog */}
-      {showExportConfirm && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              cancelExport();
-            }
-          }}
-        >
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <h2 className="text-xl font-semibold">Confirm Export</h2>
-            </div>
-            <div className="px-6 py-4">
-              {pendingExport?.type === 'all' ? (
-                <div>
-                  <p className="text-gray-700 mb-4">
-                    You are about to export <strong>{totalMembers.toLocaleString()}</strong> member PDFs.
-                  </p>
-                  <p className="text-sm text-gray-600 mb-4">
-                    This is a server-side bulk export that will process all members in the background. 
-                    You can monitor the progress and download the completed export when ready.
-                  </p>
-                  {totalMembers > 1000 && (
-                    <p className="text-sm text-yellow-600 bg-yellow-50 p-3 rounded-md mb-4">
-                      ⚠️ Large export detected. This may take a significant amount of time to complete.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  {(() => {
-                    const exportCount = getExportCount();
-                    return (
-                      <>
-                        <p className="text-gray-700 mb-4">
-                          You are about to export <strong>{exportCount}</strong> selected member PDF{exportCount !== 1 ? 's' : ''}.
-                        </p>
-                        <p className="text-sm text-gray-600 mb-4">
-                          The export will be downloaded as a ZIP file. This may take several minutes depending on the number of PDFs.
-                        </p>
-                        {exportCount > 500 && (
-                          <p className="text-sm text-yellow-600 bg-yellow-50 p-3 rounded-md mb-4">
-                            ⚠️ Large export detected. This may cause your browser to become unresponsive during the export process.
-                          </p>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-            <div className="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
-              <button
-                onClick={cancelExport}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmExport}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-              >
-                Confirm Export
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

@@ -50,4 +50,5 @@ logs/
 *.log
 
 *.sql
-
+*.md
+*.xlsx
