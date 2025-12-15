@@ -1,5 +1,6 @@
 import { getNextJob, completeJob, failJob, Job } from './job-queue';
 import { updatePdfExportStatus, pool, getAccountFromBatch, getBatchById, getNoPlayBatchById, getNoPlayPlayersByBatch, getMemberByAccount } from './db';
+import { decryptJson } from './encryption';
 import mysql from 'mysql2/promise';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
@@ -150,7 +151,8 @@ async function generateQuarterlyPdf(
       
       for (const row of allRows) {
         try {
-          const userData = JSON.parse(row.data) as { cashless_statement?: any };
+          // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+          const userData = decryptJson<{ cashless_statement?: any }>(row.data);
           
           if (userData.cashless_statement) {
             const account = userData.cashless_statement.playerInfo?.playerAccount;
@@ -571,4 +573,6 @@ export async function processPdfExportJob(job: Job<{
     throw error;
   }
 }
+
+
 

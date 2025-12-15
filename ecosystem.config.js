@@ -10,6 +10,7 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3000,
         NODE_OPTIONS: '--max-http-header-size=16384',
+        // ENCRYPTION_KEY: 'your_64_char_hex_key_here', // Set via environment or .env file
       },
       error_file: '/var/www/sky-city-pdf-generator/logs/pm2-error.log',
       out_file: '/var/www/sky-city-pdf-generator/logs/pm2-out.log',
@@ -35,6 +36,7 @@ module.exports = {
         NODE_ENV: 'production',
         WORKER_MODE: 'true',
         NODE_OPTIONS: '--max-http-header-size=16384',
+        // ENCRYPTION_KEY: 'your_64_char_hex_key_here', // Set via environment or .env file
       },
       error_file: '/var/www/sky-city-pdf-generator/logs/pm2-worker-error.log',
       out_file: '/var/www/sky-city-pdf-generator/logs/pm2-worker-out.log',

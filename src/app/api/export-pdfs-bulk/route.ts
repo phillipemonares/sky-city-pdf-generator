@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createPdfExport, pool } from '@/lib/db';
 import { addJob } from '@/lib/job-queue';
+import { decryptJson } from '@/lib/encryption';
 import mysql from 'mysql2/promise';
 import { normalizeAccount } from '@/lib/pdf-shared';
 
@@ -156,7 +157,8 @@ export async function POST(request: NextRequest) {
           
           if (row.player_data) {
             try {
-              const playerData = JSON.parse(row.player_data);
+              // Decrypt the player data (handles both encrypted and legacy unencrypted data)
+              const playerData = decryptJson(row.player_data);
               const playerInfo = playerData.playerInfo || {};
               firstName = playerInfo.firstName || '';
               lastName = playerInfo.lastName || '';
@@ -210,4 +212,6 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+
 

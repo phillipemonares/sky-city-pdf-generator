@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBatchById, getMatchedAccountsByBatch } from '@/lib/db';
+import { decryptJson } from '@/lib/encryption';
 import mysql from 'mysql2/promise';
 
 const dbConfig = {
@@ -114,11 +115,12 @@ export async function GET(request: NextRequest) {
 
     // Process accounts - optimized single pass, only parse JSON once per record
     for (const row of rows) {
-      const userData = JSON.parse(row.data) as {
+      // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+      const userData = decryptJson<{
         activity_statement?: any;
         pre_commitment?: any;
         cashless_statement?: any;
-      };
+      }>(row.data);
       
       const account = row.account_number;
       
@@ -181,7 +183,8 @@ export async function GET(request: NextRequest) {
           
           for (const row of allRows) {
             try {
-              const userData = JSON.parse(row.data) as { cashless_statement?: any };
+              // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+              const userData = decryptJson<{ cashless_statement?: any }>(row.data);
               
               if (userData.cashless_statement) {
                 const account = userData.cashless_statement.playerInfo?.playerAccount;

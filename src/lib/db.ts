@@ -2,6 +2,7 @@ import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow, PlayerData } from '@/types/player-data';
 import { normalizeAccount } from './pdf-shared';
+import { encrypt, decrypt, encryptJson, decryptJson, isEncrypted } from './encryption';
 
 // Database connection configuration
 const dbConfig = {
@@ -126,7 +127,8 @@ export async function saveGenerationBatch(
           quarterlyData: quarterlyData, // Include quarterly data for regeneration
         };
         
-        const dataJson = JSON.stringify(userData);
+        // Encrypt the user data JSON for security
+        const dataJson = encryptJson(userData);
         
         values.push(statementId, batchId, player.account, dataJson);
         placeholders.push('(?, ?, ?, ?)');
@@ -228,12 +230,13 @@ export async function getMatchedAccountsByBatch(batchId: string): Promise<Matche
     );
 
     return rows.map(row => {
-      const userData = JSON.parse(row.data) as {
+      // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+      const userData = decryptJson<{
         activity_statement?: ActivityStatementRow;
         pre_commitment?: PreCommitmentPlayer;
         cashless_statement?: any;
         quarterlyData?: QuarterlyData;
-      };
+      }>(row.data);
       
       // Reconstruct AnnotatedStatementPlayer format for backward compatibility
       const accountData: AnnotatedStatementPlayer = {
@@ -281,12 +284,13 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
     }
 
     const row = rows[0];
-    const userData = JSON.parse(row.data) as {
+    // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+    const userData = decryptJson<{
       activity_statement?: ActivityStatementRow;
       pre_commitment?: PreCommitmentPlayer;
       cashless_statement?: any;
       quarterlyData?: QuarterlyData;
-    };
+    }>(row.data);
     
     // Reconstruct AnnotatedStatementPlayer format for backward compatibility
     const accountData: AnnotatedStatementPlayer = {
@@ -332,9 +336,10 @@ export async function getQuarterlyDataFromBatch(batchId: string): Promise<Quarte
       return null;
     }
 
-    const userData = JSON.parse(rows[0].data) as {
+    // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+    const userData = decryptJson<{
       quarterlyData?: QuarterlyData;
-    };
+    }>(rows[0].data);
     return userData?.quarterlyData || null;
   } catch (error) {
     console.error('Error fetching quarterly data from batch:', error);
@@ -373,13 +378,13 @@ export async function updateAccountData(
       throw new Error('Account not found in batch');
     }
 
-    // Parse existing data
-    const existingData = JSON.parse(rows[0].data) as {
+    // Decrypt and parse existing data (handles both encrypted and legacy unencrypted data)
+    const existingData = decryptJson<{
       activity_statement?: ActivityStatementRow;
       pre_commitment?: PreCommitmentPlayer;
       cashless_statement?: PlayerData;
       quarterlyData?: QuarterlyData;
-    };
+    }>(rows[0].data);
 
     // Merge updates with existing data
     const updatedData = {
@@ -397,12 +402,12 @@ export async function updateAccountData(
         : existingData.quarterlyData || null,
     };
 
-    // Update the record
+    // Encrypt and update the record
     await connection.execute(
       `UPDATE quarterly_user_statements
        SET data = ?, updated_at = NOW()
        WHERE batch_id = ? AND account_number = ?`,
-      [JSON.stringify(updatedData), batchId, accountNumber]
+      [encryptJson(updatedData), batchId, accountNumber]
     );
 
     // If activity_statement was updated, also update the members table
@@ -420,6 +425,14 @@ export async function updateAccountData(
       const isEmail = activity.emailTick && (activity.emailTick.toLowerCase() === 'yes' || activity.emailTick === '1' || activity.emailTick.toLowerCase() === 'true') ? 1 : 0;
       const isPostal = activity.postalTick && (activity.postalTick.toLowerCase() === 'yes' || activity.postalTick === '1' || activity.postalTick.toLowerCase() === 'true') ? 1 : 0;
       
+      // Encrypt sensitive fields
+      const encryptedFirstName = encrypt(activity.firstName || '');
+      const encryptedLastName = encrypt(activity.lastName || '');
+      const encryptedEmail = encrypt(activity.email || '');
+      const encryptedAddress = encrypt(activity.address || '');
+      const encryptedSuburb = encrypt(activity.suburb || '');
+      const encryptedPostCode = encrypt(activity.postCode || '');
+      
       if (existing.length > 0) {
         // Update existing member
         await connection.execute(
@@ -433,13 +446,13 @@ export async function updateAccountData(
            WHERE account_number = ?`,
           [
             activity.title || '',
-            activity.firstName || '',
-            activity.lastName || '',
-            activity.email || '',
-            activity.address || '',
-            activity.suburb || '',
+            encryptedFirstName,
+            encryptedLastName,
+            encryptedEmail,
+            encryptedAddress,
+            encryptedSuburb,
             activity.state || '',
-            activity.postCode || '',
+            encryptedPostCode,
             activity.country || '',
             activity.playerType || '',
             isEmail,
@@ -459,13 +472,13 @@ export async function updateAccountData(
             memberId,
             normalizedAccount,
             activity.title || '',
-            activity.firstName || '',
-            activity.lastName || '',
-            activity.email || '',
-            activity.address || '',
-            activity.suburb || '',
+            encryptedFirstName,
+            encryptedLastName,
+            encryptedEmail,
+            encryptedAddress,
+            encryptedSuburb,
             activity.state || '',
-            activity.postCode || '',
+            encryptedPostCode,
             activity.country || '',
             activity.playerType || '',
             isEmail,
@@ -571,7 +584,8 @@ export async function saveNoPlayBatch(
     // Insert no-play players
     for (const player of players) {
       const playerId = randomUUID();
-      const playerDataJson = JSON.stringify(player);
+      // Encrypt the player data JSON for security
+      const playerDataJson = encryptJson(player);
 
       await connection.execute(
         `INSERT INTO no_play_players 
@@ -675,7 +689,8 @@ export async function getNoPlayPlayersByBatch(batchId: string): Promise<NoPlayPl
       id: row.id,
       batch_id: row.batch_id,
       account_number: row.account_number,
-      player_data: JSON.parse(row.player_data) as PreCommitmentPlayer,
+      // Decrypt the player data (handles both encrypted and legacy unencrypted data)
+      player_data: decryptJson<PreCommitmentPlayer>(row.player_data),
       statement_period: row.statement_period,
       statement_date: row.statement_date,
       no_play_status: row.no_play_status,
@@ -827,10 +842,10 @@ export async function getNoPlayMembersPaginated(
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
     
     const members = rows.map(row => {
-      // Extract member info from player_data
+      // Decrypt and extract member info from player_data (handles both encrypted and legacy data)
       let playerData: any = {};
       try {
-        playerData = JSON.parse(row.player_data);
+        playerData = decryptJson(row.player_data);
       } catch (error) {
         console.error('Error parsing player_data:', error);
       }
@@ -941,10 +956,10 @@ export async function getPlayMembersPaginated(
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
     
     const members = rows.map(row => {
-      // Extract member info from player_data
+      // Decrypt and extract member info from player_data (handles both encrypted and legacy data)
       let playerData: any = {};
       try {
-        playerData = JSON.parse(row.player_data);
+        playerData = decryptJson(row.player_data);
       } catch (error) {
         console.error('Error parsing player_data:', error);
       }
@@ -1020,6 +1035,14 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
         [normalizedAccount]
       );
       
+      // Encrypt sensitive fields
+      const encryptedFirstName = encrypt(row.firstName || '');
+      const encryptedLastName = encrypt(row.lastName || '');
+      const encryptedEmail = encrypt(row.email || '');
+      const encryptedAddress = encrypt(row.address || '');
+      const encryptedSuburb = encrypt(row.suburb || '');
+      const encryptedPostCode = encrypt(row.postCode || '');
+
       if (existing.length > 0) {
         // Update existing member
         await connection.execute(
@@ -1031,13 +1054,13 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
            WHERE account_number = ?`,
           [
             row.title || '',
-            row.firstName || '',
-            row.lastName || '',
-            row.email || '',
-            row.address || '',
-            row.suburb || '',
+            encryptedFirstName,
+            encryptedLastName,
+            encryptedEmail,
+            encryptedAddress,
+            encryptedSuburb,
             row.state || '',
-            row.postCode || '',
+            encryptedPostCode,
             row.country || '',
             row.playerType || '',
             normalizedAccount
@@ -1055,13 +1078,13 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
             memberId,
             normalizedAccount,
             row.title || '',
-            row.firstName || '',
-            row.lastName || '',
-            row.email || '',
-            row.address || '',
-            row.suburb || '',
+            encryptedFirstName,
+            encryptedLastName,
+            encryptedEmail,
+            encryptedAddress,
+            encryptedSuburb,
             row.state || '',
-            row.postCode || '',
+            encryptedPostCode,
             row.country || '',
             row.playerType || '',
             0, // is_email default to 0 for activity statements
@@ -1101,17 +1124,18 @@ export async function getMemberByAccount(accountNumber: string): Promise<Member 
     }
     
     const memberRow = rows[0];
+    // Decrypt sensitive fields (handles both encrypted and legacy unencrypted data)
     return {
       id: memberRow.id,
       account_number: memberRow.account_number,
       title: memberRow.title || '',
-      first_name: memberRow.first_name || '',
-      last_name: memberRow.last_name || '',
-      email: memberRow.email || '',
-      address: memberRow.address || '',
-      suburb: memberRow.suburb || '',
+      first_name: decrypt(memberRow.first_name || ''),
+      last_name: decrypt(memberRow.last_name || ''),
+      email: decrypt(memberRow.email || ''),
+      address: decrypt(memberRow.address || ''),
+      suburb: decrypt(memberRow.suburb || ''),
       state: memberRow.state || '',
-      post_code: memberRow.post_code || '',
+      post_code: decrypt(memberRow.post_code || ''),
       country: memberRow.country || '',
       player_type: memberRow.player_type || '',
       is_email: memberRow.is_email ?? 0,
@@ -1136,17 +1160,18 @@ export async function getAllMembers(): Promise<Member[]> {
       `SELECT * FROM members ORDER BY account_number ASC`
     );
     
+    // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
     return rows.map(row => ({
       id: row.id,
       account_number: row.account_number,
       title: row.title || '',
-      first_name: row.first_name || '',
-      last_name: row.last_name || '',
-      email: row.email || '',
-      address: row.address || '',
-      suburb: row.suburb || '',
+      first_name: decrypt(row.first_name || ''),
+      last_name: decrypt(row.last_name || ''),
+      email: decrypt(row.email || ''),
+      address: decrypt(row.address || ''),
+      suburb: decrypt(row.suburb || ''),
       state: row.state || '',
-      post_code: row.post_code || '',
+      post_code: decrypt(row.post_code || ''),
       country: row.country || '',
       player_type: row.player_type || '',
       is_email: row.is_email ?? 0,
@@ -1200,6 +1225,14 @@ export async function saveMembersFromMemberContact(
       // Combine address1 and address2
       const fullAddress = [contact.address1, contact.address2].filter(Boolean).join(' ').trim();
       
+      // Encrypt sensitive fields
+      const encryptedFirstName = encrypt(displayName);
+      const encryptedLastName = encrypt(contact.lastName || '');
+      const encryptedEmail = encrypt(contact.email || '');
+      const encryptedAddress = encrypt(fullAddress);
+      const encryptedSuburb = encrypt(contact.city || '');
+      const encryptedPostCode = encrypt(contact.postalCode || '');
+      
       // Check if member already exists
       const [existing] = await connection.execute<mysql.RowDataPacket[]>(
         `SELECT id FROM members WHERE account_number = ?`,
@@ -1215,13 +1248,13 @@ export async function saveMembersFromMemberContact(
                country = ?, is_email = ?, is_postal = ?, updated_at = NOW()
            WHERE account_number = ?`,
           [
-            displayName,
-            contact.lastName || '',
-            contact.email || '',
-            fullAddress,
-            contact.city || '',
+            encryptedFirstName,
+            encryptedLastName,
+            encryptedEmail,
+            encryptedAddress,
+            encryptedSuburb,
             contact.state || '',
-            contact.postalCode || '',
+            encryptedPostCode,
             contact.country || '',
             contact.isEmail,
             contact.isPostal,
@@ -1240,13 +1273,13 @@ export async function saveMembersFromMemberContact(
             memberId,
             normalizedAccount,
             '', // title not in Member Contact sheet
-            displayName,
-            contact.lastName || '',
-            contact.email || '',
-            fullAddress,
-            contact.city || '',
+            encryptedFirstName,
+            encryptedLastName,
+            encryptedEmail,
+            encryptedAddress,
+            encryptedSuburb,
             contact.state || '',
-            contact.postalCode || '',
+            encryptedPostCode,
             contact.country || '',
             '', // player_type not in Member Contact sheet
             contact.isEmail,
@@ -1352,17 +1385,18 @@ export async function getMembersPaginated(
     
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
     
+    // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
     const members = rows.map(row => ({
       id: row.id,
       account_number: row.account_number,
       title: row.title || '',
-      first_name: row.first_name || '',
-      last_name: row.last_name || '',
-      email: row.email || '',
-      address: row.address || '',
-      suburb: row.suburb || '',
+      first_name: decrypt(row.first_name || ''),
+      last_name: decrypt(row.last_name || ''),
+      email: decrypt(row.email || ''),
+      address: decrypt(row.address || ''),
+      suburb: decrypt(row.suburb || ''),
       state: row.state || '',
-      post_code: row.post_code || '',
+      post_code: decrypt(row.post_code || ''),
       country: row.country || '',
       player_type: row.player_type || '',
       is_email: row.is_email ?? 0,
