@@ -21,11 +21,14 @@ export default function MembersPage() {
   const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activeSearch, setActiveSearch] = useState<string>('');
 
-  const loadMembers = useCallback(async (page: number, size: number) => {
+  const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
       setLoadingMembers(true);
-      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}`);
+      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}${searchParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -42,10 +45,11 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadPlayMembers = useCallback(async (page: number, size: number) => {
+  const loadPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
       setLoadingMembers(true);
-      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}`);
+      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}${searchParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -62,10 +66,11 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadNoPlayMembers = useCallback(async (page: number, size: number) => {
+  const loadNoPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
       setLoadingMembers(true);
-      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}`);
+      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
+      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}${searchParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -80,6 +85,26 @@ export default function MembersPage() {
     } finally {
       setLoadingMembers(false);
     }
+  }, []);
+
+  // Handle search button click
+  const handleSearch = useCallback(() => {
+    setActiveSearch(searchQuery);
+    setCurrentPage(1);
+  }, [searchQuery]);
+
+  // Handle Enter key in search input
+  const handleSearchKeyPress = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  }, [handleSearch]);
+
+  // Handle clear search
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+    setActiveSearch('');
+    setCurrentPage(1);
   }, []);
 
   const handleSelectMember = useCallback((memberId: string) => {
@@ -140,7 +165,7 @@ export default function MembersPage() {
       if (data.success) {
         // Clear selection and reload members
         setSelectedMembers(new Set());
-        await loadMembers(currentPage, pageSize);
+        await loadMembers(currentPage, pageSize, activeSearch);
         alert(`Successfully deleted ${data.deletedCount} member(s)`);
       } else {
         alert(`Error: ${data.error || 'Failed to delete members'}`);
@@ -151,7 +176,7 @@ export default function MembersPage() {
     } finally {
       setDeleting(false);
     }
-  }, [selectedMembers, currentPage, pageSize, loadMembers, activeTab]);
+  }, [selectedMembers, currentPage, pageSize, loadMembers, activeTab, activeSearch]);
 
   const exportPDFs = useCallback(async (exportAll: boolean = false) => {
     const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
@@ -165,8 +190,8 @@ export default function MembersPage() {
     let membersToExport: Array<{ account: string; batchId: string; name: string }> = [];
     
     if (exportAll) {
-      // For export all, we need to get the total count first
-      const totalCount = totalMembers;
+      // For export all, we export all filtered members on the current page
+      const totalCount = currentMembers.length;
       
       // Warn user for very large exports
       if (totalCount > 1000) {
@@ -176,17 +201,6 @@ export default function MembersPage() {
           `Do you want to continue?`
         );
         if (!confirmed) return;
-      }
-
-      // Export all members with PDFs - but we only have the current page loaded
-      // For true "export all", we'd need to fetch from server in batches
-      // For now, we'll export what's available and warn the user
-      if (totalCount > currentMembers.length) {
-        alert(
-          `Note: You have ${totalCount.toLocaleString()} total members, but only ${currentMembers.length} are loaded on this page.\n\n` +
-          `This export will only include the currently loaded members. For a full export of all ${totalCount.toLocaleString()} members, ` +
-          `please use the server-side export feature or export in batches using pagination.`
-        );
       }
 
       if (activeTab === 'quarterly') {
@@ -215,7 +229,7 @@ export default function MembersPage() {
           }));
       }
     } else {
-      // Export selected members, or all if none selected
+      // Export selected members
       if (selectedMembers.size > 0) {
         // Export selected members
         if (activeTab === 'quarterly') {
@@ -244,7 +258,7 @@ export default function MembersPage() {
             }));
         }
       } else {
-        // No members selected - export all on current page
+        // No members selected - export all filtered on current page
         if (activeTab === 'quarterly') {
           membersToExport = members
             .filter(m => m.latest_batch_id)
@@ -428,7 +442,7 @@ export default function MembersPage() {
       setExporting(false);
       setExportProgress(null);
     }
-  }, [members, playMembers, noPlayMembers, activeTab, totalMembers, selectedMembers]);
+  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
   // Calculate export count based on selected members only
   const getExportCount = useCallback(() => {
@@ -444,17 +458,17 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
-  // Load members on component mount and when page/tab changes
+  // Load members on component mount and when page/tab/search changes
   useEffect(() => {
     if (activeTab === 'quarterly') {
-      loadMembers(currentPage, pageSize);
+      loadMembers(currentPage, pageSize, activeSearch);
     } else if (activeTab === 'play') {
-      loadPlayMembers(currentPage, pageSize);
+      loadPlayMembers(currentPage, pageSize, activeSearch);
     } else {
-      loadNoPlayMembers(currentPage, pageSize);
+      loadNoPlayMembers(currentPage, pageSize, activeSearch);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, activeTab]);
+  }, [currentPage, pageSize, activeTab, activeSearch]);
 
   // Clear selection when page changes
   useEffect(() => {
@@ -478,6 +492,8 @@ export default function MembersPage() {
                   setActiveTab('quarterly');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
+                  setSearchQuery('');
+                  setActiveSearch('');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'quarterly'
@@ -492,6 +508,8 @@ export default function MembersPage() {
                   setActiveTab('play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
+                  setSearchQuery('');
+                  setActiveSearch('');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'play'
@@ -506,6 +524,8 @@ export default function MembersPage() {
                   setActiveTab('no-play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
+                  setSearchQuery('');
+                  setActiveSearch('');
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'no-play'
@@ -527,6 +547,8 @@ export default function MembersPage() {
                 <p className="text-sm text-gray-600">
                   {loadingMembers ? (
                     'Loading...'
+                  ) : activeSearch ? (
+                    `Found ${totalMembers.toLocaleString()} matching members (Page ${currentPage} of ${totalPages})`
                   ) : (
                     `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
                   )}
@@ -588,11 +610,11 @@ export default function MembersPage() {
                 <button
                   onClick={() => {
                     if (activeTab === 'quarterly') {
-                      loadMembers(currentPage, pageSize);
+                      loadMembers(currentPage, pageSize, activeSearch);
                     } else if (activeTab === 'play') {
-                      loadPlayMembers(currentPage, pageSize);
+                      loadPlayMembers(currentPage, pageSize, activeSearch);
                     } else {
-                      loadNoPlayMembers(currentPage, pageSize);
+                      loadNoPlayMembers(currentPage, pageSize, activeSearch);
                     }
                   }}
                   disabled={loadingMembers}
@@ -603,18 +625,77 @@ export default function MembersPage() {
               </div>
             </div>
 
+            {/* Search Filter - inside card */}
+            <div className="mb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="relative">
+                    <svg
+                      className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={handleSearchKeyPress}
+                      placeholder="Search by account number, name, email, address, suburb, state, or post code..."
+                      className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      disabled={loadingMembers}
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={handleClearSearch}
+                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
+                        type="button"
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={handleSearch}
+                  disabled={loadingMembers}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  Search
+                </button>
+              </div>
+              {activeSearch && (
+                <p className="mt-2 text-sm text-gray-600">
+                  Showing results for: <span className="font-medium">&quot;{activeSearch}&quot;</span>
+                </p>
+              )}
+            </div>
+
             {loadingMembers ? (
               <div className="text-center py-12 text-gray-500">
                 <p>Loading members...</p>
               </div>
             ) : (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0) ? (
               <div className="text-center py-12 text-gray-500">
-                <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
-                <p className="text-sm">
-                  {activeTab === 'quarterly' 
-                    ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
-                    : 'Members with pre-commitment statements will appear here after batches are generated.'}
-                </p>
+                {activeSearch ? (
+                  <>
+                    <p className="text-lg mb-2">No members found matching &quot;{activeSearch}&quot;</p>
+                    <p className="text-sm">Try a different search term or clear the search.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
+                    <p className="text-sm">
+                      {activeTab === 'quarterly'
+                        ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
+                        : 'Members with pre-commitment statements will appear here after batches are generated.'}
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto">

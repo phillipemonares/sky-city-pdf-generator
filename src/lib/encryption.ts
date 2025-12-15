@@ -61,13 +61,16 @@ export function encrypt(text: string): string {
 
 /**
  * Decrypt an encrypted string
- * Handles both encrypted (ENC:...) and unencrypted (legacy) data
+ * Handles both encrypted (ENC:... or DENC:...) and unencrypted (legacy) data
  */
 export function decrypt(encryptedText: string): string {
   if (!encryptedText) return encryptedText;
   
-  // Check if data is encrypted (starts with ENC:)
-  if (!encryptedText.startsWith('ENC:')) {
+  // Check if data is encrypted (starts with ENC: or DENC:)
+  const isStandardEncrypted = encryptedText.startsWith('ENC:');
+  const isDeterministicEncrypted = encryptedText.startsWith('DENC:');
+  
+  if (!isStandardEncrypted && !isDeterministicEncrypted) {
     // Return original unencrypted data (legacy/migration support)
     return encryptedText;
   }
@@ -81,8 +84,9 @@ export function decrypt(encryptedText: string): string {
   try {
     const key = getEncryptionKey();
     
-    // Remove ENC: prefix and split
-    const parts = encryptedText.substring(4).split(':');
+    // Remove ENC: or DENC: prefix and split
+    const prefixLength = isDeterministicEncrypted ? 5 : 4;
+    const parts = encryptedText.substring(prefixLength).split(':');
     if (parts.length !== 3) {
       // Invalid format, return original
       return encryptedText;
@@ -108,10 +112,47 @@ export function decrypt(encryptedText: string): string {
 }
 
 /**
- * Check if a string is encrypted (has ENC: prefix)
+ * Check if a string is encrypted (has ENC: or DENC: prefix)
  */
 export function isEncrypted(text: string): boolean {
-  return text?.startsWith('ENC:') || false;
+  return text?.startsWith('ENC:') || text?.startsWith('DENC:') || false;
+}
+
+/**
+ * Deterministic encryption - same plaintext always produces same ciphertext
+ * Uses HMAC of the plaintext as the IV for consistent output
+ * Allows exact-match database lookups while keeping data encrypted
+ */
+export function encryptDeterministic(text: string): string {
+  if (!text) return text;
+  
+  // If encryption is not enabled, return original
+  if (!isEncryptionEnabled()) {
+    console.warn('Encryption key not set, storing data unencrypted');
+    return text;
+  }
+  
+  try {
+    const key = getEncryptionKey();
+    
+    // Derive IV from HMAC of the text (deterministic)
+    const hmac = crypto.createHmac('sha256', key);
+    hmac.update(text);
+    const iv = hmac.digest().subarray(0, IV_LENGTH);
+    
+    // Encrypt with derived IV
+    const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag();
+    
+    // Format: DENC:iv:authTag:encryptedData
+    // Prefix with DENC: to identify deterministically encrypted data
+    return `DENC:${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+  } catch (error) {
+    console.error('Deterministic encryption error:', error);
+    throw new Error('Failed to encrypt data deterministically');
+  }
 }
 
 /**
@@ -152,8 +193,14 @@ export function decryptJson<T = any>(encryptedText: string): T {
 
 /**
  * Encrypt sensitive fields in a member object
+ * - account_number uses deterministic encryption (allows lookups)
+ * - title, state use standard encryption (random IV)
+ * - other PII fields use standard encryption
  */
 export function encryptMemberFields(member: {
+  account_number?: string;
+  title?: string;
+  state?: string;
   email?: string;
   address?: string;
   suburb?: string;
@@ -164,6 +211,9 @@ export function encryptMemberFields(member: {
 }): typeof member {
   return {
     ...member,
+    account_number: member.account_number ? encryptDeterministic(member.account_number) : member.account_number,
+    title: member.title ? encrypt(member.title) : member.title,
+    state: member.state ? encrypt(member.state) : member.state,
     email: member.email ? encrypt(member.email) : member.email,
     address: member.address ? encrypt(member.address) : member.address,
     suburb: member.suburb ? encrypt(member.suburb) : member.suburb,
@@ -177,6 +227,9 @@ export function encryptMemberFields(member: {
  * Decrypt sensitive fields in a member object
  */
 export function decryptMemberFields(member: {
+  account_number?: string;
+  title?: string;
+  state?: string;
   email?: string;
   address?: string;
   suburb?: string;
@@ -187,6 +240,9 @@ export function decryptMemberFields(member: {
 }): typeof member {
   return {
     ...member,
+    account_number: member.account_number ? decrypt(member.account_number) : member.account_number,
+    title: member.title ? decrypt(member.title) : member.title,
+    state: member.state ? decrypt(member.state) : member.state,
     email: member.email ? decrypt(member.email) : member.email,
     address: member.address ? decrypt(member.address) : member.address,
     suburb: member.suburb ? decrypt(member.suburb) : member.suburb,

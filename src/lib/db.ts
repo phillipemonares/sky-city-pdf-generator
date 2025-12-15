@@ -2,7 +2,7 @@ import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow, PlayerData } from '@/types/player-data';
 import { normalizeAccount } from './pdf-shared';
-import { encrypt, decrypt, encryptJson, decryptJson, isEncrypted } from './encryption';
+import { encrypt, decrypt, encryptDeterministic, encryptJson, decryptJson, isEncrypted } from './encryption';
 
 // Database connection configuration
 const dbConfig = {
@@ -130,7 +130,10 @@ export async function saveGenerationBatch(
         // Encrypt the user data JSON for security
         const dataJson = encryptJson(userData);
         
-        values.push(statementId, batchId, player.account, dataJson);
+        // Encrypt account number deterministically for lookups
+        const encryptedAccountNumber = encryptDeterministic(player.account);
+        
+        values.push(statementId, batchId, encryptedAccountNumber, dataJson);
         placeholders.push('(?, ?, ?, ?)');
       }
       
@@ -238,9 +241,12 @@ export async function getMatchedAccountsByBatch(batchId: string): Promise<Matche
         quarterlyData?: QuarterlyData;
       }>(row.data);
       
+      // Decrypt account number (handles both encrypted and legacy unencrypted data)
+      const decryptedAccountNumber = decrypt(row.account_number || '');
+      
       // Reconstruct AnnotatedStatementPlayer format for backward compatibility
       const accountData: AnnotatedStatementPlayer = {
-        account: row.account_number,
+        account: decryptedAccountNumber,
         activity: userData.activity_statement || undefined,
         preCommitment: userData.pre_commitment || undefined,
         cashless: userData.cashless_statement || undefined,
@@ -250,7 +256,7 @@ export async function getMatchedAccountsByBatch(batchId: string): Promise<Matche
       return {
         id: row.id,
         batch_id: row.batch_id,
-        account_number: row.account_number,
+        account_number: decryptedAccountNumber,
         account_data: accountData,
         has_activity: Boolean(userData.activity_statement),
         has_pre_commitment: Boolean(userData.pre_commitment),
@@ -271,12 +277,14 @@ export async function getMatchedAccountsByBatch(batchId: string): Promise<Matche
  */
 export async function getAccountFromBatch(batchId: string, accountNumber: string): Promise<MatchedAccount | null> {
   try {
+    // Encrypt account number for lookup (deterministic encryption allows exact match)
+    const encryptedAccountNumber = encryptDeterministic(accountNumber);
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT id, batch_id, account_number, data, created_at, updated_at
        FROM quarterly_user_statements
        WHERE batch_id = ? AND account_number = ?
        LIMIT 1`,
-      [batchId, accountNumber]
+      [batchId, encryptedAccountNumber]
     );
 
     if (rows.length === 0) {
@@ -292,9 +300,12 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
       quarterlyData?: QuarterlyData;
     }>(row.data);
     
+    // Decrypt account number (handles both encrypted and legacy unencrypted data)
+    const decryptedAccountNumber = decrypt(row.account_number || '');
+    
     // Reconstruct AnnotatedStatementPlayer format for backward compatibility
     const accountData: AnnotatedStatementPlayer = {
-      account: row.account_number,
+      account: decryptedAccountNumber,
       activity: userData.activity_statement || undefined,
       preCommitment: userData.pre_commitment || undefined,
       cashless: userData.cashless_statement || undefined,
@@ -304,7 +315,7 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
     return {
       id: row.id,
       batch_id: row.batch_id,
-      account_number: row.account_number,
+      account_number: decryptedAccountNumber,
       account_data: accountData,
       has_activity: Boolean(userData.activity_statement),
       has_pre_commitment: Boolean(userData.pre_commitment),
@@ -366,12 +377,15 @@ export async function updateAccountData(
   try {
     await connection.beginTransaction();
 
+    // Encrypt account number for lookup (deterministic encryption allows exact match)
+    const encryptedAccountNumberForLookup = encryptDeterministic(accountNumber);
+    
     // Get existing data
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(
       `SELECT data FROM quarterly_user_statements
        WHERE batch_id = ? AND account_number = ?
        LIMIT 1`,
-      [batchId, accountNumber]
+      [batchId, encryptedAccountNumberForLookup]
     );
 
     if (rows.length === 0) {
@@ -407,18 +421,20 @@ export async function updateAccountData(
       `UPDATE quarterly_user_statements
        SET data = ?, updated_at = NOW()
        WHERE batch_id = ? AND account_number = ?`,
-      [encryptJson(updatedData), batchId, accountNumber]
+      [encryptJson(updatedData), batchId, encryptedAccountNumberForLookup]
     );
 
     // If activity_statement was updated, also update the members table
     if (updates.activity_statement !== undefined && updates.activity_statement !== null) {
       const activity = updates.activity_statement;
       const normalizedAccount = normalizeAccount(accountNumber);
+      // Encrypt account number deterministically for lookups
+      const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
       
-      // Check if member exists
+      // Check if member exists (search with encrypted account number)
       const [existing] = await connection.execute<mysql.RowDataPacket[]>(
         `SELECT id FROM members WHERE account_number = ?`,
-        [normalizedAccount]
+        [encryptedAccountNumber]
       );
       
       // Convert emailTick and postalTick to boolean (1 or 0)
@@ -426,11 +442,13 @@ export async function updateAccountData(
       const isPostal = activity.postalTick && (activity.postalTick.toLowerCase() === 'yes' || activity.postalTick === '1' || activity.postalTick.toLowerCase() === 'true') ? 1 : 0;
       
       // Encrypt sensitive fields
+      const encryptedTitle = encrypt(activity.title || '');
       const encryptedFirstName = encrypt(activity.firstName || '');
       const encryptedLastName = encrypt(activity.lastName || '');
       const encryptedEmail = encrypt(activity.email || '');
       const encryptedAddress = encrypt(activity.address || '');
       const encryptedSuburb = encrypt(activity.suburb || '');
+      const encryptedState = encrypt(activity.state || '');
       const encryptedPostCode = encrypt(activity.postCode || '');
       
       if (existing.length > 0) {
@@ -445,19 +463,19 @@ export async function updateAccountData(
                updated_at = NOW()
            WHERE account_number = ?`,
           [
-            activity.title || '',
+            encryptedTitle,
             encryptedFirstName,
             encryptedLastName,
             encryptedEmail,
             encryptedAddress,
             encryptedSuburb,
-            activity.state || '',
+            encryptedState,
             encryptedPostCode,
             activity.country || '',
             activity.playerType || '',
             isEmail,
             isPostal,
-            normalizedAccount
+            encryptedAccountNumber
           ]
         );
       } else {
@@ -470,14 +488,14 @@ export async function updateAccountData(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
-            normalizedAccount,
-            activity.title || '',
+            encryptedAccountNumber,
+            encryptedTitle,
             encryptedFirstName,
             encryptedLastName,
             encryptedEmail,
             encryptedAddress,
             encryptedSuburb,
-            activity.state || '',
+            encryptedState,
             encryptedPostCode,
             activity.country || '',
             activity.playerType || '',
@@ -586,6 +604,8 @@ export async function saveNoPlayBatch(
       const playerId = randomUUID();
       // Encrypt the player data JSON for security
       const playerDataJson = encryptJson(player);
+      // Encrypt account number deterministically for lookups
+      const encryptedAccountNumber = encryptDeterministic(player.playerInfo.playerAccount);
 
       await connection.execute(
         `INSERT INTO no_play_players 
@@ -594,7 +614,7 @@ export async function saveNoPlayBatch(
         [
           playerId,
           batchId,
-          player.playerInfo.playerAccount,
+          encryptedAccountNumber,
           playerDataJson,
           player.statementPeriod,
           player.statementDate,
@@ -688,7 +708,8 @@ export async function getNoPlayPlayersByBatch(batchId: string): Promise<NoPlayPl
     return rows.map(row => ({
       id: row.id,
       batch_id: row.batch_id,
-      account_number: row.account_number,
+      // Decrypt account number (handles both encrypted and legacy unencrypted data)
+      account_number: decrypt(row.account_number || ''),
       // Decrypt the player data (handles both encrypted and legacy unencrypted data)
       player_data: decryptJson<PreCommitmentPlayer>(row.player_data),
       statement_period: row.statement_period,
@@ -778,43 +799,9 @@ export async function getNoPlayMembersPaginated(
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
+    const searchTerm = search.trim().toLowerCase();
     
-    // Build search WHERE clause - search in account_number and JSON fields
-    let searchWhere = '';
-    const searchParams: any[] = [];
-    if (search && search.trim()) {
-      const searchTerm = `%${search.trim()}%`;
-      // Search in account_number and JSON fields (player_data contains firstName, lastName, email, etc.)
-      searchWhere = `AND (
-        latest_no_play.account_number LIKE ? OR
-        latest_no_play.player_data LIKE ?
-      )`;
-      searchParams.push(searchTerm, searchTerm);
-    }
-    
-    // Get total count of unique accounts in no-play batches with No Play status
-    const countQuery = `SELECT COUNT(DISTINCT latest_no_play.account_number) as total
-       FROM (
-         SELECT 
-           npp.account_number,
-           npb.id as batch_id,
-           npb.generation_date,
-           npp.statement_period,
-           npp.statement_date,
-           npp.player_data,
-           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
-         FROM no_play_players npp
-         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
-         WHERE npp.no_play_status = 'No Play'
-       ) as latest_no_play
-       WHERE latest_no_play.rn = 1 ${searchWhere}`;
-    
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(countQuery, searchParams);
-    const total = countRows[0]?.total || 0;
-    const totalPages = Math.ceil(total / validPageSize);
-    
-    // Get paginated no-play members with their latest batch info
-    // First get distinct accounts with pagination, then get latest batch info for each
+    // Get all no-play members with their latest batch info (we need all for search)
     const query = `SELECT 
         latest_no_play.account_number,
         latest_no_play.batch_id as latest_no_play_batch_id,
@@ -835,13 +822,12 @@ export async function getNoPlayMembersPaginated(
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
-       WHERE latest_no_play.rn = 1 ${searchWhere}
-       ORDER BY latest_no_play.account_number ASC
-       LIMIT ${validPageSize} OFFSET ${offset}`;
+       WHERE latest_no_play.rn = 1
+       ORDER BY latest_no_play.account_number ASC`;
     
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query);
     
-    const members = rows.map(row => {
+    const allMembers = rows.map(row => {
       // Decrypt and extract member info from player_data (handles both encrypted and legacy data)
       let playerData: any = {};
       try {
@@ -853,7 +839,8 @@ export async function getNoPlayMembersPaginated(
       const playerInfo = playerData.playerInfo || {};
       
       return {
-        account_number: row.account_number,
+        // Decrypt account number (handles both encrypted and legacy unencrypted data)
+        account_number: decrypt(row.account_number || ''),
         latest_no_play_batch_id: row.latest_no_play_batch_id,
         latest_no_play_generation_date: new Date(row.latest_no_play_generation_date),
         statement_period: row.statement_period || '',
@@ -866,6 +853,28 @@ export async function getNoPlayMembersPaginated(
         suburb: playerInfo.suburb || '',
       };
     });
+    
+    // Filter by search term (search on decrypted data)
+    let filteredMembers = allMembers;
+    if (searchTerm) {
+      filteredMembers = allMembers.filter(m => 
+        m.account_number?.toLowerCase().includes(searchTerm) ||
+        m.first_name?.toLowerCase().includes(searchTerm) ||
+        m.last_name?.toLowerCase().includes(searchTerm) ||
+        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
+        m.email?.toLowerCase().includes(searchTerm) ||
+        m.address1?.toLowerCase().includes(searchTerm) ||
+        m.address2?.toLowerCase().includes(searchTerm) ||
+        m.suburb?.toLowerCase().includes(searchTerm)
+      );
+    }
+    
+    // Calculate pagination
+    const total = filteredMembers.length;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Apply pagination
+    const members = filteredMembers.slice(offset, offset + validPageSize);
     
     return {
       members,
@@ -892,43 +901,9 @@ export async function getPlayMembersPaginated(
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
+    const searchTerm = search.trim().toLowerCase();
     
-    // Build search WHERE clause - search in account_number and JSON fields
-    let searchWhere = '';
-    const searchParams: any[] = [];
-    if (search && search.trim()) {
-      const searchTerm = `%${search.trim()}%`;
-      // Search in account_number and JSON fields (player_data contains firstName, lastName, email, etc.)
-      searchWhere = `AND (
-        latest_play.account_number LIKE ? OR
-        latest_play.player_data LIKE ?
-      )`;
-      searchParams.push(searchTerm, searchTerm);
-    }
-    
-    // Get total count of unique accounts in no-play batches with Play status
-    const countQuery = `SELECT COUNT(DISTINCT latest_play.account_number) as total
-       FROM (
-         SELECT 
-           npp.account_number,
-           npb.id as batch_id,
-           npb.generation_date,
-           npp.statement_period,
-           npp.statement_date,
-           npp.player_data,
-           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
-         FROM no_play_players npp
-         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
-         WHERE npp.no_play_status = 'Play'
-       ) as latest_play
-       WHERE latest_play.rn = 1 ${searchWhere}`;
-    
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(countQuery, searchParams);
-    const total = countRows[0]?.total || 0;
-    const totalPages = Math.ceil(total / validPageSize);
-    
-    // Get paginated play members with their latest batch info
-    // First get distinct accounts with pagination, then get latest batch info for each
+    // Get all play members with their latest batch info (we need all for search)
     const query = `SELECT 
         latest_play.account_number,
         latest_play.batch_id as latest_play_batch_id,
@@ -949,13 +924,12 @@ export async function getPlayMembersPaginated(
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'Play'
        ) as latest_play
-       WHERE latest_play.rn = 1 ${searchWhere}
-       ORDER BY latest_play.account_number ASC
-       LIMIT ${validPageSize} OFFSET ${offset}`;
+       WHERE latest_play.rn = 1
+       ORDER BY latest_play.account_number ASC`;
     
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query);
     
-    const members = rows.map(row => {
+    const allMembers = rows.map(row => {
       // Decrypt and extract member info from player_data (handles both encrypted and legacy data)
       let playerData: any = {};
       try {
@@ -967,7 +941,8 @@ export async function getPlayMembersPaginated(
       const playerInfo = playerData.playerInfo || {};
       
       return {
-        account_number: row.account_number,
+        // Decrypt account number (handles both encrypted and legacy unencrypted data)
+        account_number: decrypt(row.account_number || ''),
         latest_play_batch_id: row.latest_play_batch_id,
         latest_play_generation_date: new Date(row.latest_play_generation_date),
         statement_period: row.statement_period || '',
@@ -980,6 +955,28 @@ export async function getPlayMembersPaginated(
         suburb: playerInfo.suburb || '',
       };
     });
+    
+    // Filter by search term (search on decrypted data)
+    let filteredMembers = allMembers;
+    if (searchTerm) {
+      filteredMembers = allMembers.filter(m => 
+        m.account_number?.toLowerCase().includes(searchTerm) ||
+        m.first_name?.toLowerCase().includes(searchTerm) ||
+        m.last_name?.toLowerCase().includes(searchTerm) ||
+        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
+        m.email?.toLowerCase().includes(searchTerm) ||
+        m.address1?.toLowerCase().includes(searchTerm) ||
+        m.address2?.toLowerCase().includes(searchTerm) ||
+        m.suburb?.toLowerCase().includes(searchTerm)
+      );
+    }
+    
+    // Calculate pagination
+    const total = filteredMembers.length;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Apply pagination
+    const members = filteredMembers.slice(offset, offset + validPageSize);
     
     return {
       members,
@@ -1028,19 +1025,23 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
       if (!row.acct) continue; // Skip rows without account number
       
       const normalizedAccount = normalizeAccount(row.acct);
+      // Encrypt account number deterministically for lookups
+      const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
       
-      // Check if member already exists
+      // Check if member already exists (search with encrypted account number)
       const [existing] = await connection.execute<mysql.RowDataPacket[]>(
         `SELECT id FROM members WHERE account_number = ?`,
-        [normalizedAccount]
+        [encryptedAccountNumber]
       );
       
       // Encrypt sensitive fields
+      const encryptedTitle = encrypt(row.title || '');
       const encryptedFirstName = encrypt(row.firstName || '');
       const encryptedLastName = encrypt(row.lastName || '');
       const encryptedEmail = encrypt(row.email || '');
       const encryptedAddress = encrypt(row.address || '');
       const encryptedSuburb = encrypt(row.suburb || '');
+      const encryptedState = encrypt(row.state || '');
       const encryptedPostCode = encrypt(row.postCode || '');
 
       if (existing.length > 0) {
@@ -1053,17 +1054,17 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
                is_postal = COALESCE(is_postal, 0), updated_at = NOW()
            WHERE account_number = ?`,
           [
-            row.title || '',
+            encryptedTitle,
             encryptedFirstName,
             encryptedLastName,
             encryptedEmail,
             encryptedAddress,
             encryptedSuburb,
-            row.state || '',
+            encryptedState,
             encryptedPostCode,
             row.country || '',
             row.playerType || '',
-            normalizedAccount
+            encryptedAccountNumber
           ]
         );
       } else {
@@ -1076,14 +1077,14 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
-            normalizedAccount,
-            row.title || '',
+            encryptedAccountNumber,
+            encryptedTitle,
             encryptedFirstName,
             encryptedLastName,
             encryptedEmail,
             encryptedAddress,
             encryptedSuburb,
-            row.state || '',
+            encryptedState,
             encryptedPostCode,
             row.country || '',
             row.playerType || '',
@@ -1114,9 +1115,11 @@ export async function getMemberByAccount(accountNumber: string): Promise<Member 
   
   try {
     const normalizedAccount = normalizeAccount(accountNumber);
+    // Encrypt account number for lookup (deterministic encryption allows exact match)
+    const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(
       `SELECT * FROM members WHERE account_number = ? LIMIT 1`,
-      [normalizedAccount]
+      [encryptedAccountNumber]
     );
     
     if (rows.length === 0) {
@@ -1127,14 +1130,14 @@ export async function getMemberByAccount(accountNumber: string): Promise<Member 
     // Decrypt sensitive fields (handles both encrypted and legacy unencrypted data)
     return {
       id: memberRow.id,
-      account_number: memberRow.account_number,
-      title: memberRow.title || '',
+      account_number: decrypt(memberRow.account_number || ''),
+      title: decrypt(memberRow.title || ''),
       first_name: decrypt(memberRow.first_name || ''),
       last_name: decrypt(memberRow.last_name || ''),
       email: decrypt(memberRow.email || ''),
       address: decrypt(memberRow.address || ''),
       suburb: decrypt(memberRow.suburb || ''),
-      state: memberRow.state || '',
+      state: decrypt(memberRow.state || ''),
       post_code: decrypt(memberRow.post_code || ''),
       country: memberRow.country || '',
       player_type: memberRow.player_type || '',
@@ -1163,14 +1166,14 @@ export async function getAllMembers(): Promise<Member[]> {
     // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
     return rows.map(row => ({
       id: row.id,
-      account_number: row.account_number,
-      title: row.title || '',
+      account_number: decrypt(row.account_number || ''),
+      title: decrypt(row.title || ''),
       first_name: decrypt(row.first_name || ''),
       last_name: decrypt(row.last_name || ''),
       email: decrypt(row.email || ''),
       address: decrypt(row.address || ''),
       suburb: decrypt(row.suburb || ''),
-      state: row.state || '',
+      state: decrypt(row.state || ''),
       post_code: decrypt(row.post_code || ''),
       country: row.country || '',
       player_type: row.player_type || '',
@@ -1218,6 +1221,8 @@ export async function saveMembersFromMemberContact(
       if (!contact.accountNumber) continue; // Skip rows without account number
       
       const normalizedAccount = normalizeAccount(contact.accountNumber);
+      // Encrypt account number deterministically for lookups
+      const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
       
       // Use preferredName if available, otherwise firstName
       const displayName = contact.preferredName || contact.firstName;
@@ -1231,12 +1236,13 @@ export async function saveMembersFromMemberContact(
       const encryptedEmail = encrypt(contact.email || '');
       const encryptedAddress = encrypt(fullAddress);
       const encryptedSuburb = encrypt(contact.city || '');
+      const encryptedState = encrypt(contact.state || '');
       const encryptedPostCode = encrypt(contact.postalCode || '');
       
-      // Check if member already exists
+      // Check if member already exists (search with encrypted account number)
       const [existing] = await connection.execute<mysql.RowDataPacket[]>(
         `SELECT id FROM members WHERE account_number = ?`,
-        [normalizedAccount]
+        [encryptedAccountNumber]
       );
       
       if (existing.length > 0) {
@@ -1253,12 +1259,12 @@ export async function saveMembersFromMemberContact(
             encryptedEmail,
             encryptedAddress,
             encryptedSuburb,
-            contact.state || '',
+            encryptedState,
             encryptedPostCode,
             contact.country || '',
             contact.isEmail,
             contact.isPostal,
-            normalizedAccount
+            encryptedAccountNumber
           ]
         );
       } else {
@@ -1271,14 +1277,14 @@ export async function saveMembersFromMemberContact(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
-            normalizedAccount,
-            '', // title not in Member Contact sheet
+            encryptedAccountNumber,
+            '', // title not in Member Contact sheet (empty string, not encrypted)
             encryptedFirstName,
             encryptedLastName,
             encryptedEmail,
             encryptedAddress,
             encryptedSuburb,
-            contact.state || '',
+            encryptedState,
             encryptedPostCode,
             contact.country || '',
             '', // player_type not in Member Contact sheet
@@ -1312,6 +1318,8 @@ export interface MemberWithBatch extends Member {
 
 /**
  * Get paginated members from the database with their latest batch information
+ * When search is provided, fetches all members, decrypts, filters, then paginates
+ * (required because data is encrypted and SQL LIKE cannot search encrypted text)
  */
 export async function getMembersPaginated(
   page: number = 1,
@@ -1323,29 +1331,7 @@ export async function getMembersPaginated(
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
-    
-    // Build search WHERE clause
-    let searchWhere = '';
-    const searchParams: any[] = [];
-    if (search && search.trim()) {
-      const searchTerm = `%${search.trim()}%`;
-      searchWhere = `WHERE (
-        m.account_number LIKE ? OR
-        CONCAT(COALESCE(m.title, ''), ' ', COALESCE(m.first_name, ''), ' ', COALESCE(m.last_name, '')) LIKE ? OR
-        m.email LIKE ? OR
-        m.address LIKE ? OR
-        m.suburb LIKE ? OR
-        m.state LIKE ? OR
-        m.post_code LIKE ?
-      )`;
-      searchParams.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
-    }
-    
-    // Get total count with search filter
-    const countQuery = `SELECT COUNT(*) as total FROM members m ${searchWhere}`;
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(countQuery, searchParams);
-    const total = countRows[0]?.total || 0;
-    const totalPages = Math.ceil(total / validPageSize);
+    const searchTerm = search.trim().toLowerCase();
     
     // Get paginated members with their latest batch info
     // Join with quarterly_user_statements and generation_batches to get the most recent batch per member
@@ -1379,23 +1365,21 @@ export async function getMembersPaginated(
          FROM no_play_players npp
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
        ) as latest_no_play ON m.account_number = latest_no_play.account_number AND latest_no_play.rn = 1
-       ${searchWhere}
-       ORDER BY m.account_number ASC 
-       LIMIT ${validPageSize} OFFSET ${offset}`;
+       ORDER BY m.account_number ASC`;
     
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query, searchParams);
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query);
     
     // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
-    const members = rows.map(row => ({
+    const allMembers = rows.map(row => ({
       id: row.id,
-      account_number: row.account_number,
-      title: row.title || '',
+      account_number: decrypt(row.account_number || ''),
+      title: decrypt(row.title || ''),
       first_name: decrypt(row.first_name || ''),
       last_name: decrypt(row.last_name || ''),
       email: decrypt(row.email || ''),
       address: decrypt(row.address || ''),
       suburb: decrypt(row.suburb || ''),
-      state: row.state || '',
+      state: decrypt(row.state || ''),
       post_code: decrypt(row.post_code || ''),
       country: row.country || '',
       player_type: row.player_type || '',
@@ -1410,6 +1394,30 @@ export async function getMembersPaginated(
       latest_no_play_batch_id: row.latest_no_play_batch_id || null,
       latest_no_play_generation_date: row.latest_no_play_generation_date ? new Date(row.latest_no_play_generation_date) : null,
     }));
+    
+    // Filter by search term (search on decrypted data)
+    let filteredMembers = allMembers;
+    if (searchTerm) {
+      filteredMembers = allMembers.filter(m => 
+        m.account_number?.toLowerCase().includes(searchTerm) ||
+        m.title?.toLowerCase().includes(searchTerm) ||
+        m.first_name?.toLowerCase().includes(searchTerm) ||
+        m.last_name?.toLowerCase().includes(searchTerm) ||
+        `${m.title || ''} ${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
+        m.email?.toLowerCase().includes(searchTerm) ||
+        m.address?.toLowerCase().includes(searchTerm) ||
+        m.suburb?.toLowerCase().includes(searchTerm) ||
+        m.state?.toLowerCase().includes(searchTerm) ||
+        m.post_code?.toLowerCase().includes(searchTerm)
+      );
+    }
+    
+    // Calculate pagination
+    const total = filteredMembers.length;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Apply pagination
+    const members = filteredMembers.slice(offset, offset + validPageSize);
     
     return {
       members,
