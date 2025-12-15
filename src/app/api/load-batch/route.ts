@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getBatchById, getMatchedAccountsByBatch } from '@/lib/db';
-import { decryptJson } from '@/lib/encryption';
+import { decryptJson, decrypt } from '@/lib/encryption';
 import mysql from 'mysql2/promise';
 
 const dbConfig = {
@@ -122,7 +122,8 @@ export async function GET(request: NextRequest) {
         cashless_statement?: any;
       }>(row.data);
       
-      const account = row.account_number;
+      // Decrypt account number (handles both encrypted and legacy unencrypted data)
+      const account = decrypt(row.account_number || '');
       
       // Build annotated player
       const player = {
