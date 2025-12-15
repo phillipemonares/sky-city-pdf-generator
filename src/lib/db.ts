@@ -279,13 +279,26 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
   try {
     // Encrypt account number for lookup (deterministic encryption allows exact match)
     const encryptedAccountNumber = encryptDeterministic(accountNumber);
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+    
+    // Try encrypted lookup first, then fall back to unencrypted (for legacy data)
+    let [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT id, batch_id, account_number, data, created_at, updated_at
        FROM quarterly_user_statements
        WHERE batch_id = ? AND account_number = ?
        LIMIT 1`,
       [batchId, encryptedAccountNumber]
     );
+
+    // If not found with encrypted, try with unencrypted (legacy data support)
+    if (rows.length === 0) {
+      [rows] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT id, batch_id, account_number, data, created_at, updated_at
+         FROM quarterly_user_statements
+         WHERE batch_id = ? AND account_number = ?
+         LIMIT 1`,
+        [batchId, accountNumber]
+      );
+    }
 
     if (rows.length === 0) {
       return null;
@@ -380,13 +393,29 @@ export async function updateAccountData(
     // Encrypt account number for lookup (deterministic encryption allows exact match)
     const encryptedAccountNumberForLookup = encryptDeterministic(accountNumber);
     
-    // Get existing data
-    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
-      `SELECT data FROM quarterly_user_statements
+    // Get existing data - try encrypted first, then unencrypted (legacy data support)
+    let [rows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT data, account_number FROM quarterly_user_statements
        WHERE batch_id = ? AND account_number = ?
        LIMIT 1`,
       [batchId, encryptedAccountNumberForLookup]
     );
+
+    // Track which account number format to use for update
+    let accountNumberForUpdate = encryptedAccountNumberForLookup;
+    
+    // If not found with encrypted, try with unencrypted (legacy data support)
+    if (rows.length === 0) {
+      [rows] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT data, account_number FROM quarterly_user_statements
+         WHERE batch_id = ? AND account_number = ?
+         LIMIT 1`,
+        [batchId, accountNumber]
+      );
+      if (rows.length > 0) {
+        accountNumberForUpdate = accountNumber;
+      }
+    }
 
     if (rows.length === 0) {
       throw new Error('Account not found in batch');
@@ -421,7 +450,7 @@ export async function updateAccountData(
       `UPDATE quarterly_user_statements
        SET data = ?, updated_at = NOW()
        WHERE batch_id = ? AND account_number = ?`,
-      [encryptJson(updatedData), batchId, encryptedAccountNumberForLookup]
+      [encryptJson(updatedData), batchId, accountNumberForUpdate]
     );
 
     // If activity_statement was updated, also update the members table
@@ -1320,6 +1349,9 @@ export interface MemberWithBatch extends Member {
  * Get paginated members from the database with their latest batch information
  * When search is provided, fetches all members, decrypts, filters, then paginates
  * (required because data is encrypted and SQL LIKE cannot search encrypted text)
+ * 
+ * NOTE: Batch lookup is done in application code after decryption to handle
+ * cases where encryption keys might differ between tables or legacy unencrypted data
  */
 export async function getMembersPaginated(
   page: number = 1,
@@ -1333,67 +1365,91 @@ export async function getMembersPaginated(
     const offset = (validPage - 1) * validPageSize;
     const searchTerm = search.trim().toLowerCase();
     
-    // Get paginated members with their latest batch info
-    // Join with quarterly_user_statements and generation_batches to get the most recent batch per member
-    // Also join with no_play_players and no_play_batches to get the most recent no-play batch per member
-    const query = `SELECT 
-        m.*,
-        latest_batch.batch_id as latest_batch_id,
-        latest_batch.quarter as latest_quarter,
-        latest_batch.year as latest_year,
-        latest_batch.generation_date as latest_generation_date,
-        latest_no_play.batch_id as latest_no_play_batch_id,
-        latest_no_play.generation_date as latest_no_play_generation_date
-       FROM members m
-       LEFT JOIN (
-         SELECT 
-           qus.account_number,
-           gb.id as batch_id,
-           gb.quarter,
-           gb.year,
-           gb.generation_date,
-           ROW_NUMBER() OVER (PARTITION BY qus.account_number ORDER BY gb.generation_date DESC) as rn
-         FROM quarterly_user_statements qus
-         INNER JOIN generation_batches gb ON qus.batch_id = gb.id
-       ) as latest_batch ON m.account_number = latest_batch.account_number AND latest_batch.rn = 1
-       LEFT JOIN (
-         SELECT 
-           npp.account_number,
-           npb.id as batch_id,
-           npb.generation_date,
-           ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
-         FROM no_play_players npp
-         INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
-       ) as latest_no_play ON m.account_number = latest_no_play.account_number AND latest_no_play.rn = 1
-       ORDER BY m.account_number ASC`;
+    // Fetch members separately
+    const membersQuery = `SELECT * FROM members ORDER BY account_number ASC`;
+    const [memberRows] = await pool.execute<mysql.RowDataPacket[]>(membersQuery);
     
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query);
+    // Fetch latest quarterly batch per account
+    const quarterlyBatchQuery = `
+      SELECT 
+        qus.account_number,
+        gb.id as batch_id,
+        gb.quarter,
+        gb.year,
+        gb.generation_date,
+        ROW_NUMBER() OVER (PARTITION BY qus.account_number ORDER BY gb.generation_date DESC) as rn
+      FROM quarterly_user_statements qus
+      INNER JOIN generation_batches gb ON qus.batch_id = gb.id`;
+    const [quarterlyRows] = await pool.execute<mysql.RowDataPacket[]>(quarterlyBatchQuery);
     
-    // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
-    const allMembers = rows.map(row => ({
-      id: row.id,
-      account_number: decrypt(row.account_number || ''),
-      title: decrypt(row.title || ''),
-      first_name: decrypt(row.first_name || ''),
-      last_name: decrypt(row.last_name || ''),
-      email: decrypt(row.email || ''),
-      address: decrypt(row.address || ''),
-      suburb: decrypt(row.suburb || ''),
-      state: decrypt(row.state || ''),
-      post_code: decrypt(row.post_code || ''),
-      country: row.country || '',
-      player_type: row.player_type || '',
-      is_email: row.is_email ?? 0,
-      is_postal: row.is_postal ?? 0,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      latest_batch_id: row.latest_batch_id || null,
-      latest_quarter: row.latest_quarter || null,
-      latest_year: row.latest_year || null,
-      latest_generation_date: row.latest_generation_date ? new Date(row.latest_generation_date) : null,
-      latest_no_play_batch_id: row.latest_no_play_batch_id || null,
-      latest_no_play_generation_date: row.latest_no_play_generation_date ? new Date(row.latest_no_play_generation_date) : null,
-    }));
+    // Build a map of decrypted account -> latest batch info
+    const quarterlyBatchMap = new Map<string, { batch_id: string; quarter: number; year: number; generation_date: Date }>();
+    for (const row of quarterlyRows) {
+      if (row.rn === 1) {
+        const decryptedAccount = decrypt(row.account_number || '');
+        quarterlyBatchMap.set(decryptedAccount, {
+          batch_id: row.batch_id,
+          quarter: row.quarter,
+          year: row.year,
+          generation_date: new Date(row.generation_date)
+        });
+      }
+    }
+    
+    // Fetch latest no-play batch per account
+    const noPlayBatchQuery = `
+      SELECT 
+        npp.account_number,
+        npb.id as batch_id,
+        npb.generation_date,
+        ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
+      FROM no_play_players npp
+      INNER JOIN no_play_batches npb ON npp.batch_id = npb.id`;
+    const [noPlayRows] = await pool.execute<mysql.RowDataPacket[]>(noPlayBatchQuery);
+    
+    // Build a map of decrypted account -> latest no-play batch info
+    const noPlayBatchMap = new Map<string, { batch_id: string; generation_date: Date }>();
+    for (const row of noPlayRows) {
+      if (row.rn === 1) {
+        const decryptedAccount = decrypt(row.account_number || '');
+        noPlayBatchMap.set(decryptedAccount, {
+          batch_id: row.batch_id,
+          generation_date: new Date(row.generation_date)
+        });
+      }
+    }
+    
+    // Decrypt sensitive fields for each member and match with batch info
+    const allMembers = memberRows.map(row => {
+      const decryptedAccountNumber = decrypt(row.account_number || '');
+      const quarterlyBatch = quarterlyBatchMap.get(decryptedAccountNumber);
+      const noPlayBatch = noPlayBatchMap.get(decryptedAccountNumber);
+      
+      return {
+        id: row.id,
+        account_number: decryptedAccountNumber,
+        title: decrypt(row.title || ''),
+        first_name: decrypt(row.first_name || ''),
+        last_name: decrypt(row.last_name || ''),
+        email: decrypt(row.email || ''),
+        address: decrypt(row.address || ''),
+        suburb: decrypt(row.suburb || ''),
+        state: decrypt(row.state || ''),
+        post_code: decrypt(row.post_code || ''),
+        country: row.country || '',
+        player_type: row.player_type || '',
+        is_email: row.is_email ?? 0,
+        is_postal: row.is_postal ?? 0,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        latest_batch_id: quarterlyBatch?.batch_id || null,
+        latest_quarter: quarterlyBatch?.quarter || null,
+        latest_year: quarterlyBatch?.year || null,
+        latest_generation_date: quarterlyBatch?.generation_date || null,
+        latest_no_play_batch_id: noPlayBatch?.batch_id || null,
+        latest_no_play_generation_date: noPlayBatch?.generation_date || null,
+      };
+    });
     
     // Filter by search term (search on decrypted data)
     let filteredMembers = allMembers;
