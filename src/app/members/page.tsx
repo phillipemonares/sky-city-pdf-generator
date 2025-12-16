@@ -3,6 +3,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import Navigation from '@/components/Navigation';
 import EditMemberModal from '@/components/EditMemberModal';
+import SendEmailModal from '@/components/SendEmailModal';
+import ExportResultsDialog from '@/components/ExportResultsDialog';
 import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
 import JSZip from 'jszip';
 
@@ -12,17 +14,24 @@ export default function MembersPage() {
   const [noPlayMembers, setNoPlayMembers] = useState<NoPlayMemberWithBatch[]>([]);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(50);
+  const [pageSize, setPageSize] = useState<number>(100);
   const [totalMembers, setTotalMembers] = useState<number>(0);
   const [totalPages, setTotalPages] = useState<number>(0);
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'quarterly' | 'play' | 'no-play'>('quarterly');
   const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
+  const [emailMember, setEmailMember] = useState<{ account: string; batchId: string; name: string; email: string; type?: 'quarterly' | 'play' | 'no-play' } | null>(null);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSearch, setActiveSearch] = useState<string>('');
+  const [exportResults, setExportResults] = useState<{
+    isOpen: boolean;
+    successCount: number;
+    failedCount: number;
+    failedAccounts: string[];
+  } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
@@ -421,20 +430,17 @@ export default function MembersPage() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      const message = `Successfully exported ${successCount} PDF${successCount !== 1 ? 's' : ''}`;
-      if (failedCount > 0) {
-        const failedAccountNumbers = allFailedAccounts
-          .map(r => r.account)
-          .slice(0, 10); // Show first 10 failed accounts
-        
-        const failedList = failedAccountNumbers.length > 0 
-          ? `\n\nFailed accounts: ${failedAccountNumbers.join(', ')}${failedAccountNumbers.length < failedCount ? '...' : ''}`
-          : '';
-        
-        alert(`${message}\n\nNote: ${failedCount} PDF${failedCount !== 1 ? 's' : ''} failed to export.${failedList}\n\nCheck the console for more details.`);
-      } else {
-        alert(message);
-      }
+      // Show styled dialog with results
+      const failedAccountNumbers = allFailedAccounts
+        .map(r => r.account)
+        .slice(0, 10); // Show first 10 failed accounts
+      
+      setExportResults({
+        isOpen: true,
+        successCount,
+        failedCount,
+        failedAccounts: failedAccountNumbers,
+      });
     } catch (error) {
       console.error('Error exporting PDFs:', error);
       alert('Failed to export PDFs. Please try again.');
@@ -478,7 +484,7 @@ export default function MembersPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="w-full px-6 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
             Member Information
@@ -719,7 +725,8 @@ export default function MembersPage() {
                         />
                       </th>
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Account</th>
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Name</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Last Name</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">First Name</th>
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Email</th>
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Address</th>
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Suburb</th>
@@ -731,7 +738,7 @@ export default function MembersPage() {
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Postal</th>
                         </>
                       )}
-                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">PDF Link</th>
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -740,6 +747,13 @@ export default function MembersPage() {
                         const previewUrl = member.latest_batch_id
                           ? `/content/files/${member.account_number}/${member.latest_batch_id}/`
                           : null;
+                        
+                        // Helper to check if value is empty or just whitespace/periods
+                        const isEmpty = (val: string | null | undefined): boolean => {
+                          if (!val) return true;
+                          const trimmed = String(val).trim();
+                          return trimmed === '' || trimmed === '.' || trimmed === '-';
+                        };
                       
                         return (
                           <tr key={member.id} className="hover:bg-gray-50">
@@ -752,14 +766,13 @@ export default function MembersPage() {
                               />
                             </td>
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.account_number}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">
-                              {[member.title, member.first_name, member.last_name].filter(Boolean).join(' ')}
-                            </td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || '-'}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.address || '-'}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || '-'}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.state || '-'}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.post_code || '-'}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.last_name) ? <span className="text-gray-400">N/A</span> : member.last_name}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.first_name) ? <span className="text-gray-400">N/A</span> : member.first_name}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.email) ? <span className="text-gray-400">N/A</span> : member.email}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.address) ? <span className="text-gray-400">N/A</span> : member.address}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.suburb) ? <span className="text-gray-400">N/A</span> : member.suburb}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.state) ? <span className="text-gray-400">N/A</span> : member.state}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{isEmpty(member.post_code) ? <span className="text-gray-400">N/A</span> : member.post_code}</td>
                             <td className="px-3 py-1.5 border border-gray-200">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                                 member.is_email 
@@ -783,22 +796,48 @@ export default function MembersPage() {
                                 <div className="flex items-center gap-2">
                                   <button
                                     onClick={() => setEditingMember({ account: member.account_number, batchId: member.latest_batch_id! })}
-                                    className="text-blue-600 hover:text-blue-800 text-xs underline"
+                                    className="text-blue-600 hover:text-blue-800 transition-colors"
+                                    title="Edit"
                                   >
-                                    Edit
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                    </svg>
                                   </button>
-                                  <span className="text-gray-300">|</span>
                                   <a
                                     href={previewUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-blue-600 hover:text-blue-800 text-xs underline"
+                                    className="text-blue-600 hover:text-blue-800 transition-colors"
+                                    title="Preview"
                                   >
-                                    Preview
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                    </svg>
                                   </a>
+                                  {member.email && !isEmpty(member.email) && (
+                                    <button
+                                      onClick={() => {
+                                        const memberName = [member.title, member.first_name, member.last_name].filter(Boolean).join(' ') || 'Member';
+                                        setEmailMember({ 
+                                          account: member.account_number, 
+                                          batchId: member.latest_batch_id!,
+                                          name: memberName,
+                                          email: member.email,
+                                          type: 'quarterly'
+                                        });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 transition-colors"
+                                      title="Send Email"
+                                    >
+                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                      </svg>
+                                    </button>
+                                  )}
                                 </div>
                               ) : (
-                                <span className="text-gray-400 text-xs">No PDF available</span>
+                                <span className="text-gray-400 text-xs">N/A</span>
                               )}
                             </td>
                           </tr>
@@ -809,8 +848,7 @@ export default function MembersPage() {
                         const previewUrl = member.latest_play_batch_id
                           ? `/content/play/${member.account_number}/${member.latest_play_batch_id}/`
                           : null;
-                        const fullName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Name unavailable';
-                        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || '-';
+                        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || null;
                       
                         return (
                           <tr key={member.account_number} className="hover:bg-gray-50">
@@ -823,22 +861,49 @@ export default function MembersPage() {
                               />
                             </td>
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.account_number}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{fullName}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || '-'}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{address}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || '-'}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.last_name || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.first_name || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{address || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || <span className="text-gray-400">N/A</span>}</td>
                             <td className="px-3 py-1.5 border border-gray-200">
                               {previewUrl ? (
-                                <a
-                                  href={previewUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 text-xs underline"
-                                >
-                                  Preview
-                                </a>
+                                <div className="flex items-center gap-2">
+                                  <a
+                                    href={previewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 transition-colors"
+                                    title="Preview"
+                                  >
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                    </svg>
+                                  </a>
+                                  {member.email && (
+                                    <button
+                                      onClick={() => {
+                                        const memberName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Member';
+                                        setEmailMember({ 
+                                          account: member.account_number, 
+                                          batchId: member.latest_play_batch_id!,
+                                          name: memberName,
+                                          email: member.email,
+                                          type: 'play'
+                                        });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 transition-colors"
+                                      title="Send Email"
+                                    >
+                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                      </svg>
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
-                                <span className="text-gray-400 text-xs">No PDF available</span>
+                                <span className="text-gray-400 text-xs">N/A</span>
                               )}
                             </td>
                           </tr>
@@ -849,8 +914,7 @@ export default function MembersPage() {
                         const previewUrl = member.latest_no_play_batch_id
                           ? `/content/no-play/${member.account_number}/${member.latest_no_play_batch_id}/`
                           : null;
-                        const fullName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Name unavailable';
-                        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || '-';
+                        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || null;
                       
                         return (
                           <tr key={member.account_number} className="hover:bg-gray-50">
@@ -863,22 +927,49 @@ export default function MembersPage() {
                               />
                             </td>
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.account_number}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{fullName}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || '-'}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{address}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || '-'}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.last_name || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.first_name || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{address || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || <span className="text-gray-400">N/A</span>}</td>
                             <td className="px-3 py-1.5 border border-gray-200">
                               {previewUrl ? (
-                                <a
-                                  href={previewUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 text-xs underline"
-                                >
-                                  Preview
-                                </a>
+                                <div className="flex items-center gap-2">
+                                  <a
+                                    href={previewUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 transition-colors"
+                                    title="Preview"
+                                  >
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                    </svg>
+                                  </a>
+                                  {member.email && (
+                                    <button
+                                      onClick={() => {
+                                        const memberName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Member';
+                                        setEmailMember({ 
+                                          account: member.account_number, 
+                                          batchId: member.latest_no_play_batch_id!,
+                                          name: memberName,
+                                          email: member.email,
+                                          type: 'no-play'
+                                        });
+                                      }}
+                                      className="text-blue-600 hover:text-blue-800 transition-colors"
+                                      title="Send Email"
+                                    >
+                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                      </svg>
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
-                                <span className="text-gray-400 text-xs">No PDF available</span>
+                                <span className="text-gray-400 text-xs">N/A</span>
                               )}
                             </td>
                           </tr>
@@ -951,6 +1042,40 @@ export default function MembersPage() {
               loadNoPlayMembers(currentPage, pageSize);
             }
           }}
+        />
+      )}
+
+      {/* Send Email Modal */}
+      {emailMember && (
+        <SendEmailModal
+          isOpen={!!emailMember}
+          onClose={() => setEmailMember(null)}
+          account={emailMember.account}
+          batchId={emailMember.batchId}
+          memberName={emailMember.name}
+          memberEmail={emailMember.email}
+          type={emailMember.type || 'quarterly'}
+          onSuccess={() => {
+            // Optionally refresh data after successful email send
+            if (activeTab === 'quarterly') {
+              loadMembers(currentPage, pageSize, activeSearch);
+            } else if (activeTab === 'play') {
+              loadPlayMembers(currentPage, pageSize, activeSearch);
+            } else {
+              loadNoPlayMembers(currentPage, pageSize, activeSearch);
+            }
+          }}
+        />
+      )}
+
+      {/* Export Results Dialog */}
+      {exportResults && (
+        <ExportResultsDialog
+          isOpen={exportResults.isOpen}
+          onClose={() => setExportResults(null)}
+          successCount={exportResults.successCount}
+          failedCount={exportResults.failedCount}
+          failedAccounts={exportResults.failedAccounts}
         />
       )}
     </div>

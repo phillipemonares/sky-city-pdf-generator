@@ -70,7 +70,8 @@ export async function GET(request: NextRequest) {
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    page.setDefaultTimeout(90000);
+    await page.setContent(html, { waitUntil: 'load', timeout: 90000 });
 
     // Wait for fonts to load
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -107,6 +108,7 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
 
 
 

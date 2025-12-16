@@ -66,7 +66,7 @@ export default function Navigation() {
 
   return (
     <nav className="bg-white shadow-md">
-      <div className="max-w-6xl mx-auto px-4 py-4">
+      <div className="w-full px-6 py-4">
         <div className="flex items-center gap-8">
           {/* SkyCity Logo */}
           <Link href="/" className="flex items-center hover:opacity-80 transition-opacity flex-shrink-0">

@@ -27,11 +27,18 @@ interface NameDetails {
 }
 
 const resolveNameDetails = (player: AnnotatedStatementPlayer): NameDetails => {
-  const normalizeParts = (...parts: unknown[]): string =>
-    parts
+  const normalizeParts = (...parts: unknown[]): string => {
+    const cleaned = parts
       .map(cleanText)
-      .filter(Boolean)
-      .join(' ');
+      .filter(Boolean);
+    
+    // Remove trailing period and spaces from title if it's followed by a name
+    if (cleaned.length > 1 && cleaned[0]) {
+      cleaned[0] = cleaned[0].replace(/\.\s*$/, '').trim();
+    }
+    
+    return cleaned.join(' ').trim();
+  };
 
   const pickSalutation = (...candidates: string[]): string => {
     for (const candidate of candidates) {

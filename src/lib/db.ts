@@ -898,6 +898,19 @@ export async function getNoPlayMembersPaginated(
       );
     }
     
+    // Sort by last name ASC, then first name ASC as secondary sort
+    filteredMembers.sort((a, b) => {
+      const lastNameA = (a.last_name || '').toLowerCase();
+      const lastNameB = (b.last_name || '').toLowerCase();
+      if (lastNameA !== lastNameB) {
+        return lastNameA.localeCompare(lastNameB);
+      }
+      // If last names are equal, sort by first name
+      const firstNameA = (a.first_name || '').toLowerCase();
+      const firstNameB = (b.first_name || '').toLowerCase();
+      return firstNameA.localeCompare(firstNameB);
+    });
+    
     // Calculate pagination
     const total = filteredMembers.length;
     const totalPages = Math.ceil(total / validPageSize);
@@ -999,6 +1012,19 @@ export async function getPlayMembersPaginated(
         m.suburb?.toLowerCase().includes(searchTerm)
       );
     }
+    
+    // Sort by last name ASC, then first name ASC as secondary sort
+    filteredMembers.sort((a, b) => {
+      const lastNameA = (a.last_name || '').toLowerCase();
+      const lastNameB = (b.last_name || '').toLowerCase();
+      if (lastNameA !== lastNameB) {
+        return lastNameA.localeCompare(lastNameB);
+      }
+      // If last names are equal, sort by first name
+      const firstNameA = (a.first_name || '').toLowerCase();
+      const firstNameB = (b.first_name || '').toLowerCase();
+      return firstNameA.localeCompare(firstNameB);
+    });
     
     // Calculate pagination
     const total = filteredMembers.length;
@@ -1193,7 +1219,7 @@ export async function getAllMembers(): Promise<Member[]> {
     );
     
     // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
-    return rows.map(row => ({
+    const members = rows.map(row => ({
       id: row.id,
       account_number: decrypt(row.account_number || ''),
       title: decrypt(row.title || ''),
@@ -1211,6 +1237,21 @@ export async function getAllMembers(): Promise<Member[]> {
       created_at: row.created_at,
       updated_at: row.updated_at
     }));
+    
+    // Sort by last name ASC, then first name ASC as secondary sort
+    members.sort((a, b) => {
+      const lastNameA = (a.last_name || '').toLowerCase();
+      const lastNameB = (b.last_name || '').toLowerCase();
+      if (lastNameA !== lastNameB) {
+        return lastNameA.localeCompare(lastNameB);
+      }
+      // If last names are equal, sort by first name
+      const firstNameA = (a.first_name || '').toLowerCase();
+      const firstNameB = (b.first_name || '').toLowerCase();
+      return firstNameA.localeCompare(firstNameB);
+    });
+    
+    return members;
   } catch (error) {
     console.error('Error getting all members:', error);
     throw error;
@@ -1467,6 +1508,19 @@ export async function getMembersPaginated(
         m.post_code?.toLowerCase().includes(searchTerm)
       );
     }
+    
+    // Sort by last name ASC, then first name ASC as secondary sort
+    filteredMembers.sort((a, b) => {
+      const lastNameA = (a.last_name || '').toLowerCase();
+      const lastNameB = (b.last_name || '').toLowerCase();
+      if (lastNameA !== lastNameB) {
+        return lastNameA.localeCompare(lastNameB);
+      }
+      // If last names are equal, sort by first name
+      const firstNameA = (a.first_name || '').toLowerCase();
+      const firstNameB = (b.first_name || '').toLowerCase();
+      return firstNameA.localeCompare(firstNameB);
+    });
     
     // Calculate pagination
     const total = filteredMembers.length;

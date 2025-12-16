@@ -335,10 +335,14 @@ export function renderActivityPages(
   logoDataUrl?: string,
   salutationOverride?: string
 ): string {
-  const memberName = [activity.title, activity.firstName, activity.lastName]
-    .filter(Boolean)
-    .join(' ')
-    .trim();
+  // Build member name, removing trailing period and spaces from title if followed by a name
+  const nameParts = [activity.title, activity.firstName, activity.lastName]
+    .map(part => part ? String(part).trim() : '')
+    .filter(Boolean);
+  if (nameParts.length > 1 && nameParts[0]) {
+    nameParts[0] = nameParts[0].replace(/\.\s*$/, '').trim();
+  }
+  const memberName = nameParts.join(' ').trim();
   const fallbackSalutation = activity.firstName || memberName || 'Member';
   const salutationName = salutationOverride || fallbackSalutation;
   const statementPeriod = getStatementPeriod(quarterlyData);

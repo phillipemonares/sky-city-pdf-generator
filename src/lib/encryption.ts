@@ -259,3 +259,4 @@ export function decryptMemberFields(member: {
 export function generateEncryptionKey(): string {
   return crypto.randomBytes(32).toString('hex');
 }
+
