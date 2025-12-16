@@ -4,6 +4,7 @@ import { buildAnnotatedPlayers } from '@/lib/annotated-pdf-template';
 import { AnnotatedPDFGenerationRequest, QuarterlyData, PreCommitmentPlayer } from '@/types/player-data';
 import { randomUUID } from 'crypto';
 import mysql from 'mysql2/promise';
+import { encryptJson, encryptDeterministic } from '@/lib/encryption';
 
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
@@ -132,9 +133,11 @@ export async function POST(request: NextRequest) {
           // quarterlyData is stored once per batch, not per player
         };
 
-        const dataJson = JSON.stringify(userData);
+        // Encrypt data and account number for consistency with saveGenerationBatch
+        const dataJson = encryptJson(userData);
+        const encryptedAccountNumber = encryptDeterministic(player.account);
 
-        values.push(statementId, batchId, player.account, dataJson);
+        values.push(statementId, batchId, encryptedAccountNumber, dataJson);
         placeholders.push('(?, ?, ?, ?)');
       }
 

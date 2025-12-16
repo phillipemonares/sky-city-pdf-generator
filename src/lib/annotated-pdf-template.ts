@@ -128,8 +128,7 @@ export function generateAnnotatedHTML(
     ? renderPreCommitmentPage(player.preCommitment, quarterlyData, salutationName, playHeaderDataUrl, player.activity)
     : '';
 
-  // Only include cashless section if player.cashless exists and is truthy
-  // This ensures cashless is only included when it's highlighted in the UI
+  // Only include cashless section if player.cashless exists and has playerInfo
   const cashlessSection = player.cashless && player.cashless.playerInfo
     ? generateCashlessStatements(quarterlyData, player.cashless, logoDataUrl, salutationName, displayName)
     : '';
