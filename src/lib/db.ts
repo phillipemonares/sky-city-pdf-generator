@@ -532,23 +532,17 @@ export interface PlayMemberWithBatch {
  */
 export async function getNoPlayMembersPaginated(
   page: number = 1,
-  pageSize: number = 50
+  pageSize: number = 50,
+  search: string = ''
 ): Promise<{ members: NoPlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
+    const searchTerm = search.trim().toLowerCase();
     
-    // Get total count of unique accounts in no-play batches with No Play status
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'No Play'`
-    );
-    const total = countRows[0]?.total || 0;
-    const totalPages = Math.ceil(total / validPageSize);
-    
-    // Get paginated no-play members with their latest batch info
-    // First get distinct accounts with pagination, then get latest batch info for each
+    // Get all no-play members with their latest batch info (before filtering)
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         latest_no_play.account_number,
@@ -571,11 +565,11 @@ export async function getNoPlayMembersPaginated(
          WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
        WHERE latest_no_play.rn = 1
-       ORDER BY latest_no_play.account_number ASC
-       LIMIT ${validPageSize} OFFSET ${offset}`
+       ORDER BY latest_no_play.account_number ASC`
     );
     
-    const members = rows.map(row => {
+    // Decrypt and map all members
+    const allMembers = rows.map(row => {
       // Decrypt player_data (handles both encrypted and legacy unencrypted data)
       let playerData: any = {};
       try {
@@ -610,6 +604,28 @@ export async function getNoPlayMembersPaginated(
       };
     });
     
+    // Filter by search term (search on decrypted data)
+    let filteredMembers = allMembers;
+    if (searchTerm) {
+      filteredMembers = allMembers.filter(m => 
+        m.account_number?.toLowerCase().includes(searchTerm) ||
+        m.first_name?.toLowerCase().includes(searchTerm) ||
+        m.last_name?.toLowerCase().includes(searchTerm) ||
+        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
+        m.email?.toLowerCase().includes(searchTerm) ||
+        m.address1?.toLowerCase().includes(searchTerm) ||
+        m.address2?.toLowerCase().includes(searchTerm) ||
+        m.suburb?.toLowerCase().includes(searchTerm)
+      );
+    }
+    
+    // Calculate pagination
+    const total = filteredMembers.length;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Apply pagination
+    const members = filteredMembers.slice(offset, offset + validPageSize);
+    
     return {
       members,
       total,
@@ -627,23 +643,17 @@ export async function getNoPlayMembersPaginated(
  */
 export async function getPlayMembersPaginated(
   page: number = 1,
-  pageSize: number = 50
+  pageSize: number = 50,
+  search: string = ''
 ): Promise<{ members: PlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
+    const searchTerm = search.trim().toLowerCase();
     
-    // Get total count of unique accounts in no-play batches with Play status
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'Play'`
-    );
-    const total = countRows[0]?.total || 0;
-    const totalPages = Math.ceil(total / validPageSize);
-    
-    // Get paginated play members with their latest batch info
-    // First get distinct accounts with pagination, then get latest batch info for each
+    // Get all play members with their latest batch info (before filtering)
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         latest_play.account_number,
@@ -666,11 +676,11 @@ export async function getPlayMembersPaginated(
          WHERE npp.no_play_status = 'Play'
        ) as latest_play
        WHERE latest_play.rn = 1
-       ORDER BY latest_play.account_number ASC
-       LIMIT ${validPageSize} OFFSET ${offset}`
+       ORDER BY latest_play.account_number ASC`
     );
     
-    const members = rows.map(row => {
+    // Decrypt and map all members
+    const allMembers = rows.map(row => {
       // Decrypt player_data (handles both encrypted and legacy unencrypted data)
       let playerData: any = {};
       try {
@@ -704,6 +714,28 @@ export async function getPlayMembersPaginated(
         suburb: playerInfo.suburb || '',
       };
     });
+    
+    // Filter by search term (search on decrypted data)
+    let filteredMembers = allMembers;
+    if (searchTerm) {
+      filteredMembers = allMembers.filter(m => 
+        m.account_number?.toLowerCase().includes(searchTerm) ||
+        m.first_name?.toLowerCase().includes(searchTerm) ||
+        m.last_name?.toLowerCase().includes(searchTerm) ||
+        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
+        m.email?.toLowerCase().includes(searchTerm) ||
+        m.address1?.toLowerCase().includes(searchTerm) ||
+        m.address2?.toLowerCase().includes(searchTerm) ||
+        m.suburb?.toLowerCase().includes(searchTerm)
+      );
+    }
+    
+    // Calculate pagination
+    const total = filteredMembers.length;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Apply pagination
+    const members = filteredMembers.slice(offset, offset + validPageSize);
     
     return {
       members,
@@ -1228,6 +1260,8 @@ export interface User {
   username: string;
   password_hash: string;
   role: 'admin' | 'team_member';
+  totp_secret?: string | null;
+  totp_enabled?: boolean | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -1238,7 +1272,7 @@ export interface User {
 export async function getUserByUsername(username: string): Promise<User | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, username, password_hash, role, created_at, updated_at
+      `SELECT id, username, password_hash, role, totp_secret, totp_enabled, created_at, updated_at
        FROM users
        WHERE username = ?`,
       [username]
@@ -1254,6 +1288,8 @@ export async function getUserByUsername(username: string): Promise<User | null> 
       username: row.username,
       password_hash: row.password_hash,
       role: row.role || 'team_member', // Default to team_member if role is null
+      totp_secret: row.totp_secret || null,
+      totp_enabled: row.totp_enabled === 1 || row.totp_enabled === true || false,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -1269,7 +1305,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 export async function getUserById(userId: string): Promise<User | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, username, password_hash, role, created_at, updated_at
+      `SELECT id, username, password_hash, role, totp_secret, totp_enabled, created_at, updated_at
        FROM users
        WHERE id = ?`,
       [userId]
@@ -1285,6 +1321,8 @@ export async function getUserById(userId: string): Promise<User | null> {
       username: row.username,
       password_hash: row.password_hash,
       role: row.role || 'team_member', // Default to team_member if role is null
+      totp_secret: row.totp_secret || null,
+      totp_enabled: row.totp_enabled === 1 || row.totp_enabled === true || false,
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -1422,6 +1460,36 @@ export async function updateUser(
     throw error;
   } finally {
     connection.release();
+  }
+}
+
+/**
+ * Update user TOTP secret and enable 2FA
+ */
+export async function updateUserTotpSecret(username: string, secret: string): Promise<void> {
+  try {
+    await pool.execute(
+      `UPDATE users SET totp_secret = ?, totp_enabled = 1, updated_at = NOW() WHERE username = ?`,
+      [secret, username]
+    );
+  } catch (error) {
+    console.error('Error updating user TOTP secret:', error);
+    throw error;
+  }
+}
+
+/**
+ * Disable 2FA for a user by clearing TOTP secret and disabling TOTP
+ */
+export async function disableUserTotp(username: string): Promise<void> {
+  try {
+    await pool.execute(
+      `UPDATE users SET totp_secret = NULL, totp_enabled = 0, updated_at = NOW() WHERE username = ?`,
+      [username]
+    );
+  } catch (error) {
+    console.error('Error disabling user TOTP:', error);
+    throw error;
   }
 }
 
@@ -1571,4 +1639,216 @@ export {
   recordEmailOpen,
   getEmailTrackingRecords
 } from './db/email';
+
+// ============================================
+// PDF Export Functions
+// ============================================
+
+export interface PdfExport {
+  id: string;
+  tab_type: 'quarterly' | 'play' | 'no-play';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  total_members: number;
+  processed_members: number;
+  failed_members: number;
+  file_path: string | null;
+  file_size: number | null;
+  error_message: string | null;
+  created_at: Date;
+  updated_at: Date;
+  started_at: Date | null;
+  completed_at: Date | null;
+}
+
+/**
+ * Create a new PDF export record
+ */
+export async function createPdfExport(
+  tabType: 'quarterly' | 'play' | 'no-play',
+  totalMembers: number
+): Promise<string> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    const exportId = randomUUID();
+
+    await connection.execute(
+      `INSERT INTO pdf_exports (id, tab_type, status, total_members, processed_members, failed_members)
+       VALUES (?, ?, 'pending', ?, 0, 0)`,
+      [exportId, tabType, totalMembers]
+    );
+
+    await connection.commit();
+    return exportId;
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error creating PDF export:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get a PDF export by ID
+ */
+export async function getPdfExport(exportId: string): Promise<PdfExport | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT id, tab_type, status, total_members, processed_members, failed_members,
+              file_path, file_size, error_message, created_at, updated_at, started_at, completed_at
+       FROM pdf_exports
+       WHERE id = ?`,
+      [exportId]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      id: row.id,
+      tab_type: row.tab_type,
+      status: row.status,
+      total_members: row.total_members,
+      processed_members: row.processed_members,
+      failed_members: row.failed_members,
+      file_path: row.file_path || null,
+      file_size: row.file_size || null,
+      error_message: row.error_message || null,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+      started_at: row.started_at ? new Date(row.started_at) : null,
+      completed_at: row.completed_at ? new Date(row.completed_at) : null,
+    };
+  } catch (error) {
+    console.error('Error getting PDF export:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all PDF exports, ordered by most recent first
+ */
+export async function getAllPdfExports(limit: number = 50): Promise<PdfExport[]> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT id, tab_type, status, total_members, processed_members, failed_members,
+              file_path, file_size, error_message, created_at, updated_at, started_at, completed_at
+       FROM pdf_exports
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [limit]
+    );
+
+    return rows.map(row => ({
+      id: row.id,
+      tab_type: row.tab_type,
+      status: row.status,
+      total_members: row.total_members,
+      processed_members: row.processed_members,
+      failed_members: row.failed_members,
+      file_path: row.file_path || null,
+      file_size: row.file_size || null,
+      error_message: row.error_message || null,
+      created_at: new Date(row.created_at),
+      updated_at: new Date(row.updated_at),
+      started_at: row.started_at ? new Date(row.started_at) : null,
+      completed_at: row.completed_at ? new Date(row.completed_at) : null,
+    }));
+  } catch (error) {
+    console.error('Error getting all PDF exports:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update PDF export status and other fields
+ */
+export async function updatePdfExportStatus(
+  exportId: string,
+  updates: {
+    status?: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+    processed_members?: number;
+    failed_members?: number;
+    file_path?: string | null;
+    file_size?: number | null;
+    error_message?: string | null;
+  }
+): Promise<void> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    const updateFields: string[] = [];
+    const values: any[] = [];
+
+    if (updates.status !== undefined) {
+      updateFields.push('status = ?');
+      values.push(updates.status);
+
+      // Set started_at when status changes to processing
+      if (updates.status === 'processing') {
+        updateFields.push('started_at = COALESCE(started_at, NOW())');
+      }
+
+      // Set completed_at when status changes to completed or failed
+      if (updates.status === 'completed' || updates.status === 'failed') {
+        updateFields.push('completed_at = COALESCE(completed_at, NOW())');
+      }
+    }
+
+    if (updates.processed_members !== undefined) {
+      updateFields.push('processed_members = ?');
+      values.push(updates.processed_members);
+    }
+
+    if (updates.failed_members !== undefined) {
+      updateFields.push('failed_members = ?');
+      values.push(updates.failed_members);
+    }
+
+    if (updates.file_path !== undefined) {
+      updateFields.push('file_path = ?');
+      values.push(updates.file_path);
+    }
+
+    if (updates.file_size !== undefined) {
+      updateFields.push('file_size = ?');
+      values.push(updates.file_size);
+    }
+
+    if (updates.error_message !== undefined) {
+      updateFields.push('error_message = ?');
+      values.push(updates.error_message);
+    }
+
+    if (updateFields.length === 0) {
+      await connection.commit();
+      return;
+    }
+
+    // Add updated_at timestamp
+    updateFields.push('updated_at = NOW()');
+    values.push(exportId);
+
+    // Execute update
+    await connection.execute(
+      `UPDATE pdf_exports SET ${updateFields.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error updating PDF export status:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
 
