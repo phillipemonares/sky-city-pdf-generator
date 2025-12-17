@@ -348,24 +348,37 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   const expenditureItems: string[] = [];
   const dailyBudgetF = formatCurrency(player.dailyBudget);
   const weeklyBudgetF = formatCurrency(player.weeklyBudget);
+  const monthlyBudgetF = formatCurrency(player.monthlyBudget);
   const hasDailyBudget = dailyBudgetF !== '–' && !isZeroOrEmpty(player.dailyBudget);
   const hasWeeklyBudget = weeklyBudgetF !== '–' && !isZeroOrEmpty(player.weeklyBudget);
+  const hasMonthlyBudget = monthlyBudgetF !== '–' && !isZeroOrEmpty(player.monthlyBudget);
   
-  if (hasDailyBudget && hasWeeklyBudget) {
+  if (hasDailyBudget) {
     expenditureItems.push(`${dailyBudgetF} per day`);
-    expenditureItems.push(`${weeklyBudgetF} per week`);
-  } else if (hasDailyBudget) {
-    expenditureItems.push(`${dailyBudgetF} per day`);
-  } else if (hasWeeklyBudget) {
+  }
+  if (hasWeeklyBudget) {
     expenditureItems.push(`${weeklyBudgetF} per week`);
   }
-  // If neither has value, expenditureItems stays empty and will show "Nil"
+  if (hasMonthlyBudget) {
+    expenditureItems.push(`${monthlyBudgetF} per month`);
+  }
+  // If none have value, expenditureItems stays empty and will show "Nil"
 
   const timeLimitItems: string[] = [];
   const hasDailyTime = !isZeroOrEmpty(player.dailyTime);
+  const hasWeeklyTime = !isZeroOrEmpty(player.weeklyTime);
+  const hasMonthlyTime = !isZeroOrEmpty(player.monthlyTime);
   if (hasDailyTime) {
     const dailyTimeF = formatWithUnit(player.dailyTime, 'minutes');
     if (dailyTimeF !== '–') timeLimitItems.push(`${dailyTimeF} per day`);
+  }
+  if (hasWeeklyTime) {
+    const weeklyTimeF = formatWithUnit(player.weeklyTime, 'minutes');
+    if (weeklyTimeF !== '–') timeLimitItems.push(`${weeklyTimeF} per week`);
+  }
+  if (hasMonthlyTime) {
+    const monthlyTimeF = formatWithUnit(player.monthlyTime, 'minutes');
+    if (monthlyTimeF !== '–') timeLimitItems.push(`${monthlyTimeF} per month`);
   }
   // If no time limit, timeLimitItems stays empty and will show "Nil"
 
@@ -375,9 +388,18 @@ export function renderPreCommitmentPages(player: PreCommitmentPlayer, logoDataUr
   const minsNum = minsValue ? Number(minsValue) : NaN;
   const hasMins = !Number.isNaN(minsNum) && minsNum > 0;
   
-  // Build single line format: "10 minutes every hour"
+  // Extract numeric value from hour
+  const hourValue = player.hour ? String(player.hour).trim().replace(/,/g, '') : '';
+  const hourNum = hourValue ? Number(hourValue) : NaN;
+  const hasHour = !Number.isNaN(hourNum) && hourNum > 0;
+  
+  // Build single line format: "10 minutes every 3 hours" or "10 minutes every hour"
   if (hasMins) {
-    breakItems.push(`${minsNum} minutes every hour`);
+    if (hasHour && hourNum !== 1) {
+      breakItems.push(`${minsNum} minutes every ${hourNum} hours`);
+    } else {
+      breakItems.push(`${minsNum} minutes every hour`);
+    }
   }
   // If no break items, breakItems stays empty and will show "Nil"
 
