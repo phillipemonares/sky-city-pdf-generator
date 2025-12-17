@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { saveMembersFromActivity } from '@/lib/db';
 import { buildAnnotatedPlayers } from '@/lib/annotated-pdf-template';
 import { AnnotatedPDFGenerationRequest, QuarterlyData, PreCommitmentPlayer } from '@/types/player-data';
+import { encryptJson, encryptDeterministic } from '@/lib/encryption';
 import { randomUUID } from 'crypto';
 import mysql from 'mysql2/promise';
-import { encryptJson, encryptDeterministic } from '@/lib/encryption';
 
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
@@ -133,8 +133,10 @@ export async function POST(request: NextRequest) {
           // quarterlyData is stored once per batch, not per player
         };
 
-        // Encrypt data and account number for consistency with saveGenerationBatch
+        // Encrypt the user data JSON for security (matches saveGenerationBatch)
         const dataJson = encryptJson(userData);
+
+        // Encrypt account number deterministically for lookups (matches saveGenerationBatch)
         const encryptedAccountNumber = encryptDeterministic(player.account);
 
         values.push(statementId, batchId, encryptedAccountNumber, dataJson);

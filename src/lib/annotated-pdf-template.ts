@@ -27,18 +27,11 @@ interface NameDetails {
 }
 
 const resolveNameDetails = (player: AnnotatedStatementPlayer): NameDetails => {
-  const normalizeParts = (...parts: unknown[]): string => {
-    const cleaned = parts
+  const normalizeParts = (...parts: unknown[]): string =>
+    parts
       .map(cleanText)
-      .filter(Boolean);
-    
-    // Remove trailing period and spaces from title if it's followed by a name
-    if (cleaned.length > 1 && cleaned[0]) {
-      cleaned[0] = cleaned[0].replace(/\.\s*$/, '').trim();
-    }
-    
-    return cleaned.join(' ').trim();
-  };
+      .filter(Boolean)
+      .join(' ');
 
   const pickSalutation = (...candidates: string[]): string => {
     for (const candidate of candidates) {
@@ -128,7 +121,8 @@ export function generateAnnotatedHTML(
     ? renderPreCommitmentPage(player.preCommitment, quarterlyData, salutationName, playHeaderDataUrl, player.activity)
     : '';
 
-  // Only include cashless section if player.cashless exists and has playerInfo
+  // Only include cashless section if player.cashless exists and is truthy
+  // This ensures cashless is only included when it's highlighted in the UI
   const cashlessSection = player.cashless && player.cashless.playerInfo
     ? generateCashlessStatements(quarterlyData, player.cashless, logoDataUrl, salutationName, displayName)
     : '';

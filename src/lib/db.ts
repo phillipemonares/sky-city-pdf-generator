@@ -2,7 +2,20 @@ import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow, PlayerData } from '@/types/player-data';
 import { normalizeAccount } from './pdf-shared';
-import { encrypt, decrypt, encryptDeterministic, encryptJson, decryptJson, isEncrypted } from './encryption';
+import { decryptMemberFields, decrypt, encryptDeterministic, isEncryptionEnabled, decryptJson, encryptJson } from './encryption';
+
+// Re-export PDF preview functions from separate module
+export { 
+  getBatchById, 
+  getMatchedAccountsByBatch, 
+  getAccountFromBatch, 
+  getQuarterlyDataFromBatch,
+  type GenerationBatch,
+  type MatchedAccount,
+} from './db/pdf-preview';
+
+// Import types for internal use
+import type { GenerationBatch, MatchedAccount } from './db/pdf-preview';
 
 // Database connection configuration
 const dbConfig = {
@@ -11,39 +24,12 @@ const dbConfig = {
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'dp-skycity',
   waitForConnections: true,
-  connectionLimit: 20, // Increased from 10 to handle concurrent PDF generation
+  connectionLimit: 10,
   queueLimit: 0,
-  acquireTimeout: 60000, // 60 seconds to acquire connection
-  timeout: 60000, // 60 seconds query timeout
-  reconnect: true, // Auto-reconnect on connection loss
 };
 
 // Create connection pool
 export const pool = mysql.createPool(dbConfig);
-
-export interface GenerationBatch {
-  id: string;
-  quarter: number;
-  year: number;
-  generation_date: Date;
-  total_accounts: number;
-  start_date: Date | null;
-  end_date: Date | null;
-  created_at: Date;
-  updated_at: Date;
-}
-
-export interface MatchedAccount {
-  id: string;
-  batch_id: string;
-  account_number: string;
-  account_data: AnnotatedStatementPlayer;
-  has_activity: boolean;
-  has_pre_commitment: boolean;
-  has_cashless: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
 
 /**
  * Save a generation batch with matched accounts to the database
@@ -185,195 +171,6 @@ export async function getAllBatches(): Promise<GenerationBatch[]> {
 }
 
 /**
- * Get a specific generation batch by ID
- */
-export async function getBatchById(batchId: string): Promise<GenerationBatch | null> {
-  try {
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, quarter, year, generation_date, total_accounts, start_date, end_date, created_at, updated_at
-       FROM generation_batches
-       WHERE id = ?`,
-      [batchId]
-    );
-
-    if (rows.length === 0) {
-      return null;
-    }
-
-    const row = rows[0];
-    return {
-      id: row.id,
-      quarter: row.quarter,
-      year: row.year,
-      generation_date: new Date(row.generation_date),
-      total_accounts: row.total_accounts,
-      start_date: row.start_date ? new Date(row.start_date) : null,
-      end_date: row.end_date ? new Date(row.end_date) : null,
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
-    };
-  } catch (error) {
-    console.error('Error fetching batch:', error);
-    throw error;
-  }
-}
-
-/**
- * Get all matched accounts for a specific batch
- * Reads from quarterly_user_statements and reconstructs AnnotatedStatementPlayer format
- */
-export async function getMatchedAccountsByBatch(batchId: string): Promise<MatchedAccount[]> {
-  try {
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, batch_id, account_number, data, created_at, updated_at
-       FROM quarterly_user_statements
-       WHERE batch_id = ?
-       ORDER BY account_number`,
-      [batchId]
-    );
-
-    return rows.map(row => {
-      // Decrypt the user data (handles both encrypted and legacy unencrypted data)
-      const userData = decryptJson<{
-        activity_statement?: ActivityStatementRow;
-        pre_commitment?: PreCommitmentPlayer;
-        cashless_statement?: any;
-        quarterlyData?: QuarterlyData;
-      }>(row.data);
-      
-      // Decrypt account number (handles both encrypted and legacy unencrypted data)
-      const decryptedAccountNumber = decrypt(row.account_number || '');
-      
-      // Reconstruct AnnotatedStatementPlayer format for backward compatibility
-      // Use != null to check for both null and undefined, preserving actual data objects
-      const accountData: AnnotatedStatementPlayer = {
-        account: decryptedAccountNumber,
-        activity: userData.activity_statement != null ? userData.activity_statement : undefined,
-        preCommitment: userData.pre_commitment != null ? userData.pre_commitment : undefined,
-        cashless: userData.cashless_statement != null ? userData.cashless_statement : undefined,
-        quarterlyData: userData.quarterlyData,
-      };
-
-      return {
-        id: row.id,
-        batch_id: row.batch_id,
-        account_number: decryptedAccountNumber,
-        account_data: accountData,
-        has_activity: Boolean(userData.activity_statement),
-        has_pre_commitment: Boolean(userData.pre_commitment),
-        has_cashless: Boolean(userData.cashless_statement),
-        created_at: new Date(row.created_at),
-        updated_at: new Date(row.updated_at),
-      };
-    });
-  } catch (error) {
-    console.error('Error fetching matched accounts:', error);
-    throw error;
-  }
-}
-
-/**
- * Get a specific account from a batch (optimized for preview)
- * Reads from quarterly_user_statements and reconstructs AnnotatedStatementPlayer format
- */
-export async function getAccountFromBatch(batchId: string, accountNumber: string): Promise<MatchedAccount | null> {
-  try {
-    // Encrypt account number for lookup (deterministic encryption allows exact match)
-    const encryptedAccountNumber = encryptDeterministic(accountNumber);
-    
-    // Try encrypted lookup first, then fall back to unencrypted (for legacy data)
-    let [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, batch_id, account_number, data, created_at, updated_at
-       FROM quarterly_user_statements
-       WHERE batch_id = ? AND account_number = ?
-       LIMIT 1`,
-      [batchId, encryptedAccountNumber]
-    );
-
-    // If not found with encrypted, try with unencrypted (legacy data support)
-    if (rows.length === 0) {
-      [rows] = await pool.execute<mysql.RowDataPacket[]>(
-        `SELECT id, batch_id, account_number, data, created_at, updated_at
-         FROM quarterly_user_statements
-         WHERE batch_id = ? AND account_number = ?
-         LIMIT 1`,
-        [batchId, accountNumber]
-      );
-    }
-
-    if (rows.length === 0) {
-      return null;
-    }
-
-    const row = rows[0];
-    // Decrypt the user data (handles both encrypted and legacy unencrypted data)
-    const userData = decryptJson<{
-      activity_statement?: ActivityStatementRow;
-      pre_commitment?: PreCommitmentPlayer;
-      cashless_statement?: any;
-      quarterlyData?: QuarterlyData;
-    }>(row.data);
-    
-    // Decrypt account number (handles both encrypted and legacy unencrypted data)
-    const decryptedAccountNumber = decrypt(row.account_number || '');
-    
-    // Reconstruct AnnotatedStatementPlayer format for backward compatibility
-    // Use != null to check for both null and undefined, preserving actual data objects
-    const accountData: AnnotatedStatementPlayer = {
-      account: decryptedAccountNumber,
-      activity: userData.activity_statement != null ? userData.activity_statement : undefined,
-      preCommitment: userData.pre_commitment != null ? userData.pre_commitment : undefined,
-      cashless: userData.cashless_statement != null ? userData.cashless_statement : undefined,
-      quarterlyData: userData.quarterlyData,
-    };
-
-    return {
-      id: row.id,
-      batch_id: row.batch_id,
-      account_number: decryptedAccountNumber,
-      account_data: accountData,
-      has_activity: Boolean(userData.activity_statement),
-      has_pre_commitment: Boolean(userData.pre_commitment),
-      has_cashless: Boolean(userData.cashless_statement),
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
-    };
-  } catch (error) {
-    console.error('Error fetching account from batch:', error);
-    throw error;
-  }
-}
-
-/**
- * Get quarterly data from any account in the batch (for preview)
- * Reads from quarterly_user_statements
- */
-export async function getQuarterlyDataFromBatch(batchId: string): Promise<QuarterlyData | null> {
-  try {
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT data
-       FROM quarterly_user_statements
-       WHERE batch_id = ?
-       LIMIT 1`,
-      [batchId]
-    );
-
-    if (rows.length === 0) {
-      return null;
-    }
-
-    // Decrypt the user data (handles both encrypted and legacy unencrypted data)
-    const userData = decryptJson<{
-      quarterlyData?: QuarterlyData;
-    }>(rows[0].data);
-    return userData?.quarterlyData || null;
-  } catch (error) {
-    console.error('Error fetching quarterly data from batch:', error);
-    throw error;
-  }
-}
-
-/**
  * Update account data in quarterly_user_statements table
  * Preserves existing data fields not being updated
  */
@@ -388,7 +185,7 @@ export async function updateAccountData(
   }
 ): Promise<boolean> {
   const connection = await pool.getConnection();
-  
+
   try {
     await connection.beginTransaction();
 
@@ -423,7 +220,7 @@ export async function updateAccountData(
       throw new Error('Account not found in batch');
     }
 
-    // Decrypt and parse existing data (handles both encrypted and legacy unencrypted data)
+    // Parse existing data (use decryptJson to handle both encrypted and legacy unencrypted data)
     const existingData = decryptJson<{
       activity_statement?: ActivityStatementRow;
       pre_commitment?: PreCommitmentPlayer;
@@ -433,109 +230,27 @@ export async function updateAccountData(
 
     // Merge updates with existing data
     const updatedData = {
-      activity_statement: updates.activity_statement !== undefined 
-        ? updates.activity_statement 
+      activity_statement: updates.activity_statement !== undefined
+        ? updates.activity_statement
         : existingData.activity_statement || null,
-      pre_commitment: updates.pre_commitment !== undefined 
-        ? updates.pre_commitment 
+      pre_commitment: updates.pre_commitment !== undefined
+        ? updates.pre_commitment
         : existingData.pre_commitment || null,
-      cashless_statement: updates.cashless_statement !== undefined 
-        ? updates.cashless_statement 
+      cashless_statement: updates.cashless_statement !== undefined
+        ? updates.cashless_statement
         : existingData.cashless_statement || null,
-      quarterlyData: updates.quarterlyData !== undefined 
-        ? updates.quarterlyData 
+      quarterlyData: updates.quarterlyData !== undefined
+        ? updates.quarterlyData
         : existingData.quarterlyData || null,
     };
 
-    // Encrypt and update the record
+    // Update the record (use encryptJson for security)
     await connection.execute(
       `UPDATE quarterly_user_statements
        SET data = ?, updated_at = NOW()
        WHERE batch_id = ? AND account_number = ?`,
       [encryptJson(updatedData), batchId, accountNumberForUpdate]
     );
-
-    // If activity_statement was updated, also update the members table
-    if (updates.activity_statement !== undefined && updates.activity_statement !== null) {
-      const activity = updates.activity_statement;
-      const normalizedAccount = normalizeAccount(accountNumber);
-      // Encrypt account number deterministically for lookups
-      const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
-      
-      // Check if member exists (search with encrypted account number)
-      const [existing] = await connection.execute<mysql.RowDataPacket[]>(
-        `SELECT id FROM members WHERE account_number = ?`,
-        [encryptedAccountNumber]
-      );
-      
-      // Convert emailTick and postalTick to boolean (1 or 0)
-      const isEmail = activity.emailTick && (activity.emailTick.toLowerCase() === 'yes' || activity.emailTick === '1' || activity.emailTick.toLowerCase() === 'true') ? 1 : 0;
-      const isPostal = activity.postalTick && (activity.postalTick.toLowerCase() === 'yes' || activity.postalTick === '1' || activity.postalTick.toLowerCase() === 'true') ? 1 : 0;
-      
-      // Encrypt sensitive fields
-      const encryptedTitle = encrypt(activity.title || '');
-      const encryptedFirstName = encrypt(activity.firstName || '');
-      const encryptedLastName = encrypt(activity.lastName || '');
-      const encryptedEmail = encrypt(activity.email || '');
-      const encryptedAddress = encrypt(activity.address || '');
-      const encryptedSuburb = encrypt(activity.suburb || '');
-      const encryptedState = encrypt(activity.state || '');
-      const encryptedPostCode = encrypt(activity.postCode || '');
-      
-      if (existing.length > 0) {
-        // Update existing member
-        await connection.execute(
-          `UPDATE members 
-           SET title = ?, first_name = ?, last_name = ?, email = ?, 
-               address = ?, suburb = ?, state = ?, post_code = ?, 
-               country = ?, player_type = ?, 
-               is_email = COALESCE(?, is_email), 
-               is_postal = COALESCE(?, is_postal), 
-               updated_at = NOW()
-           WHERE account_number = ?`,
-          [
-            encryptedTitle,
-            encryptedFirstName,
-            encryptedLastName,
-            encryptedEmail,
-            encryptedAddress,
-            encryptedSuburb,
-            encryptedState,
-            encryptedPostCode,
-            activity.country || '',
-            activity.playerType || '',
-            isEmail,
-            isPostal,
-            encryptedAccountNumber
-          ]
-        );
-      } else {
-        // Insert new member if it doesn't exist
-        const memberId = randomUUID();
-        await connection.execute(
-          `INSERT INTO members 
-           (id, account_number, title, first_name, last_name, email, 
-            address, suburb, state, post_code, country, player_type, is_email, is_postal)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            memberId,
-            encryptedAccountNumber,
-            encryptedTitle,
-            encryptedFirstName,
-            encryptedLastName,
-            encryptedEmail,
-            encryptedAddress,
-            encryptedSuburb,
-            encryptedState,
-            encryptedPostCode,
-            activity.country || '',
-            activity.playerType || '',
-            isEmail,
-            isPostal
-          ]
-        );
-      }
-    }
 
     await connection.commit();
     return true;
@@ -633,10 +348,7 @@ export async function saveNoPlayBatch(
     // Insert no-play players
     for (const player of players) {
       const playerId = randomUUID();
-      // Encrypt the player data JSON for security
-      const playerDataJson = encryptJson(player);
-      // Encrypt account number deterministically for lookups
-      const encryptedAccountNumber = encryptDeterministic(player.playerInfo.playerAccount);
+      const playerDataJson = JSON.stringify(player);
 
       await connection.execute(
         `INSERT INTO no_play_players 
@@ -645,7 +357,7 @@ export async function saveNoPlayBatch(
         [
           playerId,
           batchId,
-          encryptedAccountNumber,
+          player.playerInfo.playerAccount,
           playerDataJson,
           player.statementPeriod,
           player.statementDate,
@@ -739,10 +451,8 @@ export async function getNoPlayPlayersByBatch(batchId: string): Promise<NoPlayPl
     return rows.map(row => ({
       id: row.id,
       batch_id: row.batch_id,
-      // Decrypt account number (handles both encrypted and legacy unencrypted data)
-      account_number: decrypt(row.account_number || ''),
-      // Decrypt the player data (handles both encrypted and legacy unencrypted data)
-      player_data: decryptJson<PreCommitmentPlayer>(row.player_data),
+      account_number: row.account_number,
+      player_data: JSON.parse(row.player_data) as PreCommitmentPlayer,
       statement_period: row.statement_period,
       statement_date: row.statement_date,
       no_play_status: row.no_play_status,
@@ -822,18 +532,25 @@ export interface PlayMemberWithBatch {
  */
 export async function getNoPlayMembersPaginated(
   page: number = 1,
-  pageSize: number = 50,
-  search: string = ''
+  pageSize: number = 50
 ): Promise<{ members: NoPlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
-    const searchTerm = search.trim().toLowerCase();
     
-    // Get all no-play members with their latest batch info (we need all for search)
-    const query = `SELECT 
+    // Get total count of unique accounts in no-play batches with No Play status
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'No Play'`
+    );
+    const total = countRows[0]?.total || 0;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Get paginated no-play members with their latest batch info
+    // First get distinct accounts with pagination, then get latest batch info for each
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT 
         latest_no_play.account_number,
         latest_no_play.batch_id as latest_no_play_batch_id,
         latest_no_play.generation_date as latest_no_play_generation_date,
@@ -854,24 +571,32 @@ export async function getNoPlayMembersPaginated(
          WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
        WHERE latest_no_play.rn = 1
-       ORDER BY latest_no_play.account_number ASC`;
+       ORDER BY latest_no_play.account_number ASC
+       LIMIT ${validPageSize} OFFSET ${offset}`
+    );
     
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query);
-    
-    const allMembers = rows.map(row => {
-      // Decrypt and extract member info from player_data (handles both encrypted and legacy data)
+    const members = rows.map(row => {
+      // Decrypt player_data (handles both encrypted and legacy unencrypted data)
       let playerData: any = {};
       try {
-        playerData = decryptJson(row.player_data);
+        playerData = decryptJson<any>(row.player_data);
       } catch (error) {
-        console.error('Error parsing player_data:', error);
+        console.error('Error decrypting/parsing player_data:', error);
+        // Fallback to plain JSON parse if decryptJson fails
+        try {
+          playerData = JSON.parse(row.player_data);
+        } catch (parseError) {
+          console.error('Error parsing player_data as JSON:', parseError);
+        }
       }
       
       const playerInfo = playerData.playerInfo || {};
       
+      // Decrypt account_number
+      const decryptedAccount = decrypt(row.account_number);
+      
       return {
-        // Decrypt account number (handles both encrypted and legacy unencrypted data)
-        account_number: decrypt(row.account_number || ''),
+        account_number: decryptedAccount,
         latest_no_play_batch_id: row.latest_no_play_batch_id,
         latest_no_play_generation_date: new Date(row.latest_no_play_generation_date),
         statement_period: row.statement_period || '',
@@ -884,41 +609,6 @@ export async function getNoPlayMembersPaginated(
         suburb: playerInfo.suburb || '',
       };
     });
-    
-    // Filter by search term (search on decrypted data)
-    let filteredMembers = allMembers;
-    if (searchTerm) {
-      filteredMembers = allMembers.filter(m => 
-        m.account_number?.toLowerCase().includes(searchTerm) ||
-        m.first_name?.toLowerCase().includes(searchTerm) ||
-        m.last_name?.toLowerCase().includes(searchTerm) ||
-        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
-        m.email?.toLowerCase().includes(searchTerm) ||
-        m.address1?.toLowerCase().includes(searchTerm) ||
-        m.address2?.toLowerCase().includes(searchTerm) ||
-        m.suburb?.toLowerCase().includes(searchTerm)
-      );
-    }
-    
-    // Sort by last name ASC, then first name ASC as secondary sort
-    filteredMembers.sort((a, b) => {
-      const lastNameA = (a.last_name || '').toLowerCase();
-      const lastNameB = (b.last_name || '').toLowerCase();
-      if (lastNameA !== lastNameB) {
-        return lastNameA.localeCompare(lastNameB);
-      }
-      // If last names are equal, sort by first name
-      const firstNameA = (a.first_name || '').toLowerCase();
-      const firstNameB = (b.first_name || '').toLowerCase();
-      return firstNameA.localeCompare(firstNameB);
-    });
-    
-    // Calculate pagination
-    const total = filteredMembers.length;
-    const totalPages = Math.ceil(total / validPageSize);
-    
-    // Apply pagination
-    const members = filteredMembers.slice(offset, offset + validPageSize);
     
     return {
       members,
@@ -937,18 +627,25 @@ export async function getNoPlayMembersPaginated(
  */
 export async function getPlayMembersPaginated(
   page: number = 1,
-  pageSize: number = 50,
-  search: string = ''
+  pageSize: number = 50
 ): Promise<{ members: PlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
     const validPage = Math.max(1, Math.floor(page));
     const validPageSize = Math.max(1, Math.floor(pageSize));
     const offset = (validPage - 1) * validPageSize;
-    const searchTerm = search.trim().toLowerCase();
     
-    // Get all play members with their latest batch info (we need all for search)
-    const query = `SELECT 
+    // Get total count of unique accounts in no-play batches with Play status
+    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT account_number) as total FROM no_play_players WHERE no_play_status = 'Play'`
+    );
+    const total = countRows[0]?.total || 0;
+    const totalPages = Math.ceil(total / validPageSize);
+    
+    // Get paginated play members with their latest batch info
+    // First get distinct accounts with pagination, then get latest batch info for each
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT 
         latest_play.account_number,
         latest_play.batch_id as latest_play_batch_id,
         latest_play.generation_date as latest_play_generation_date,
@@ -969,24 +666,32 @@ export async function getPlayMembersPaginated(
          WHERE npp.no_play_status = 'Play'
        ) as latest_play
        WHERE latest_play.rn = 1
-       ORDER BY latest_play.account_number ASC`;
+       ORDER BY latest_play.account_number ASC
+       LIMIT ${validPageSize} OFFSET ${offset}`
+    );
     
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(query);
-    
-    const allMembers = rows.map(row => {
-      // Decrypt and extract member info from player_data (handles both encrypted and legacy data)
+    const members = rows.map(row => {
+      // Decrypt player_data (handles both encrypted and legacy unencrypted data)
       let playerData: any = {};
       try {
-        playerData = decryptJson(row.player_data);
+        playerData = decryptJson<any>(row.player_data);
       } catch (error) {
-        console.error('Error parsing player_data:', error);
+        console.error('Error decrypting/parsing player_data:', error);
+        // Fallback to plain JSON parse if decryptJson fails
+        try {
+          playerData = JSON.parse(row.player_data);
+        } catch (parseError) {
+          console.error('Error parsing player_data as JSON:', parseError);
+        }
       }
       
       const playerInfo = playerData.playerInfo || {};
       
+      // Decrypt account_number
+      const decryptedAccount = decrypt(row.account_number);
+      
       return {
-        // Decrypt account number (handles both encrypted and legacy unencrypted data)
-        account_number: decrypt(row.account_number || ''),
+        account_number: decryptedAccount,
         latest_play_batch_id: row.latest_play_batch_id,
         latest_play_generation_date: new Date(row.latest_play_generation_date),
         statement_period: row.statement_period || '',
@@ -999,41 +704,6 @@ export async function getPlayMembersPaginated(
         suburb: playerInfo.suburb || '',
       };
     });
-    
-    // Filter by search term (search on decrypted data)
-    let filteredMembers = allMembers;
-    if (searchTerm) {
-      filteredMembers = allMembers.filter(m => 
-        m.account_number?.toLowerCase().includes(searchTerm) ||
-        m.first_name?.toLowerCase().includes(searchTerm) ||
-        m.last_name?.toLowerCase().includes(searchTerm) ||
-        `${m.first_name || ''} ${m.last_name || ''}`.toLowerCase().includes(searchTerm) ||
-        m.email?.toLowerCase().includes(searchTerm) ||
-        m.address1?.toLowerCase().includes(searchTerm) ||
-        m.address2?.toLowerCase().includes(searchTerm) ||
-        m.suburb?.toLowerCase().includes(searchTerm)
-      );
-    }
-    
-    // Sort by last name ASC, then first name ASC as secondary sort
-    filteredMembers.sort((a, b) => {
-      const lastNameA = (a.last_name || '').toLowerCase();
-      const lastNameB = (b.last_name || '').toLowerCase();
-      if (lastNameA !== lastNameB) {
-        return lastNameA.localeCompare(lastNameB);
-      }
-      // If last names are equal, sort by first name
-      const firstNameA = (a.first_name || '').toLowerCase();
-      const firstNameB = (b.first_name || '').toLowerCase();
-      return firstNameA.localeCompare(firstNameB);
-    });
-    
-    // Calculate pagination
-    const total = filteredMembers.length;
-    const totalPages = Math.ceil(total / validPageSize);
-    
-    // Apply pagination
-    const members = filteredMembers.slice(offset, offset + validPageSize);
     
     return {
       members,
@@ -1072,35 +742,33 @@ export interface Member {
  */
 export async function saveMembersFromActivity(activityRows: ActivityStatementRow[]): Promise<number> {
   const connection = await pool.getConnection();
-  
+
   try {
     await connection.beginTransaction();
-    
+
     let savedCount = 0;
-    
+
+    // Deduplicate by account number - keep the last occurrence (most recent data)
+    // Also filter out empty/whitespace-only account numbers
+    const uniqueAccountsMap = new Map<string, ActivityStatementRow>();
     for (const row of activityRows) {
-      if (!row.acct) continue; // Skip rows without account number
-      
       const normalizedAccount = normalizeAccount(row.acct);
-      // Encrypt account number deterministically for lookups
-      const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
+      // Skip empty or whitespace-only account numbers
+      if (!normalizedAccount || normalizedAccount.trim() === '') continue;
+      // Keep last occurrence for each account (overwrites previous)
+      uniqueAccountsMap.set(normalizedAccount, row);
+    }
+    
+    const uniqueRows = Array.from(uniqueAccountsMap.entries());
+
+    for (const [normalizedAccount, row] of uniqueRows) {
       
-      // Check if member already exists (search with encrypted account number)
+      // Check if member already exists
       const [existing] = await connection.execute<mysql.RowDataPacket[]>(
         `SELECT id FROM members WHERE account_number = ?`,
-        [encryptedAccountNumber]
+        [normalizedAccount]
       );
       
-      // Encrypt sensitive fields
-      const encryptedTitle = encrypt(row.title || '');
-      const encryptedFirstName = encrypt(row.firstName || '');
-      const encryptedLastName = encrypt(row.lastName || '');
-      const encryptedEmail = encrypt(row.email || '');
-      const encryptedAddress = encrypt(row.address || '');
-      const encryptedSuburb = encrypt(row.suburb || '');
-      const encryptedState = encrypt(row.state || '');
-      const encryptedPostCode = encrypt(row.postCode || '');
-
       if (existing.length > 0) {
         // Update existing member
         await connection.execute(
@@ -1111,17 +779,17 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
                is_postal = COALESCE(is_postal, 0), updated_at = NOW()
            WHERE account_number = ?`,
           [
-            encryptedTitle,
-            encryptedFirstName,
-            encryptedLastName,
-            encryptedEmail,
-            encryptedAddress,
-            encryptedSuburb,
-            encryptedState,
-            encryptedPostCode,
+            row.title || '',
+            row.firstName || '',
+            row.lastName || '',
+            row.email || '',
+            row.address || '',
+            row.suburb || '',
+            row.state || '',
+            row.postCode || '',
             row.country || '',
             row.playerType || '',
-            encryptedAccountNumber
+            normalizedAccount
           ]
         );
       } else {
@@ -1134,15 +802,15 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
-            encryptedAccountNumber,
-            encryptedTitle,
-            encryptedFirstName,
-            encryptedLastName,
-            encryptedEmail,
-            encryptedAddress,
-            encryptedSuburb,
-            encryptedState,
-            encryptedPostCode,
+            normalizedAccount,
+            row.title || '',
+            row.firstName || '',
+            row.lastName || '',
+            row.email || '',
+            row.address || '',
+            row.suburb || '',
+            row.state || '',
+            row.postCode || '',
             row.country || '',
             row.playerType || '',
             0, // is_email default to 0 for activity statements
@@ -1172,19 +840,28 @@ export async function getMemberByAccount(accountNumber: string): Promise<Member 
   
   try {
     const normalizedAccount = normalizeAccount(accountNumber);
-    // Encrypt account number for lookup (deterministic encryption allows exact match)
-    const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
-    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+    let [rows] = await connection.execute<mysql.RowDataPacket[]>(
       `SELECT * FROM members WHERE account_number = ? LIMIT 1`,
-      [encryptedAccountNumber]
+      [normalizedAccount]
     );
+    
+    // If encryption is enabled and not found, try with encrypted account
+    // (accounts in DB are stored encrypted using encryptDeterministic)
+    if (rows.length === 0 && isEncryptionEnabled()) {
+      const encryptedAccount = encryptDeterministic(normalizedAccount);
+      [rows] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT * FROM members WHERE account_number = ? LIMIT 1`,
+        [encryptedAccount]
+      );
+    }
     
     if (rows.length === 0) {
       return null;
     }
     
     const memberRow = rows[0];
-    // Decrypt sensitive fields (handles both encrypted and legacy unencrypted data)
+    
+    // Decrypt member fields (handles both encrypted and unencrypted data)
     return {
       id: memberRow.id,
       account_number: decrypt(memberRow.account_number || ''),
@@ -1220,18 +897,17 @@ export async function getAllMembers(): Promise<Member[]> {
       `SELECT * FROM members ORDER BY account_number ASC`
     );
     
-    // Decrypt sensitive fields for each member (handles both encrypted and legacy data)
-    const members = rows.map(row => ({
+    return rows.map(row => ({
       id: row.id,
-      account_number: decrypt(row.account_number || ''),
-      title: decrypt(row.title || ''),
-      first_name: decrypt(row.first_name || ''),
-      last_name: decrypt(row.last_name || ''),
-      email: decrypt(row.email || ''),
-      address: decrypt(row.address || ''),
-      suburb: decrypt(row.suburb || ''),
-      state: decrypt(row.state || ''),
-      post_code: decrypt(row.post_code || ''),
+      account_number: row.account_number,
+      title: row.title || '',
+      first_name: row.first_name || '',
+      last_name: row.last_name || '',
+      email: row.email || '',
+      address: row.address || '',
+      suburb: row.suburb || '',
+      state: row.state || '',
+      post_code: row.post_code || '',
       country: row.country || '',
       player_type: row.player_type || '',
       is_email: row.is_email ?? 0,
@@ -1239,21 +915,6 @@ export async function getAllMembers(): Promise<Member[]> {
       created_at: row.created_at,
       updated_at: row.updated_at
     }));
-    
-    // Sort by last name ASC, then first name ASC as secondary sort
-    members.sort((a, b) => {
-      const lastNameA = (a.last_name || '').toLowerCase();
-      const lastNameB = (b.last_name || '').toLowerCase();
-      if (lastNameA !== lastNameB) {
-        return lastNameA.localeCompare(lastNameB);
-      }
-      // If last names are equal, sort by first name
-      const firstNameA = (a.first_name || '').toLowerCase();
-      const firstNameB = (b.first_name || '').toLowerCase();
-      return firstNameA.localeCompare(firstNameB);
-    });
-    
-    return members;
   } catch (error) {
     console.error('Error getting all members:', error);
     throw error;
@@ -1293,8 +954,6 @@ export async function saveMembersFromMemberContact(
       if (!contact.accountNumber) continue; // Skip rows without account number
       
       const normalizedAccount = normalizeAccount(contact.accountNumber);
-      // Encrypt account number deterministically for lookups
-      const encryptedAccountNumber = encryptDeterministic(normalizedAccount);
       
       // Use preferredName if available, otherwise firstName
       const displayName = contact.preferredName || contact.firstName;
@@ -1302,19 +961,10 @@ export async function saveMembersFromMemberContact(
       // Combine address1 and address2
       const fullAddress = [contact.address1, contact.address2].filter(Boolean).join(' ').trim();
       
-      // Encrypt sensitive fields
-      const encryptedFirstName = encrypt(displayName);
-      const encryptedLastName = encrypt(contact.lastName || '');
-      const encryptedEmail = encrypt(contact.email || '');
-      const encryptedAddress = encrypt(fullAddress);
-      const encryptedSuburb = encrypt(contact.city || '');
-      const encryptedState = encrypt(contact.state || '');
-      const encryptedPostCode = encrypt(contact.postalCode || '');
-      
-      // Check if member already exists (search with encrypted account number)
+      // Check if member already exists
       const [existing] = await connection.execute<mysql.RowDataPacket[]>(
         `SELECT id FROM members WHERE account_number = ?`,
-        [encryptedAccountNumber]
+        [normalizedAccount]
       );
       
       if (existing.length > 0) {
@@ -1326,17 +976,17 @@ export async function saveMembersFromMemberContact(
                country = ?, is_email = ?, is_postal = ?, updated_at = NOW()
            WHERE account_number = ?`,
           [
-            encryptedFirstName,
-            encryptedLastName,
-            encryptedEmail,
-            encryptedAddress,
-            encryptedSuburb,
-            encryptedState,
-            encryptedPostCode,
+            displayName,
+            contact.lastName || '',
+            contact.email || '',
+            fullAddress,
+            contact.city || '',
+            contact.state || '',
+            contact.postalCode || '',
             contact.country || '',
             contact.isEmail,
             contact.isPostal,
-            encryptedAccountNumber
+            normalizedAccount
           ]
         );
       } else {
@@ -1349,15 +999,15 @@ export async function saveMembersFromMemberContact(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
-            encryptedAccountNumber,
-            '', // title not in Member Contact sheet (empty string, not encrypted)
-            encryptedFirstName,
-            encryptedLastName,
-            encryptedEmail,
-            encryptedAddress,
-            encryptedSuburb,
-            encryptedState,
-            encryptedPostCode,
+            normalizedAccount,
+            '', // title not in Member Contact sheet
+            displayName,
+            contact.lastName || '',
+            contact.email || '',
+            fullAddress,
+            contact.city || '',
+            contact.state || '',
+            contact.postalCode || '',
             contact.country || '',
             '', // player_type not in Member Contact sheet
             contact.isEmail,
@@ -1390,11 +1040,6 @@ export interface MemberWithBatch extends Member {
 
 /**
  * Get paginated members from the database with their latest batch information
- * When search is provided, fetches all members, decrypts, filters, then paginates
- * (required because data is encrypted and SQL LIKE cannot search encrypted text)
- * 
- * NOTE: Batch lookup is done in application code after decryption to handle
- * cases where encryption keys might differ between tables or legacy unencrypted data
  */
 export async function getMembersPaginated(
   page: number = 1,
@@ -1412,60 +1057,52 @@ export async function getMembersPaginated(
     const membersQuery = `SELECT * FROM members ORDER BY account_number ASC`;
     const [memberRows] = await pool.execute<mysql.RowDataPacket[]>(membersQuery);
     
-    // Fetch all quarterly batches per account (need all because encrypted/unencrypted are different in DB)
+    // Fetch latest quarterly batch per account
     const quarterlyBatchQuery = `
       SELECT 
         qus.account_number,
         gb.id as batch_id,
         gb.quarter,
         gb.year,
-        gb.generation_date
+        gb.generation_date,
+        ROW_NUMBER() OVER (PARTITION BY qus.account_number ORDER BY gb.generation_date DESC) as rn
       FROM quarterly_user_statements qus
       INNER JOIN generation_batches gb ON qus.batch_id = gb.id`;
     const [quarterlyRows] = await pool.execute<mysql.RowDataPacket[]>(quarterlyBatchQuery);
     
     // Build a map of decrypted account -> latest batch info
-    // Need to handle both encrypted and unencrypted accounts (legacy data)
     const quarterlyBatchMap = new Map<string, { batch_id: string; quarter: number; year: number; generation_date: Date }>();
     for (const row of quarterlyRows) {
-      const decryptedAccount = decrypt(row.account_number || '');
-      const generationDate = new Date(row.generation_date);
-      const existing = quarterlyBatchMap.get(decryptedAccount);
-      
-      // Only update if this batch is newer than the existing one
-      if (!existing || generationDate > existing.generation_date) {
+      if (row.rn === 1) {
+        const decryptedAccount = decrypt(row.account_number || '');
         quarterlyBatchMap.set(decryptedAccount, {
           batch_id: row.batch_id,
           quarter: row.quarter,
           year: row.year,
-          generation_date: generationDate
+          generation_date: new Date(row.generation_date)
         });
       }
     }
     
-    // Fetch all no-play batches per account (need all because encrypted/unencrypted are different in DB)
+    // Fetch latest no-play batch per account
     const noPlayBatchQuery = `
       SELECT 
         npp.account_number,
         npb.id as batch_id,
-        npb.generation_date
+        npb.generation_date,
+        ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
       FROM no_play_players npp
       INNER JOIN no_play_batches npb ON npp.batch_id = npb.id`;
     const [noPlayRows] = await pool.execute<mysql.RowDataPacket[]>(noPlayBatchQuery);
     
     // Build a map of decrypted account -> latest no-play batch info
-    // Need to handle both encrypted and unencrypted accounts (legacy data)
     const noPlayBatchMap = new Map<string, { batch_id: string; generation_date: Date }>();
     for (const row of noPlayRows) {
-      const decryptedAccount = decrypt(row.account_number || '');
-      const generationDate = new Date(row.generation_date);
-      const existing = noPlayBatchMap.get(decryptedAccount);
-      
-      // Only update if this batch is newer than the existing one
-      if (!existing || generationDate > existing.generation_date) {
+      if (row.rn === 1) {
+        const decryptedAccount = decrypt(row.account_number || '');
         noPlayBatchMap.set(decryptedAccount, {
           batch_id: row.batch_id,
-          generation_date: generationDate
+          generation_date: new Date(row.generation_date)
         });
       }
     }
@@ -1591,8 +1228,6 @@ export interface User {
   username: string;
   password_hash: string;
   role: 'admin' | 'team_member';
-  totp_secret?: string | null;
-  totp_enabled: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -1603,7 +1238,7 @@ export interface User {
 export async function getUserByUsername(username: string): Promise<User | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, username, password_hash, role, totp_secret, totp_enabled, created_at, updated_at
+      `SELECT id, username, password_hash, role, created_at, updated_at
        FROM users
        WHERE username = ?`,
       [username]
@@ -1618,9 +1253,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
       id: row.id,
       username: row.username,
       password_hash: row.password_hash,
-      role: (row.role || 'team_member') as 'admin' | 'team_member',
-      totp_secret: row.totp_secret || null,
-      totp_enabled: Boolean(row.totp_enabled),
+      role: row.role || 'team_member', // Default to team_member if role is null
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -1636,7 +1269,7 @@ export async function getUserByUsername(username: string): Promise<User | null> 
 export async function getUserById(userId: string): Promise<User | null> {
   try {
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT id, username, password_hash, role, totp_secret, totp_enabled, created_at, updated_at
+      `SELECT id, username, password_hash, role, created_at, updated_at
        FROM users
        WHERE id = ?`,
       [userId]
@@ -1651,9 +1284,7 @@ export async function getUserById(userId: string): Promise<User | null> {
       id: row.id,
       username: row.username,
       password_hash: row.password_hash,
-      role: (row.role || 'team_member') as 'admin' | 'team_member',
-      totp_secret: row.totp_secret || null,
-      totp_enabled: Boolean(row.totp_enabled),
+      role: row.role || 'team_member', // Default to team_member if role is null
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     };
@@ -1681,7 +1312,7 @@ export async function createUser(username: string, passwordHash: string, role: '
     // Generate UUID for user
     const userId = randomUUID();
 
-    // Insert user
+    // Insert user with role
     await connection.execute(
       `INSERT INTO users (id, username, password_hash, role)
        VALUES (?, ?, ?, ?)`,
@@ -1713,9 +1344,7 @@ export async function getAllUsers(): Promise<Omit<User, 'password_hash'>[]> {
     return rows.map(row => ({
       id: row.id,
       username: row.username,
-      role: (row.role || 'team_member') as 'admin' | 'team_member',
-      totp_secret: null,
-      totp_enabled: false,
+      role: row.role || 'team_member', // Default to team_member if role is null
       created_at: new Date(row.created_at),
       updated_at: new Date(row.updated_at),
     }));
@@ -1726,7 +1355,7 @@ export async function getAllUsers(): Promise<Omit<User, 'password_hash'>[]> {
 }
 
 /**
- * Update user information (email/username, password, role)
+ * Update a user
  */
 export async function updateUser(
   userId: string,
@@ -1742,52 +1371,48 @@ export async function updateUser(
     await connection.beginTransaction();
 
     // Check if user exists
-    const existing = await getUserById(userId);
-    if (!existing) {
+    const user = await getUserById(userId);
+    if (!user) {
       throw new Error('User not found');
     }
 
-    // If username is being updated, check if new username already exists
-    if (updates.username && updates.username !== existing.username) {
-      const userWithNewUsername = await getUserByUsername(updates.username);
-      if (userWithNewUsername) {
+    // Build update query dynamically
+    const updateFields: string[] = [];
+    const values: any[] = [];
+
+    if (updates.username !== undefined) {
+      // Check if new username already exists (excluding current user)
+      const existing = await getUserByUsername(updates.username);
+      if (existing && existing.id !== userId) {
         throw new Error('A user with this username already exists');
       }
-    }
-
-    // Build update query dynamically based on what's being updated
-    const updateFields: string[] = [];
-    const updateValues: any[] = [];
-
-    if (updates.username) {
       updateFields.push('username = ?');
-      updateValues.push(updates.username);
+      values.push(updates.username);
     }
 
-    if (updates.passwordHash) {
+    if (updates.passwordHash !== undefined) {
       updateFields.push('password_hash = ?');
-      updateValues.push(updates.passwordHash);
+      values.push(updates.passwordHash);
     }
 
     if (updates.role !== undefined) {
       updateFields.push('role = ?');
-      updateValues.push(updates.role);
+      values.push(updates.role);
     }
 
     if (updateFields.length === 0) {
-      await connection.rollback();
-      return; // Nothing to update
+      await connection.commit();
+      return;
     }
 
-    // Always update the updated_at timestamp
+    // Add updated_at timestamp
     updateFields.push('updated_at = NOW()');
-    updateValues.push(userId);
+    values.push(userId);
 
+    // Execute update
     await connection.execute(
-      `UPDATE users 
-       SET ${updateFields.join(', ')}
-       WHERE id = ?`,
-      updateValues
+      `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`,
+      values
     );
 
     await connection.commit();
@@ -1825,58 +1450,6 @@ export async function deleteUser(userId: string): Promise<void> {
   } catch (error) {
     await connection.rollback();
     console.error('Error deleting user:', error);
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
-
-/**
- * Update user's TOTP secret and enable 2FA
- */
-export async function updateUserTotpSecret(username: string, secret: string): Promise<void> {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
-
-    await connection.execute(
-      `UPDATE users 
-       SET totp_secret = ?, totp_enabled = TRUE, updated_at = NOW()
-       WHERE username = ?`,
-      [secret, username]
-    );
-
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    console.error('Error updating user TOTP secret:', error);
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
-
-/**
- * Disable TOTP for a user (clear secret and disable flag)
- */
-export async function disableUserTotp(username: string): Promise<void> {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
-
-    await connection.execute(
-      `UPDATE users 
-       SET totp_secret = NULL, totp_enabled = FALSE, updated_at = NOW()
-       WHERE username = ?`,
-      [username]
-    );
-
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    console.error('Error disabling user TOTP:', error);
     throw error;
   } finally {
     connection.release();
@@ -1989,222 +1562,13 @@ export async function cleanupExpiredSessions(): Promise<void> {
 }
 
 // ============================================
-// PDF Export Job Tracking Functions
-// ============================================
-
-export interface PdfExport {
-  id: string;
-  tab_type: 'quarterly' | 'play' | 'no-play';
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  total_members: number;
-  processed_members: number;
-  failed_members: number;
-  file_path: string | null;
-  file_size: number | null;
-  error_message: string | null;
-  created_by: string | null;
-  created_at: Date;
-  updated_at: Date;
-  started_at: Date | null;
-  completed_at: Date | null;
-}
-
-/**
- * Create a new PDF export job
- */
-export async function createPdfExport(
-  tabType: 'quarterly' | 'play' | 'no-play',
-  totalMembers: number,
-  createdBy?: string
-): Promise<string> {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
-
-    const exportId = randomUUID();
-
-    await connection.execute(
-      `INSERT INTO pdf_exports (id, tab_type, status, total_members, created_by)
-       VALUES (?, ?, 'pending', ?, ?)`,
-      [exportId, tabType, totalMembers, createdBy || null]
-    );
-
-    await connection.commit();
-    return exportId;
-  } catch (error) {
-    await connection.rollback();
-    console.error('Error creating PDF export:', error);
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
-
-/**
- * Get PDF export by ID
- */
-export async function getPdfExport(exportId: string): Promise<PdfExport | null> {
-  try {
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT * FROM pdf_exports WHERE id = ?`,
-      [exportId]
-    );
-
-    if (rows.length === 0) {
-      return null;
-    }
-
-    const row = rows[0];
-    return {
-      id: row.id,
-      tab_type: row.tab_type,
-      status: row.status,
-      total_members: row.total_members,
-      processed_members: row.processed_members || 0,
-      failed_members: row.failed_members || 0,
-      file_path: row.file_path || null,
-      file_size: row.file_size || null,
-      error_message: row.error_message || null,
-      created_by: row.created_by || null,
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
-      started_at: row.started_at ? new Date(row.started_at) : null,
-      completed_at: row.completed_at ? new Date(row.completed_at) : null,
-    };
-  } catch (error) {
-    console.error('Error getting PDF export:', error);
-    throw error;
-  }
-}
-
-/**
- * Update PDF export status
- */
-export async function updatePdfExportStatus(
-  exportId: string,
-  updates: {
-    status?: 'pending' | 'processing' | 'completed' | 'failed';
-    processed_members?: number;
-    failed_members?: number;
-    file_path?: string | null;
-    file_size?: number | null;
-    error_message?: string | null;
-    started_at?: Date | null;
-    completed_at?: Date | null;
-  }
-): Promise<void> {
-  const connection = await pool.getConnection();
-  
-  try {
-    await connection.beginTransaction();
-
-    const updateFields: string[] = [];
-    const updateValues: any[] = [];
-
-    if (updates.status !== undefined) {
-      updateFields.push('status = ?');
-      updateValues.push(updates.status);
-      
-      // Set started_at when status changes to processing
-      if (updates.status === 'processing' && !updates.started_at) {
-        updateFields.push('started_at = NOW()');
-      }
-      
-      // Set completed_at when status changes to completed or failed
-      if ((updates.status === 'completed' || updates.status === 'failed') && !updates.completed_at) {
-        updateFields.push('completed_at = NOW()');
-      }
-    }
-
-    if (updates.processed_members !== undefined) {
-      updateFields.push('processed_members = ?');
-      updateValues.push(updates.processed_members);
-    }
-
-    if (updates.failed_members !== undefined) {
-      updateFields.push('failed_members = ?');
-      updateValues.push(updates.failed_members);
-    }
-
-    if (updates.file_path !== undefined) {
-      updateFields.push('file_path = ?');
-      updateValues.push(updates.file_path);
-    }
-
-    if (updates.file_size !== undefined) {
-      updateFields.push('file_size = ?');
-      updateValues.push(updates.file_size);
-    }
-
-    if (updates.error_message !== undefined) {
-      updateFields.push('error_message = ?');
-      updateValues.push(updates.error_message);
-    }
-
-    if (updates.started_at !== undefined) {
-      updateFields.push('started_at = ?');
-      updateValues.push(updates.started_at);
-    }
-
-    if (updates.completed_at !== undefined) {
-      updateFields.push('completed_at = ?');
-      updateValues.push(updates.completed_at);
-    }
-
-    if (updateFields.length === 0) {
-      await connection.commit();
-      return;
-    }
-
-    updateFields.push('updated_at = NOW()');
-    updateValues.push(exportId);
-
-    await connection.execute(
-      `UPDATE pdf_exports SET ${updateFields.join(', ')} WHERE id = ?`,
-      updateValues
-    );
-
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    console.error('Error updating PDF export status:', error);
-    throw error;
-  } finally {
-    connection.release();
-  }
-}
-
-/**
- * Get all PDF exports ordered by most recent first
- */
-export async function getAllPdfExports(limit: number = 50): Promise<PdfExport[]> {
-  try {
-    // LIMIT must be a literal integer, not a parameter
-    const limitValue = Math.max(1, Math.floor(limit));
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT * FROM pdf_exports ORDER BY created_at DESC LIMIT ${limitValue}`
-    );
-
-    return rows.map(row => ({
-      id: row.id,
-      tab_type: row.tab_type,
-      status: row.status,
-      total_members: row.total_members,
-      processed_members: row.processed_members || 0,
-      failed_members: row.failed_members || 0,
-      file_path: row.file_path || null,
-      file_size: row.file_size || null,
-      error_message: row.error_message || null,
-      created_by: row.created_by || null,
-      created_at: new Date(row.created_at),
-      updated_at: new Date(row.updated_at),
-      started_at: row.started_at ? new Date(row.started_at) : null,
-      completed_at: row.completed_at ? new Date(row.completed_at) : null,
-    }));
-  } catch (error) {
-    console.error('Error getting all PDF exports:', error);
-    throw error;
-  }
-}
+// Email Tracking Functions moved to lib/db/email.ts
+// Re-export for backward compatibility
+export type { EmailTracking } from './db/email';
+export { 
+  createEmailTrackingRecord,
+  updateEmailTrackingStatus,
+  recordEmailOpen,
+  getEmailTrackingRecords
+} from './db/email';
 

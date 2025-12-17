@@ -11,7 +11,9 @@ export default function Navigation() {
   const [userRole, setUserRole] = useState<'admin' | 'team_member' | null>(null);
   const [loading, setLoading] = useState(true);
   const [isReportDropdownOpen, setIsReportDropdownOpen] = useState(false);
+  const [isReportsDropdownOpen, setIsReportsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const reportsDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -37,11 +39,14 @@ export default function Navigation() {
     checkAuth();
   }, [pathname]);
 
-  // Close dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsReportDropdownOpen(false);
+      }
+      if (reportsDropdownRef.current && !reportsDropdownRef.current.contains(event.target as Node)) {
+        setIsReportsDropdownOpen(false);
       }
     };
 
@@ -84,7 +89,7 @@ export default function Navigation() {
               <button
                 onClick={() => setIsReportDropdownOpen(!isReportDropdownOpen)}
                 className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 ${
-                  pathname === '/' || pathname === '/no-play' || pathname === '/export-history'
+                  pathname === '/' || pathname === '/no-play'
                     ? 'border-blue-600 text-blue-600 bg-blue-50'
                     : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
                 }`}
@@ -124,16 +129,54 @@ export default function Navigation() {
                   >
                     Play & No-Play Pre-Commitment
                   </Link>
+                </div>
+              )}
+            </div>
+
+            {/* Reports Dropdown */}
+            <div className="relative" ref={reportsDropdownRef}>
+              <button
+                onClick={() => setIsReportsDropdownOpen(!isReportsDropdownOpen)}
+                className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 flex items-center gap-2 ${
+                  pathname === '/reports/email' || pathname === '/reports/pdf-export'
+                    ? 'border-blue-600 text-blue-600 bg-blue-50'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+                }`}
+              >
+                Reports
+                <svg
+                  className={`w-4 h-4 transition-transform ${isReportsDropdownOpen ? 'rotate-180' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              
+              {isReportsDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
                   <Link
-                    href="/export-history"
-                    onClick={() => setIsReportDropdownOpen(false)}
+                    href="/reports/email"
+                    onClick={() => setIsReportsDropdownOpen(false)}
                     className={`block px-4 py-3 text-sm transition-colors ${
-                      pathname === '/export-history'
+                      pathname === '/reports/email'
                         ? 'bg-blue-50 text-blue-600 font-medium'
                         : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    Export History
+                    Email
+                  </Link>
+                  <Link
+                    href="/reports/pdf-export"
+                    onClick={() => setIsReportsDropdownOpen(false)}
+                    className={`block px-4 py-3 text-sm transition-colors ${
+                      pathname === '/reports/pdf-export'
+                        ? 'bg-blue-50 text-blue-600 font-medium'
+                        : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    PDF Export
                   </Link>
                 </div>
               )}
@@ -150,18 +193,16 @@ export default function Navigation() {
               Member Information
             </Link>
 
-            {userRole === 'admin' && (
-              <Link
-                href="/users"
-                className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 ${
-                  pathname === '/users'
-                    ? 'border-blue-600 text-blue-600 bg-blue-50'
-                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-                }`}
-              >
-                Users
-              </Link>
-            )}
+            <Link
+              href="/users"
+              className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 ${
+                pathname === '/users'
+                  ? 'border-blue-600 text-blue-600 bg-blue-50'
+                  : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
+              }`}
+            >
+              Users
+            </Link>
 
             <Link
               href="/settings"

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAccountFromBatch, getBatchById, getMemberByAccount } from '@/lib/db';
+import { createEmailTrackingRecord, updateEmailTrackingStatus } from '@/lib/db/email';
 import { generatePreviewHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { decryptJson } from '@/lib/encryption';
@@ -125,7 +126,8 @@ export async function POST(request: NextRequest) {
           [batchId]
         );
         if (sampleRow.length > 0) {
-          const sampleData = JSON.parse(sampleRow[0].data) as { quarterlyData?: any };
+          // Use decryptJson to handle both encrypted and legacy unencrypted data
+          const sampleData = decryptJson<{ quarterlyData?: any }>(sampleRow[0].data);
           if (sampleData.quarterlyData) {
             quarterlyData = sampleData.quarterlyData;
           }
@@ -260,11 +262,22 @@ export async function POST(request: NextRequest) {
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
       const sanitizedAccount = account.replace(/[^a-zA-Z0-9_-]/g, '') || 'member';
       const pdfFileName = `Statement_Q${batch.quarter}_${batch.year}_${sanitizedAccount}.pdf`;
+      const subject = `Your SkyCity Quarterly Statement - ${quarterLabel}`;
+
+      // Create email tracking record before sending
+      const trackingId = await createEmailTrackingRecord({
+        recipient_email: member.email,
+        recipient_account: normalizedAccount,
+        recipient_name: playerName,
+        email_type: 'quarterly',
+        batch_id: batchId,
+        subject: subject,
+      });
 
       const msg = {
         to: member.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
-        subject: `Your SkyCity Quarterly Statement - ${quarterLabel}`,
+        subject: subject,
         text: `Dear ${playerName},\n\nPlease find attached your quarterly statement for ${quarterLabel}.\n\nThank you for being a valued member of SkyCity.\n\nBest regards,\nSkyCity Team`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -281,11 +294,34 @@ export async function POST(request: NextRequest) {
             type: 'application/pdf',
             disposition: 'attachment'
           }
-        ]
+        ],
+        custom_args: {
+          email_tracking_id: trackingId
+        }
       };
 
       // Send email via SendGrid
-      await sgMail.send(msg);
+      try {
+        const [response] = await sgMail.send(msg);
+        
+        // Extract SendGrid message ID from response headers
+        const messageId = response.headers?.['x-message-id']?.[0] || null;
+        
+        // Update tracking record with sent status
+        await updateEmailTrackingStatus(trackingId, {
+          status: 'sent',
+          sendgrid_message_id: messageId,
+          sent_at: new Date(),
+        });
+      } catch (sendError) {
+        // Update tracking record with failed status
+        const errorMessage = sendError instanceof Error ? sendError.message : 'Failed to send email';
+        await updateEmailTrackingStatus(trackingId, {
+          status: 'failed',
+          error_message: errorMessage,
+        });
+        throw sendError;
+      }
 
       return NextResponse.json({
         success: true,
@@ -312,10 +348,12 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    const errorMessage = error instanceof Error ? error.message : 'Failed to send PDF';
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : 'Failed to send PDF' },
+      { success: false, error: errorMessage },
       { status: 500 }
     );
   }
 }
+
 

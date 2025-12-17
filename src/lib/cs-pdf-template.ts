@@ -190,6 +190,9 @@ export function generateCashlessStatements(
           <p>
             SkyCity Adelaide has a pre-commitment program (known as MyPlay) that allows customers to set individual limits to help them control their gaming on electronic gaming machines and electronic table games. Customers may limit the amount of money they wish to spend, the amount of time they wish to spend at the venue, and the number of visits they wish to make. The Host Responsibility team is available to assist customers with setting up personal pre-commitment limits. Visit https://skycityadelaide.com.au/about-us/host-responsibility/my-play/ for more information regarding MyPlay or ask venue staff for details. If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8212 2811 and ask to be put through to HRC. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.
           </p>
+          <p>
+            SkyCity Adelaide extracts carded data from its approved gaming systems. Whilst reasonable efforts are made to ensure the accuracy of such data, there may be instances where our systems encounter faults or errors. Accordingly, SkyCity Adelaide does not represent or warrant that the figures included in this statement are error-free or completely accurate.
+          </p>
         </div>
       `;
 

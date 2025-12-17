@@ -73,7 +73,8 @@ export async function GET(request: NextRequest) {
           [batchId]
         );
         if (sampleRow.length > 0) {
-          const sampleData = JSON.parse(sampleRow[0].data) as { quarterlyData?: any };
+          // Use decryptJson to handle both encrypted and legacy unencrypted data
+          const sampleData = decryptJson<{ quarterlyData?: any }>(sampleRow[0].data);
           if (sampleData.quarterlyData) {
             quarterlyData = sampleData.quarterlyData;
           }
@@ -181,11 +182,6 @@ export async function GET(request: NextRequest) {
 
     // Extract the target player data
     const targetPlayer = matchedAccount.account_data;
-
-    // Ensure cashless is only included if it exists
-    if (!targetPlayer.cashless) {
-      console.log(`Cashless data not found for account ${targetPlayer.account}, excluding from preview`);
-    }
 
     // Convert logos to base64
     const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');

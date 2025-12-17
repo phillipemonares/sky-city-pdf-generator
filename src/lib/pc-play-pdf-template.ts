@@ -54,8 +54,22 @@ export const PC_PLAY_STYLES = `
     margin-top: 0;
   }
 
+  .statement-details p {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  .statement-details ul {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
   .statement-details ul li {
     margin-left: 20px;
+    margin-top: 0;
+    margin-bottom: 0;
   }
 
   .precommitment-table {
@@ -86,6 +100,10 @@ export const PC_PLAY_STYLES = `
     font-size: 10px;
     line-height: 1.5;
     padding-top: 20px;
+  }
+
+  .precommitment-footer p {
+    margin-bottom: 8px;
   }
 
   .page {
@@ -378,7 +396,7 @@ export function renderPreCommitmentPage(
   return `
   <div class="page">
     ${playHeaderDataUrl ? `<img src="${playHeaderDataUrl}" alt="SkyCity Adelaide" class="play-header" />` : '<div class="text-logo">SKYCITY ADELAIDE</div>'}
-    <div class="member-info">
+    <div class="member-info" style="margin-top: -50px;">
       <div class="member-number">Member Number: ${playerInfo.playerAccount || '-'}</div>
     </div>
 
@@ -398,29 +416,29 @@ export function renderPreCommitmentPage(
       ${netWinLoss ? `<p style="margin-top: -5px;"><strong>Net/Win Loss:</strong> ${wrapNegativeValue(formatCurrency(netWinLoss))}</p>` : ''}
       <p style="margin-top: 10px;"><strong>Your Active Pre-Commitment Rule/s as at ${formatDateToDDMMYYYY(quarterEnd)}</strong></p>
       <div class="statement-details">
-        <p style="margin-top: 0;"><strong>Expenditure Limits:</strong></p>
-        <ul>
+        <p style="margin-top: 0; margin-bottom: 0;"><strong>Expenditure Limits:</strong></p>
+        <ul style="margin-top: 0; margin-bottom: 0;">
           ${renderList(expenditureItems)}
         </ul>
-        <p><strong>Time Limits:</strong></p>
-        <ul>
+        <p style="margin-top: 0; margin-bottom: 0;"><strong>Time Limits:</strong></p>
+        <ul style="margin-top: 0; margin-bottom: 0;">
           ${renderList(timeLimitItems)}
         </ul>
-        <p><strong>Break in Play Periods</strong></p>
-        <ul>
+        <p style="margin-top: 0; margin-bottom: 0;"><strong>Break in Play Periods</strong></p>
+        <ul style="margin-top: 0; margin-bottom: 0;">
           ${renderList(breakItems)}
         </ul>
-        <p><strong>No Play Periods</strong></p>
-        <ul>
+        <p style="margin-top: 0; margin-bottom: 0;"><strong>No Play Periods</strong></p>
+        <ul style="margin-top: 0; margin-bottom: 0;">
           ${renderList(scheduleItems)}
         </ul>
-        <p><strong>Consecutive Days:</strong></p>
-        <ul>
+        <p style="margin-top: 0; margin-bottom: 0;"><strong>Consecutive Days:</strong></p>
+        <ul style="margin-top: 0; margin-bottom: 0;">
           ${renderList(hasConsecutiveDays ? [consecutiveDaysF] : [])}
         </ul>
       </div>
     </div>
-    <p style="margin-top: -5px;"><strong>Number of Breaches:</strong> ${breaches}</p>
+    <p><strong>Number of Breaches:</strong> ${breaches}</p>
     <div>
       <p style="margin-top: -5px;"><strong>Statement Period:</strong> ${quarterStart} to ${quarterEnd}</p>
       <p style="margin-top: -5px;"><strong>Daily Amounts Won/Lost During the Period:</strong></p>
@@ -437,7 +455,10 @@ export function renderPreCommitmentPage(
       </table>
     </div>
     ${!hasNextPageRows && sessionSummaries.length > 0 ? `
-    <p class="precommitment-footer">This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
+    <div class="precommitment-footer">
+      <p>This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
+      <p>SkyCity Adelaide extracts carded data from its approved gaming systems. Whilst reasonable efforts are made to ensure the accuracy of such data, there may be instances where our systems encounter faults or errors. Accordingly, SkyCity Adelaide does not represent or warrant that the figures included in this statement are error-free or completely accurate.</p>
+    </div>
     ` : ''}
   </div>
   ${hasNextPageRows && nextPageRows ? `
@@ -456,7 +477,10 @@ export function renderPreCommitmentPage(
         </tbody>
       </table>
     </div>
-    <p class="precommitment-footer">This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
+    <div class="precommitment-footer">
+      <p>This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
+      <p>SkyCity Adelaide extracts carded data from its approved gaming systems. Whilst reasonable efforts are made to ensure the accuracy of such data, there may be instances where our systems encounter faults or errors. Accordingly, SkyCity Adelaide does not represent or warrant that the figures included in this statement are error-free or completely accurate.</p>
+    </div>
   </div>
   ` : ''}
   `;
@@ -580,6 +604,7 @@ export function generatePlayPreCommitmentPDFHTML(
       }
 
       .member-info {
+        margin-top: -10px;
         margin-bottom: 20px;
       }
 
@@ -630,8 +655,22 @@ export function generatePlayPreCommitmentPDFHTML(
         margin-top: 0;
       }
 
+      .statement-details p {
+        margin-top: 0;
+        margin-bottom: 0;
+      }
+
+      .statement-details ul {
+        margin-top: 0;
+        margin-bottom: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+
       .statement-details ul li {
         margin-left: 50px;
+        margin-top: 0;
+        margin-bottom: 0;
       }
 
       .precommitment-table {
@@ -662,6 +701,10 @@ export function generatePlayPreCommitmentPDFHTML(
         font-size: 10px;
         line-height: 1.5;
         padding-top: 20px;
+      }
+
+      .precommitment-footer p {
+        margin-bottom: 8px;
       }
 
       .page-break {

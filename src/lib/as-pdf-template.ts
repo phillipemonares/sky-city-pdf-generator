@@ -107,6 +107,18 @@ export const AS_STYLES = `
     margin-bottom: 8px;
   }
 
+  .activity-footer {
+    margin-top: 30px;
+    text-align: center;
+    font-size: 10px;
+    line-height: 1.5;
+    padding-top: 20px;
+  }
+
+  .activity-footer p {
+    margin-bottom: 8px;
+  }
+
   .channel-tag {
     margin-top: 20px;
     padding: 12px;
@@ -511,6 +523,10 @@ export function renderActivityPages(
         <li>This activity statement only shows occasions where you used your membership card whilst playing an electronic gaming machine or electronic table game during the relevant period. The accuracy of the information contained within this statement is dependent upon you using your SkyCity Rewards membership card in a manner as instructed by SkyCity Adelaide.</li>
         <li>The total amount of time your loyalty card was used during the activity period represents the total aggregate time difference between the start and end time of each of your gaming ratings from card-in to card-out. Please note that these figures are estimates and only the minute part will be considered on each individual rating and not the seconds (for example, if time played in relation to a rating is 1 minute and 20 seconds then only 1 minute will be displayed for that rating). If the rating does not have any play (ie, zero bets) then the rating will not be processed and the time will not form part of your statement.</li>
       </ol>
+    </div>
+
+    <div class="activity-footer">
+      <p>SkyCity Adelaide extracts carded data from its approved gaming systems. Whilst reasonable efforts are made to ensure the accuracy of such data, there may be instances where our systems encounter faults or errors. Accordingly, SkyCity Adelaide does not represent or warrant that the figures included in this statement are error-free or completely accurate.</p>
     </div>
 
     </div>

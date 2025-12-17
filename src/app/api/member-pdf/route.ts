@@ -98,7 +98,8 @@ export async function GET(request: NextRequest) {
           [batchId]
         );
         if (sampleRow.length > 0) {
-          const sampleData = JSON.parse(sampleRow[0].data) as { quarterlyData?: any };
+          // Use decryptJson to handle both encrypted and legacy unencrypted data
+          const sampleData = decryptJson<{ quarterlyData?: any }>(sampleRow[0].data);
           if (sampleData.quarterlyData) {
             quarterlyData = sampleData.quarterlyData;
           }

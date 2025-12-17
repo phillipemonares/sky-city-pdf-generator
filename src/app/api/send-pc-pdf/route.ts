@@ -5,6 +5,8 @@ import { generatePreCommitmentPDFHTML } from '@/lib/pc-no-play-pdf-template';
 import { generatePlayPreCommitmentPDFHTML } from '@/lib/pc-play-pdf-template';
 import { PreCommitmentPDFRequest, PreCommitmentPlayer } from '@/types/player-data';
 import { getMemberByAccount } from '@/lib/db';
+import { createEmailTrackingRecord, updateEmailTrackingStatus } from '@/lib/db/email';
+import { normalizeAccount } from '@/lib/pdf-shared';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -105,11 +107,23 @@ export async function POST(request: NextRequest) {
       const statementPeriod = playerData.statementPeriod || 'Current Period';
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
       const pdfFileName = `SkyCity_PreCommitment_Statement_${playerData.playerInfo.playerAccount}_${statementPeriod.replace(/\s+/g, '_')}.pdf`;
+      const subject = `Your SkyCity Pre-Commitment Statement - ${statementPeriod}`;
+      const normalizedAccount = normalizeAccount(playerData.playerInfo.playerAccount);
+
+      // Create email tracking record before sending
+      const trackingId = await createEmailTrackingRecord({
+        recipient_email: memberData.email,
+        recipient_account: normalizedAccount,
+        recipient_name: playerName,
+        email_type: isPlay ? 'play' : 'pre-commitment',
+        batch_id: null,
+        subject: subject,
+      });
 
       const msg = {
         to: memberData.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
-        subject: `Your SkyCity Pre-Commitment Statement - ${statementPeriod}`,
+        subject: subject,
         text: `Dear ${playerName},\n\nPlease find attached your pre-commitment statement for ${statementPeriod}.\n\nThank you for being a valued member of SkyCity.\n\nBest regards,\nSkyCity Team`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -126,11 +140,34 @@ export async function POST(request: NextRequest) {
             type: 'application/pdf',
             disposition: 'attachment'
           }
-        ]
+        ],
+        custom_args: {
+          email_tracking_id: trackingId
+        }
       };
 
       // Send email via SendGrid
-      await sgMail.send(msg);
+      try {
+        const [response] = await sgMail.send(msg);
+        
+        // Extract SendGrid message ID from response headers
+        const messageId = response.headers?.['x-message-id']?.[0] || null;
+        
+        // Update tracking record with sent status
+        await updateEmailTrackingStatus(trackingId, {
+          status: 'sent',
+          sendgrid_message_id: messageId,
+          sent_at: new Date(),
+        });
+      } catch (sendError) {
+        // Update tracking record with failed status
+        const errorMessage = sendError instanceof Error ? sendError.message : 'Failed to send email';
+        await updateEmailTrackingStatus(trackingId, {
+          status: 'failed',
+          error_message: errorMessage,
+        });
+        throw sendError;
+      }
 
       return NextResponse.json({
         success: true,
