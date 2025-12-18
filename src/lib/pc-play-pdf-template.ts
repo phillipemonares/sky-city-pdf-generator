@@ -337,9 +337,18 @@ export function renderPreCommitmentPage(
   const minsNum = minsValue ? Number(minsValue) : NaN;
   const hasMins = !Number.isNaN(minsNum) && minsNum > 0;
   
-  // Build single line format: "10 minutes every hour"
+  // Extract numeric value from hour
+  const hourValue = preCommitment.hour ? String(preCommitment.hour).trim().replace(/,/g, '') : '';
+  const hourNum = hourValue ? Number(hourValue) : NaN;
+  const hasHour = !Number.isNaN(hourNum) && hourNum > 0;
+  
+  // Build single line format: "10 minutes every 3 hours" or "10 minutes every hour"
   if (hasMins) {
-    breakItems.push(`${minsNum} minutes every hour`);
+    if (hasHour && hourNum !== 1) {
+      breakItems.push(`${minsNum} minutes every ${hourNum} hours`);
+    } else {
+      breakItems.push(`${minsNum} minutes every hour`);
+    }
   }
 
   const scheduleItems: string[] = [];

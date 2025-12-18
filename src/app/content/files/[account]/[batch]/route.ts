@@ -182,20 +182,6 @@ export async function GET(
 
     // Extract the target player data
     const accountData = targetAccount.account_data;
-    
-    // Debug logging to check what data we have
-    console.log('Account data retrieved:', {
-      account: accountData.account,
-      hasActivity: !!accountData.activity,
-      hasPreCommitment: !!accountData.preCommitment,
-      hasCashless: !!accountData.cashless,
-      preCommitmentType: typeof accountData.preCommitment,
-      cashlessType: typeof accountData.cashless,
-      preCommitmentKeys: accountData.preCommitment ? Object.keys(accountData.preCommitment) : null,
-      cashlessKeys: accountData.cashless ? Object.keys(accountData.cashless) : null,
-      hasPreCommitmentFlag: targetAccount.has_pre_commitment,
-      hasCashlessFlag: targetAccount.has_cashless,
-    });
 
     // Convert logo to base64
     const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');

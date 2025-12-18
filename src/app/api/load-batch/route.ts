@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
     const batchId = searchParams.get('batchId');
     const page = parseInt(searchParams.get('page') || '1', 10);
     const pageSize = parseInt(searchParams.get('pageSize') || '50', 10);
+    const search = searchParams.get('search')?.trim().toLowerCase() || '';
 
     if (!batchId) {
       return NextResponse.json(
@@ -75,73 +76,149 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // When searching, we need to fetch all records and filter in memory (since data is encrypted)
+    // When not searching, use normal pagination
+    let allMatchedPlayers: any[] = [];
+    let allActivityRows: any[] = [];
+    let allExtractedPreCommitmentPlayers: any[] = [];
+    
+    if (search) {
+      // Fetch all records for this batch to search through
+      const [allRows] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT account_number, data
+         FROM quarterly_user_statements
+         WHERE batch_id = ?
+         ORDER BY account_number`,
+        [batchId]
+      );
+      
+      // Decrypt and filter
+      for (const row of allRows) {
+        const userData = decryptJson<{
+          activity_statement?: any;
+          pre_commitment?: any;
+          cashless_statement?: any;
+        }>(row.data);
+        
+        const account = decrypt(row.account_number || '');
+        const firstName = (userData.activity_statement?.firstName || '').toLowerCase();
+        const lastName = (userData.activity_statement?.lastName || '').toLowerCase();
+        const email = (userData.activity_statement?.email || '').toLowerCase();
+        const fullName = `${firstName} ${lastName}`;
+        
+        // Check if search term matches account, name, or email
+        const matches = 
+          account.toLowerCase().includes(search) ||
+          firstName.includes(search) ||
+          lastName.includes(search) ||
+          fullName.includes(search) ||
+          email.includes(search);
+        
+        if (matches) {
+          const player = {
+            account,
+            activity: userData.activity_statement || undefined,
+            preCommitment: userData.pre_commitment || undefined,
+            cashless: userData.cashless_statement || undefined,
+          };
+          
+          allMatchedPlayers.push(player);
+          
+          if (userData.activity_statement) {
+            allActivityRows.push(userData.activity_statement);
+          }
+          
+          if (preCommitmentPlayers.length === 0 && userData.pre_commitment) {
+            allExtractedPreCommitmentPlayers.push(userData.pre_commitment);
+          }
+        }
+      }
+    }
+    
     // Get total count for pagination
-    const [countRows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT COUNT(*) as total FROM quarterly_user_statements WHERE batch_id = ?`,
-      [batchId]
-    );
-    const totalAccounts = Number(countRows[0]?.total || 0);
+    const totalAccounts = search 
+      ? allMatchedPlayers.length 
+      : Number((await pool.execute<mysql.RowDataPacket[]>(
+          `SELECT COUNT(*) as total FROM quarterly_user_statements WHERE batch_id = ?`,
+          [batchId]
+        ))[0][0]?.total || 0);
+    
     const totalPages = Math.ceil(totalAccounts / pageSize);
     const offset = (page - 1) * pageSize;
 
-    // Query quarterly_user_statements with pagination
-    // Since we have quarterlyData and preCommitmentPlayers from batch metadata,
-    // we only need to extract activity rows and reconstruct annotated players for the current page
-    // Note: LIMIT and OFFSET must be integers - validate and use in SQL string (safe since we validate them)
-    const limitValue = Number(pageSize);
-    const offsetValue = Number(offset);
-    
-    // Validate that limit and offset are valid integers (prevent SQL injection)
-    if (!Number.isInteger(limitValue) || !Number.isInteger(offsetValue) || limitValue < 0 || offsetValue < 0) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid pagination parameters' },
-        { status: 400 }
-      );
-    }
-    
-    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-      `SELECT account_number, data
-       FROM quarterly_user_statements
-       WHERE batch_id = ?
-       ORDER BY account_number
-       LIMIT ${limitValue} OFFSET ${offsetValue}`,
-      [batchId]
-    );
-
-    // Extract data efficiently - only parse JSON for the current page
+    // Extract data efficiently
     const activityRows: any[] = [];
     const extractedPreCommitmentPlayers: any[] = [];
     const annotatedPlayers: any[] = [];
-
-    // Process accounts - optimized single pass, only parse JSON once per record
-    for (const row of rows) {
-      // Decrypt the user data (handles both encrypted and legacy unencrypted data)
-      const userData = decryptJson<{
-        activity_statement?: any;
-        pre_commitment?: any;
-        cashless_statement?: any;
-      }>(row.data);
+    
+    if (search) {
+      // Use the already-filtered results, just paginate
+      const paginatedPlayers = allMatchedPlayers.slice(offset, offset + pageSize);
+      annotatedPlayers.push(...paginatedPlayers);
       
-      // Decrypt account number (handles both encrypted and legacy unencrypted data)
-      const account = decrypt(row.account_number || '');
-      
-      // Build annotated player
-      const player = {
-        account,
-        activity: userData.activity_statement || undefined,
-        preCommitment: userData.pre_commitment || undefined,
-        cashless: userData.cashless_statement || undefined,
-      };
-      
-      annotatedPlayers.push(player);
-      
-      if (userData.activity_statement) {
-        activityRows.push(userData.activity_statement);
+      // Add corresponding activity rows for this page
+      for (const player of paginatedPlayers) {
+        if (player.activity) {
+          activityRows.push(player.activity);
+        }
       }
       
-      // Only extract preCommitment if we don't have it from batch metadata
-      if (preCommitmentPlayers.length === 0 && userData.pre_commitment) {
-        extractedPreCommitmentPlayers.push(userData.pre_commitment);
+      // Use extracted preCommitment if we don't have from batch metadata
+      if (preCommitmentPlayers.length === 0) {
+        extractedPreCommitmentPlayers.push(...allExtractedPreCommitmentPlayers);
+      }
+    } else {
+      // Query quarterly_user_statements with pagination (no search)
+      const limitValue = Number(pageSize);
+      const offsetValue = Number(offset);
+      
+      // Validate that limit and offset are valid integers (prevent SQL injection)
+      if (!Number.isInteger(limitValue) || !Number.isInteger(offsetValue) || limitValue < 0 || offsetValue < 0) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid pagination parameters' },
+          { status: 400 }
+        );
+      }
+      
+      const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT account_number, data
+         FROM quarterly_user_statements
+         WHERE batch_id = ?
+         ORDER BY account_number
+         LIMIT ${limitValue} OFFSET ${offsetValue}`,
+        [batchId]
+      );
+
+      // Process accounts - optimized single pass, only parse JSON once per record
+      for (const row of rows) {
+        // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+        const userData = decryptJson<{
+          activity_statement?: any;
+          pre_commitment?: any;
+          cashless_statement?: any;
+        }>(row.data);
+        
+        // Decrypt account number (handles both encrypted and legacy unencrypted data)
+        const account = decrypt(row.account_number || '');
+        
+        // Build annotated player
+        const player = {
+          account,
+          activity: userData.activity_statement || undefined,
+          preCommitment: userData.pre_commitment || undefined,
+          cashless: userData.cashless_statement || undefined,
+        };
+        
+        annotatedPlayers.push(player);
+        
+        if (userData.activity_statement) {
+          activityRows.push(userData.activity_statement);
+        }
+        
+        // Only extract preCommitment if we don't have it from batch metadata
+        if (preCommitmentPlayers.length === 0 && userData.pre_commitment) {
+          extractedPreCommitmentPlayers.push(userData.pre_commitment);
+        }
       }
     }
 

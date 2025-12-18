@@ -91,6 +91,8 @@ export default function UploadInterface() {
     hasNextPage: boolean;
     hasPreviousPage: boolean;
   } | null>(null);
+  const [batchSearchQuery, setBatchSearchQuery] = useState<string>('');
+  const [searchDebounceTimer, setSearchDebounceTimer] = useState<NodeJS.Timeout | null>(null);
 
   // Use allAnnotatedPlayers if we have them (from loaded batch), otherwise build from uploads
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
@@ -170,12 +172,18 @@ export default function UploadInterface() {
     }
   };
 
-  const loadBatch = async (batchId: string, loadPage: number = 1) => {
+  const loadBatch = async (batchId: string, loadPage: number = 1, searchQuery: string = '') => {
     try {
       setLoadingBatch(batchId);
-      setGenerationStatus(`Loading batch ${batchId}...`);
+      setGenerationStatus(searchQuery ? `Searching batch ${batchId}...` : `Loading batch ${batchId}...`);
       
-      const response = await fetch(`/api/load-batch?batchId=${batchId}&page=${loadPage}&pageSize=${pageSize}`);
+      // If loading a different batch (not just searching/paginating the current one), clear the search
+      if (loadedBatchId !== batchId && !searchQuery) {
+        setBatchSearchQuery('');
+      }
+      
+      const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
+      const response = await fetch(`/api/load-batch?batchId=${batchId}&page=${loadPage}&pageSize=${pageSize}${searchParam}`);
       if (!response.ok) {
         throw new Error('Failed to load batch');
       }
@@ -213,8 +221,9 @@ export default function UploadInterface() {
 
         // For server-side pagination, we use the annotatedPlayers directly from the API
         // instead of rebuilding them from activityRows
-        if (loadPage === 1) {
-          // First page - replace all data
+        // When searching or on first page, replace all data
+        if (loadPage === 1 || searchQuery) {
+          // First page or search - replace all data
           setAllAnnotatedPlayers(data.annotatedPlayers || []);
           if (data.activityRows && data.activityRows.length > 0) {
             setActivityUpload({
@@ -224,7 +233,7 @@ export default function UploadInterface() {
             });
           }
         } else {
-          // Subsequent pages - append to existing data
+          // Subsequent pages (non-search) - append to existing data
           setAllAnnotatedPlayers(prev => [...prev, ...(data.annotatedPlayers || [])]);
           if (data.activityRows && data.activityRows.length > 0) {
             setActivityUpload(prev => prev ? {
@@ -252,7 +261,10 @@ export default function UploadInterface() {
           });
         }
 
-        setGenerationStatus(`Loaded batch: Q${data.batch.quarter} ${data.batch.year} with ${data.batch.total_accounts} accounts (page ${loadPage}/${data.pagination?.totalPages || 1})`);
+        const statusMsg = searchQuery 
+          ? `Found ${data.pagination?.totalAccounts || 0} accounts matching "${searchQuery}" in Q${data.batch.quarter} ${data.batch.year}`
+          : `Loaded batch: Q${data.batch.quarter} ${data.batch.year} with ${data.batch.total_accounts} accounts (page ${loadPage}/${data.pagination?.totalPages || 1})`;
+        setGenerationStatus(statusMsg);
       }
     } catch (error) {
       console.error('Error loading batch:', error);
@@ -264,7 +276,37 @@ export default function UploadInterface() {
 
   // Load more pages when needed
   const loadBatchPage = async (batchId: string, page: number) => {
-    await loadBatch(batchId, page);
+    await loadBatch(batchId, page, batchSearchQuery);
+  };
+
+  // Handle search input with debounce
+  const handleBatchSearch = (query: string) => {
+    setBatchSearchQuery(query);
+    
+    // Clear existing timer
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+    }
+    
+    // Only search if we have a loaded batch
+    if (loadedBatchId) {
+      const timer = setTimeout(() => {
+        // Reset to page 1 when searching
+        setCurrentPage(1);
+        loadBatch(loadedBatchId, 1, query);
+      }, 300); // 300ms debounce
+      
+      setSearchDebounceTimer(timer);
+    }
+  };
+
+  // Clear search and reload all data
+  const clearBatchSearch = () => {
+    setBatchSearchQuery('');
+    if (loadedBatchId) {
+      setCurrentPage(1);
+      loadBatch(loadedBatchId, 1, '');
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -1445,19 +1487,58 @@ export default function UploadInterface() {
         )}
 
         {/* Matched Players */}
-        {annotatedPlayers.length > 0 && (
+        {(annotatedPlayers.length > 0 || (loadedBatchId && batchSearchQuery)) && (
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-4">
               <div>
                 <h2 className="text-xl font-semibold">Matched Accounts</h2>
                 <p className="text-sm text-gray-600">
-                  {totalPages > 1 
-                    ? `Showing ${startIndex + 1} to ${Math.min(endIndex, totalAccounts)} of ${totalAccounts.toLocaleString()} matched accounts (Page ${currentPage} of ${totalPages})`
-                    : `Preview or download individual annotated statements.`
+                  {batchSearchQuery 
+                    ? `Found ${totalAccounts.toLocaleString()} accounts matching "${batchSearchQuery}"`
+                    : totalPages > 1 
+                      ? `Showing ${startIndex + 1} to ${Math.min(endIndex, totalAccounts)} of ${totalAccounts.toLocaleString()} matched accounts (Page ${currentPage} of ${totalPages})`
+                      : `Preview or download individual annotated statements.`
                   }
                 </p>
               </div>
               <div className="flex flex-col md:flex-row items-center gap-3">
+                {/* Server-side search input - only show for loaded batches */}
+                {loadedBatchId && (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Search by account, name, or email..."
+                      value={batchSearchQuery}
+                      onChange={(e) => handleBatchSearch(e.target.value)}
+                      className="px-3 py-2 pl-9 border border-gray-300 rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={loadingBatch !== null}
+                    />
+                    <svg
+                      className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                      />
+                    </svg>
+                    {batchSearchQuery && (
+                      <button
+                        onClick={clearBatchSearch}
+                        className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        disabled={loadingBatch !== null}
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                )}
                 <select
                   value={pageSize}
                   onChange={(e) => {
@@ -1504,6 +1585,19 @@ export default function UploadInterface() {
                   </tr>
                 </thead>
                 <tbody>
+                  {paginatedPlayers.length === 0 && batchSearchQuery && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                        No accounts found matching &quot;{batchSearchQuery}&quot;
+                        <button
+                          onClick={clearBatchSearch}
+                          className="ml-2 text-blue-600 hover:text-blue-800 underline"
+                        >
+                          Clear search
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                   {paginatedPlayers.map(player => {
                     const fullName = [player.activity?.firstName, player.activity?.lastName]
                       .filter(Boolean)

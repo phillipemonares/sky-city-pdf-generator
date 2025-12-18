@@ -219,17 +219,6 @@ export async function getAccountFromBatch(batchId: string, accountNumber: string
     // Decrypt account number (handles both encrypted and legacy unencrypted data)
     const decryptedAccountNumber = decrypt(row.account_number || '');
     
-    // Debug: Log decrypted userData structure
-    console.log(`[getAccountFromBatch] Decrypted userData keys:`, Object.keys(userData || {}));
-    console.log(`[getAccountFromBatch] Decrypted userData values:`, {
-      hasActivityStatement: !!userData?.activity_statement,
-      hasPreCommitment: !!userData?.pre_commitment,
-      hasCashlessStatement: !!userData?.cashless_statement,
-      preCommitmentType: typeof userData?.pre_commitment,
-      cashlessStatementType: typeof userData?.cashless_statement,
-      preCommitmentValue: userData?.pre_commitment,
-      cashlessStatementValue: userData?.cashless_statement,
-    });
     
     // Reconstruct AnnotatedStatementPlayer format for backward compatibility
     // Use != null to check for both null and undefined, preserving actual data objects
@@ -295,3 +284,4 @@ export async function getQuarterlyDataFromBatch(batchId: string): Promise<Quarte
     throw error;
   }
 }
+
