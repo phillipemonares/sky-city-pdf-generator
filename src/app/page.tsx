@@ -470,7 +470,7 @@ export default function UploadInterface() {
         setSaveProgress(100);
         setLoadedBatchId(batchId!);
         setGenerationStatus(
-          `Batch saved successfully! Q${quarterlyData.quarter} ${quarterlyData.year} with ${annotatedPlayers.length} accounts`
+          `Batch saved successfully! Q${finalQuarterlyData.quarter} ${finalQuarterlyData.year} with ${annotatedPlayers.length} accounts`
         );
         loadPreviousBatches();
         
@@ -987,7 +987,8 @@ export default function UploadInterface() {
         const sanitizedAccount = account.replace(/[^a-zA-Z0-9_-]/g, '') || 'member';
         a.download = `Annotated_Statement_${sanitizedAccount}.pdf`;
       } else {
-        a.download = `skycity-quarterly-statements-q${quarterlyData.quarter}-${quarterlyData.year}.pdf`;
+        const fallbackQuarterlyData = quarterlyData || { quarter: 0, year: new Date().getFullYear(), players: [], monthlyBreakdown: [] };
+        a.download = `skycity-quarterly-statements-q${fallbackQuarterlyData.quarter}-${fallbackQuarterlyData.year}.pdf`;
       }
       document.body.appendChild(a);
       a.click();

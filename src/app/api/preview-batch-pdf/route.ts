@@ -6,6 +6,7 @@ import { decryptJson } from '@/lib/encryption';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import mysql from 'mysql2/promise';
+import { QuarterlyData } from '@/types/player-data';
 
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get quarterlyData - try from batch metadata first, then reconstruct if needed
-    let quarterlyData = null;
+    let quarterlyData: QuarterlyData | null = null;
     
     // First, try to get from batch metadata
     try {
@@ -132,39 +133,42 @@ export async function GET(request: NextRequest) {
       console.error('[preview-batch-pdf] No quarterly data found for batch:', batchId);
       // Try to create a minimal quarterlyData structure from batch info
       // This allows preview to work even if quarterlyData wasn't stored properly
+      const formatDateToDDMMYYYY = (date: Date | null): string | null => {
+        if (!date) return null;
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        return `${day}/${month}/${year}`;
+      };
+      
+      const startDateFormatted = batch.start_date ? formatDateToDDMMYYYY(batch.start_date) : null;
+      const endDateFormatted = batch.end_date ? formatDateToDDMMYYYY(batch.end_date) : null;
+      
       quarterlyData = {
         quarter: batch.quarter || 0,
         year: batch.year || new Date().getFullYear(),
         players: [],
         monthlyBreakdown: [],
-      };
-      
-      // Add statementPeriod if batch has start_date and end_date
-      if (batch.start_date && batch.end_date) {
-        const formatDateToDDMMYYYY = (date: Date | null): string | null => {
-          if (!date) return null;
-          const day = String(date.getDate()).padStart(2, '0');
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const year = date.getFullYear();
-          return `${day}/${month}/${year}`;
-        };
-        
-        const startDateFormatted = formatDateToDDMMYYYY(batch.start_date);
-        const endDateFormatted = formatDateToDDMMYYYY(batch.end_date);
-        
-        if (startDateFormatted && endDateFormatted) {
-          quarterlyData.statementPeriod = {
+        ...(startDateFormatted && endDateFormatted ? {
+          statementPeriod: {
             startDate: startDateFormatted,
             endDate: endDateFormatted,
-          };
-        }
-      }
+          }
+        } : {}),
+      };
       
       console.warn('[preview-batch-pdf] Using minimal quarterlyData structure:', {
         quarter: quarterlyData.quarter,
         year: quarterlyData.year,
         hasStatementPeriod: !!quarterlyData.statementPeriod,
       });
+    }
+
+    if (!quarterlyData) {
+      return NextResponse.json(
+        { success: false, error: 'Unable to load quarterly data for batch' },
+        { status: 500 }
+      );
     }
 
     console.log('[preview-batch-pdf] Quarterly data found:', {
