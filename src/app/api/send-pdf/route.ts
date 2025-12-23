@@ -25,19 +25,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!preCommitmentPlayers || preCommitmentPlayers.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No pre-commitment data provided' },
-        { status: 400 }
-      );
-    }
-
-    if (!quarterlyData || quarterlyData.players.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No cashless monthly data provided' },
-        { status: 400 }
-      );
-    }
+    // Pre-commitment and cashless are optional - use empty defaults if not provided
+    const finalPreCommitmentPlayers = preCommitmentPlayers || [];
+    const finalQuarterlyData = quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] };
 
     if (!process.env.SENDGRID_API_KEY) {
       return NextResponse.json(
@@ -46,7 +36,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const annotatedPlayers = buildAnnotatedPlayers(activityRows, preCommitmentPlayers, quarterlyData);
+    const annotatedPlayers = buildAnnotatedPlayers(activityRows, finalPreCommitmentPlayers, finalQuarterlyData);
 
     if (annotatedPlayers.length === 0) {
       return NextResponse.json(
@@ -99,7 +89,7 @@ export async function POST(request: NextRequest) {
       const logoDataUrl = `data:image/png;base64,${logoBase64}`;
       
       // Generate PDF
-      const html = generateAnnotatedHTML(targetPlayer, quarterlyData, logoDataUrl);
+      const html = generateAnnotatedHTML(targetPlayer, finalQuarterlyData, logoDataUrl);
       
       await page.setContent(html, { waitUntil: 'networkidle0' });
       
@@ -126,7 +116,7 @@ export async function POST(request: NextRequest) {
         targetPlayer.activity.lastName
       ].filter(Boolean).join(' ') || 'Member';
 
-      const quarterLabel = `Q${quarterlyData.quarter || 0} ${quarterlyData.year || new Date().getFullYear()}`;
+      const quarterLabel = `Q${finalQuarterlyData.quarter || 0} ${finalQuarterlyData.year || new Date().getFullYear()}`;
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
       const pdfFileName = `SkyCity_Quarterly_Statement_${targetPlayer.account}_${quarterLabel}.pdf`;
       const subject = `Your SkyCity Quarterly Statement - ${quarterLabel}`;

@@ -1126,7 +1126,15 @@ export default function UploadInterface() {
           });
 
           if (!initResponse.ok) {
-            throw new Error('Failed to initialize batch for preview');
+            // Try to read the error message from the response
+            let errorMessage = 'Failed to initialize batch for preview';
+            try {
+              const errorData = await initResponse.json();
+              errorMessage = errorData.error || errorMessage;
+            } catch (e) {
+              errorMessage = initResponse.statusText || errorMessage;
+            }
+            throw new Error(errorMessage);
           }
 
           const initData = await initResponse.json();
@@ -1293,7 +1301,16 @@ export default function UploadInterface() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate PDFs');
+        // Try to read the error message from the response
+        let errorMessage = 'Failed to generate PDFs';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          // If response is not JSON, use the status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       const blob = await response.blob();
@@ -1320,7 +1337,9 @@ export default function UploadInterface() {
       }
     } catch (error) {
       console.error('Error generating PDF:', error);
-      setGenerationStatus(`Error generating ${noun} for ${accountLabel}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setGenerationStatus(`Error generating ${noun} for ${accountLabel}: ${errorMessage}`);
+      alert(`Error generating PDF: ${errorMessage}`);
     } finally {
       setGeneratingAccount(null);
     }
@@ -1366,7 +1385,16 @@ export default function UploadInterface() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to send PDF');
+        // Try to read the error message from the response
+        let errorMessage = 'Failed to send PDF';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch (e) {
+          // If response is not JSON, use the status text
+          errorMessage = response.statusText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -1377,7 +1405,9 @@ export default function UploadInterface() {
       }
     } catch (error) {
       console.error('Error sending PDF:', error);
-      setGenerationStatus(`Error sending PDF for ${accountLabel}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setGenerationStatus(`Error sending PDF for ${accountLabel}: ${errorMessage}`);
+      alert(`Error sending PDF: ${errorMessage}`);
     } finally {
       setSendingAccount(null);
     }

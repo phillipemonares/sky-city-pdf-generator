@@ -19,19 +19,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!preCommitmentPlayers || preCommitmentPlayers.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No pre-commitment data provided' },
-        { status: 400 }
-      );
-    }
-
-    if (!quarterlyData || quarterlyData.players.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No cashless monthly data provided' },
-        { status: 400 }
-      );
-    }
+    // Pre-commitment and cashless are optional - use empty defaults if not provided
+    const finalPreCommitmentPlayers = preCommitmentPlayers || [];
+    const finalQuarterlyData = quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] };
 
     // Save members from activity statement (unique members only)
     try {
@@ -42,7 +32,7 @@ export async function POST(request: NextRequest) {
       // Continue even if member saving fails
     }
 
-    const annotatedPlayers = buildAnnotatedPlayers(activityRows, preCommitmentPlayers, quarterlyData);
+    const annotatedPlayers = buildAnnotatedPlayers(activityRows, finalPreCommitmentPlayers, finalQuarterlyData);
 
     if (annotatedPlayers.length === 0) {
       return NextResponse.json(
@@ -91,7 +81,7 @@ export async function POST(request: NextRequest) {
           console.log(`Cashless data not found for account ${annotatedPlayer.account}, excluding from export`);
         }
         
-        const html = generateAnnotatedHTML(annotatedPlayer, quarterlyData, logoDataUrl);
+        const html = generateAnnotatedHTML(annotatedPlayer, finalQuarterlyData, logoDataUrl);
         
         await page.setContent(html, { waitUntil: 'networkidle0' });
         
@@ -119,10 +109,10 @@ export async function POST(request: NextRequest) {
       if (!requestedAccount && annotatedPlayers.length > 0) {
         try {
           await saveGenerationBatch(
-            quarterlyData.quarter || 0,
-            quarterlyData.year || new Date().getFullYear(),
+            finalQuarterlyData.quarter || 0,
+            finalQuarterlyData.year || new Date().getFullYear(),
             annotatedPlayers,
-            quarterlyData
+            finalQuarterlyData
           );
         } catch (dbError) {
           // Log error but don't fail the PDF generation
