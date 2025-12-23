@@ -685,7 +685,7 @@ export default function NoPlayPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="w-full px-6 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
             Play & No-Play Pre-Commitment Statement Generator

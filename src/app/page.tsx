@@ -9,6 +9,7 @@ import {
   aggregateQuarterlyData,
   validateCSVStructure,
 } from '@/lib/csv-parser';
+import { getQuarterStartDate, getQuarterEndDate } from '@/lib/pdf-shared';
 import {
   parseActivityExcel,
   parseActivityCSV,
@@ -82,6 +83,10 @@ export default function UploadInterface() {
   const [pageSize, setPageSize] = useState<number>(50);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [savingStatementPeriod, setSavingStatementPeriod] = useState<boolean>(false);
+  const [statementPeriodSaved, setStatementPeriodSaved] = useState<boolean>(false);
+  const [batchQuarter, setBatchQuarter] = useState<number | null>(null);
+  const [batchYear, setBatchYear] = useState<number | null>(null);
   const [allAnnotatedPlayers, setAllAnnotatedPlayers] = useState<AnnotatedStatementPlayer[]>([]);
   const [loadedBatchPagination, setLoadedBatchPagination] = useState<{
     page: number;
@@ -156,6 +161,141 @@ export default function UploadInterface() {
     }
   }, [startDate, endDate]);
 
+  // Auto-fill start and end dates from quarter when quarterlyData is set (only if dates not already set)
+  useEffect(() => {
+    const quarter = quarterlyData?.quarter;
+    const year = quarterlyData?.year;
+    
+    // Only auto-fill if we have a valid quarter (not 0) and year, and dates aren't already set
+    if (quarter && quarter > 0 && year && year > 0 && !startDate && !endDate) {
+      // Convert DD/MM/YYYY to YYYY-MM-DD format for date input
+      const formatDateToYYYYMMDD = (dateStr: string): string => {
+        // Convert DD/MM/YYYY to YYYY-MM-DD
+        const [day, month, yearStr] = dateStr.split('/');
+        return `${yearStr}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      };
+      
+      const startDateStr = getQuarterStartDate(quarter, year);
+      const endDateStr = getQuarterEndDate(quarter, year);
+      
+      setStartDate(formatDateToYYYYMMDD(startDateStr));
+      setEndDate(formatDateToYYYYMMDD(endDateStr));
+      console.log(`Auto-filled statement period dates for Q${quarter} ${year}: ${startDateStr} to ${endDateStr}`);
+    }
+  }, [quarterlyData?.quarter, quarterlyData?.year, startDate, endDate]);
+
+  // Load saved statement period when quarterlyData or batch is available (only if dates not already set)
+  useEffect(() => {
+    const loadSavedStatementPeriod = async () => {
+      const quarter = quarterlyData?.quarter || batchQuarter;
+      const year = quarterlyData?.year || batchYear;
+      
+      if (quarter && year && !startDate && !endDate) {
+        try {
+          const response = await fetch(
+            `/api/save-statement-period?quarter=${quarter}&year=${year}`
+          );
+          const data = await response.json();
+          
+          if (data.success && data.statementPeriod) {
+            // Convert DD/MM/YYYY to YYYY-MM-DD format
+            const formatDateToYYYYMMDD = (dateStr: string): string => {
+              // Convert DD/MM/YYYY to YYYY-MM-DD
+              const [day, month, yearStr] = dateStr.split('/');
+              return `${yearStr}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+            };
+            
+            setStartDate(formatDateToYYYYMMDD(data.statementPeriod.startDate));
+            setEndDate(formatDateToYYYYMMDD(data.statementPeriod.endDate));
+            setStatementPeriodSaved(true);
+          }
+        } catch (error) {
+          console.error('Error loading saved statement period:', error);
+        }
+      }
+    };
+
+    loadSavedStatementPeriod();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quarterlyData?.quarter, quarterlyData?.year, batchQuarter, batchYear, startDate, endDate]);
+
+  const saveStatementPeriod = async () => {
+    // Get quarter and year from loaded batch first, then quarterlyData
+    let quarter = batchQuarter || quarterlyData?.quarter;
+    let year = batchYear || quarterlyData?.year;
+
+    // If we have a loaded batch but no quarter/year yet, fetch it from the batch
+    if (loadedBatchId && (!quarter || !year)) {
+      try {
+        const response = await fetch(`/api/load-batch?batchId=${loadedBatchId}&page=1&pageSize=1`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.batch) {
+            quarter = data.batch.quarter;
+            year = data.batch.year;
+            if (quarter !== undefined) setBatchQuarter(quarter);
+            if (year !== undefined) setBatchYear(year);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching batch quarter/year:', error);
+      }
+    }
+
+    // If still no quarter/year, show error
+    if (!quarter || !year) {
+      if (loadedBatchId) {
+        alert('Unable to determine quarter and year from the loaded batch. Please try reloading the batch.');
+      } else {
+        alert('Please load a batch or upload activity statement first to determine quarter and year');
+      }
+      return;
+    }
+
+    if (!startDate || !endDate) {
+      alert('Please enter both start and end dates');
+      return;
+    }
+
+    setSavingStatementPeriod(true);
+    setStatementPeriodSaved(false);
+
+    try {
+      const response = await fetch('/api/save-statement-period', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          quarter,
+          year,
+          startDate,
+          endDate,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setStatementPeriodSaved(true);
+        setTimeout(() => setStatementPeriodSaved(false), 3000); // Hide message after 3 seconds
+        
+        // Show success message indicating batches were updated
+        const message = loadedBatchId 
+          ? 'Statement period saved and existing batches updated successfully!'
+          : 'Statement period saved successfully!';
+        console.log(message);
+      } else {
+        alert(`Failed to save statement period: ${data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error saving statement period:', error);
+      alert('Failed to save statement period. Please try again.');
+    } finally {
+      setSavingStatementPeriod(false);
+    }
+  };
+
   const loadPreviousBatches = async () => {
     try {
       setLoadingBatches(true);
@@ -193,6 +333,12 @@ export default function UploadInterface() {
       if (data.success) {
         // Set the loaded batch ID to prevent duplicate saves
         setLoadedBatchId(batchId);
+        
+        // Store batch quarter and year for statement period saving
+        if (data.batch) {
+          setBatchQuarter(data.batch.quarter);
+          setBatchYear(data.batch.year);
+        }
         
         // For paginated loading, we need to handle data differently
         // Store quarterlyData and preCommitmentPlayers once (they're the same for all pages)
@@ -520,6 +666,8 @@ export default function UploadInterface() {
   const onMonthlyDrop = useCallback((acceptedFiles: File[]) => {
     // Clear loaded batch ID when new files are uploaded
     setLoadedBatchId(null);
+    setBatchQuarter(null);
+    setBatchYear(null);
     
     const csvFiles = acceptedFiles.filter(file => 
       file.type === 'text/csv' || file.name.endsWith('.csv')
@@ -599,9 +747,146 @@ export default function UploadInterface() {
     });
   }, []);
 
+  // Helper function to determine quarter and year from month names
+  const determineQuarterFromMonthNames = (month1Name: string, month2Name: string, month3Name: string): { quarter: number; year: number } | null => {
+    const getMonthNumber = (monthName: string): number | null => {
+      if (!monthName) return null;
+      
+      const normalized = monthName.trim().toLowerCase();
+      
+      // Handle formats like "25-Apr", "Apr-25", "25-April", "April-25", etc.
+      // Split by common delimiters and find the month part
+      const parts = normalized.split(/[-_\/\s]+/);
+      
+      const monthNames = [
+        'january', 'february', 'march', 'april', 'may', 'june',
+        'july', 'august', 'september', 'october', 'november', 'december'
+      ];
+      
+      const monthAbbreviations = [
+        'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+        'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+      ];
+      
+      // Try each part to find the month
+      for (const part of parts) {
+        // Skip if it's clearly a number (day or year)
+        if (/^\d+$/.test(part)) {
+          continue;
+        }
+        
+        // Try full month name match
+        let index = monthNames.findIndex(name => name === part || name.startsWith(part) || part.startsWith(name));
+        
+        // If no match, try abbreviation
+        if (index < 0) {
+          index = monthAbbreviations.findIndex(abbr => abbr === part || part.startsWith(abbr) || abbr.startsWith(part));
+        }
+        
+        if (index >= 0) {
+          return index + 1;
+        }
+      }
+      
+      return null;
+    };
+
+    // Try to get month numbers from the first available month name
+    const month1 = getMonthNumber(month1Name);
+    const month2 = getMonthNumber(month2Name);
+    const month3 = getMonthNumber(month3Name);
+    
+    // Use the first available month to determine quarter
+    const firstMonth = month1 || month2 || month3;
+    
+    if (firstMonth === null) {
+      return null;
+    }
+    
+    // Determine quarter from the first month
+    const quarter = Math.ceil(firstMonth / 3);
+    
+    // Try to extract year from month names (e.g., "apr-25", "25-apr", "Apr-2025", "2025-Apr")
+    let year: number | null = null;
+    const yearPattern = /(\d{2,4})/;
+    
+    for (const monthName of [month1Name, month2Name, month3Name]) {
+      if (monthName) {
+        const normalized = monthName.trim().toLowerCase();
+        const parts = normalized.split(/[-_\/\s]+/);
+        
+        // Look for year in all parts
+        for (const part of parts) {
+          if (/^\d{2,4}$/.test(part)) {
+            const num = parseInt(part, 10);
+            // If it's 2 digits, could be day or year
+            if (part.length === 2) {
+              // If it's > 31, it's likely a year (e.g., "25" could be day, but "99" would be year)
+              // For 2-digit years, assume 20xx if reasonable
+              if (num > 31 || num < 1) {
+                year = 2000 + num;
+              } else {
+                // Could be day, but also check if it makes sense as a year
+                // If we see a pattern like "25-Apr" vs "Apr-25", the position matters
+                // For now, if it's 2 digits and we haven't found a year yet, try it
+                if (year === null && num >= 0 && num <= 99) {
+                  year = 2000 + num;
+                }
+              }
+            } else if (part.length === 4) {
+              // 4-digit year
+              if (num >= 2000 && num <= 2100) {
+                year = num;
+                break; // Found a valid 4-digit year, use it
+              }
+            }
+          }
+        }
+        
+        // Also try regex pattern matching on the whole string
+        if (year === null) {
+          const match = monthName.match(/(\d{4})/); // Look for 4-digit year first
+          if (match) {
+            const yearStr = match[1];
+            const num = parseInt(yearStr, 10);
+            if (num >= 2000 && num <= 2100) {
+              year = num;
+              break;
+            }
+          } else {
+            // Try 2-digit year
+            const match2 = monthName.match(/(?:^|[-_\/\s])(\d{2})(?:[-_\/\s]|$)/);
+            if (match2) {
+              const yearStr = match2[1];
+              const num = parseInt(yearStr, 10);
+              // If it's a reasonable year (not a day), use it
+              if (num > 31 || (num >= 0 && num <= 99)) {
+                year = 2000 + num;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (year && year >= 2000 && year <= 2100) {
+          break;
+        }
+      }
+    }
+    
+    // Default to current year if no year found
+    if (!year) {
+      year = new Date().getFullYear();
+    }
+    
+    return { quarter, year };
+  };
+
   const onActivityDrop = useCallback((acceptedFiles: File[]) => {
     // Clear loaded batch ID when new files are uploaded
     setLoadedBatchId(null);
+    setBatchQuarter(null);
+    setBatchYear(null);
     
     const file = acceptedFiles[0];
     if (!file) {
@@ -625,6 +910,36 @@ export default function UploadInterface() {
           rows,
           errors: [],
         });
+        
+        // Determine quarter and year from month names in the activity statement
+        let quarter = 0;
+        let year = new Date().getFullYear();
+        
+        if (rows.length > 0) {
+          const firstRow = rows[0];
+          const quarterInfo = determineQuarterFromMonthNames(
+            firstRow.month1Name,
+            firstRow.month2Name,
+            firstRow.month3Name
+          );
+          
+          if (quarterInfo) {
+            quarter = quarterInfo.quarter;
+            year = quarterInfo.year;
+            console.log(`Determined quarter from activity statement: Q${quarter} ${year} from months: ${firstRow.month1Name}, ${firstRow.month2Name}, ${firstRow.month3Name}`);
+          } else {
+            console.warn('Could not determine quarter from month names, defaulting to Q0');
+          }
+        }
+        
+        // Set quarterlyData with the determined quarter
+        setQuarterlyData({
+          quarter,
+          year,
+          players: [],
+          monthlyBreakdown: [],
+        });
+        
         setGenerationStatus(`Loaded activity statement for ${rows.length} accounts. Saving members to database...`);
         
         // Automatically save/update members in the database
@@ -673,6 +988,8 @@ export default function UploadInterface() {
   const onPreCommitmentDrop = useCallback((acceptedFiles: File[]) => {
     // Clear loaded batch ID when new files are uploaded
     setLoadedBatchId(null);
+    setBatchQuarter(null);
+    setBatchYear(null);
     
     const file = acceptedFiles[0];
     if (!file) {
@@ -1165,7 +1482,7 @@ export default function UploadInterface() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Navigation />
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="w-full px-6 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
             Quarterly Statements PDF Generator
@@ -1201,219 +1518,239 @@ export default function UploadInterface() {
         {/* Generation Tab */}
         {activeTab === 'generation' && (
           <div>
-            {/* Activity Statement Upload */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h2 className="text-xl font-semibold">Activity Statement (Pages 1-2)</h2>
-              <p className="text-sm text-gray-600">Upload the quarterly activity workbook exported from the template.</p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={downloadActivityTemplate}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-              >
-                📥 Download Template
-              </button>
-              {activityUpload && (
-                <button
-                  onClick={() => {
-                    setActivityUpload(null);
-                    setGenerationStatus('');
-                  }}
-                  className="text-red-600 hover:text-red-800"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div
-            {...getActivityRootProps()}
-            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-              isActivityDragActive
-                ? 'border-blue-400 bg-blue-50'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
-          >
-            <input {...getActivityInputProps()} />
-            <div className="text-gray-600">
-              {isActivityDragActive ? (
-                <p>Drop the activity statement here...</p>
-              ) : (
-                <div>
-                  <p className="text-lg mb-2">Drag & drop the activity workbook, or click to select</p>
-                  <p className="text-sm text-gray-500">
-                    Supports .xlsx or .csv exports that match the Activity Statement template headers.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {activityUpload && (
-            <div className="mt-4">
-              <h3 className="font-medium">{activityUpload.file.name}</h3>
-              <p className="text-sm text-gray-600">Accounts detected: {activityUpload.rows.length}</p>
-              {activityUpload.errors.length > 0 && (
-                <div className="text-red-600 text-sm mt-2">
-                  <p>Errors:</p>
-                  <ul className="list-disc list-inside">
-                    {activityUpload.errors.map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Pre-commitment Upload */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h2 className="text-xl font-semibold">Pre-commitment Template (Pages 3-4)</h2>
-              <p className="text-sm text-gray-600">Upload the pre-commitment workbook with the Session Summary worksheet.</p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={downloadPreCommitmentTemplate}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-              >
-                📥 Download Template
-              </button>
-              {preCommitmentUpload && (
-                <button
-                  onClick={() => {
-                    setPreCommitmentUpload(null);
-                    setGenerationStatus('');
-                  }}
-                  className="text-red-600 hover:text-red-800"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div
-            {...getPreCommitmentRootProps()}
-            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-              isPreCommitmentDragActive
-                ? 'border-blue-400 bg-blue-50'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
-          >
-            <input {...getPreCommitmentInputProps()} />
-            <div className="text-gray-600">
-              {isPreCommitmentDragActive ? (
-                <p>Drop the pre-commitment workbook here...</p>
-              ) : (
-                <div>
-                  <p className="text-lg mb-2">Drag & drop the pre-commitment workbook, or click to select</p>
-                  <p className="text-sm text-gray-500">
-                    Supports .xlsx or .csv exports. Ensure the Session Summary sheet is included.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {preCommitmentUpload && (
-            <div className="mt-4">
-              <h3 className="font-medium">{preCommitmentUpload.file.name}</h3>
-              <p className="text-sm text-gray-600">Accounts detected: {preCommitmentUpload.players.length}</p>
-              {preCommitmentUpload.errors.length > 0 && (
-                <div className="text-red-600 text-sm mt-2">
-                  <p>Errors:</p>
-                  <ul className="list-disc list-inside">
-                    {preCommitmentUpload.errors.map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Monthly Cashless Upload */}
-        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          <div className="flex justify-between items-start mb-4">
-            <h2 className="text-xl font-semibold">Monthly Cashless CSVs (Cashless Pages)</h2>
-            <button
-              onClick={downloadCSVTemplate}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-            >
-              📥 Download Template
-            </button>
-          </div>
-          
-          <div
-            {...getMonthlyRootProps()}
-            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-              isMonthlyDragActive
-                ? 'border-blue-400 bg-blue-50'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
-          >
-            <input {...getMonthlyInputProps()} />
-            <div className="text-gray-600">
-              {isMonthlyDragActive ? (
-                <p>Drop the CSV files here...</p>
-              ) : (
-                <div>
-                  <p className="text-lg mb-2">Drag & drop CSV files here, or click to select</p>
-                  <p className="text-sm text-gray-500">
-                    Upload the three monthly cashless files that make up the quarter.
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Uploaded Files */}
-          {uploadedFiles.length > 0 && (
-            <div className="mt-4">
-              <h3 className="text-sm font-semibold mb-3 text-gray-700">Uploaded Files</h3>
-              <div className="grid grid-cols-3 gap-3">
-                {uploadedFiles.map((fileData, index) => (
-                  <div key={index} className="border rounded-lg p-3 flex flex-col justify-between min-h-[120px]">
-                    <div>
-                      <h4 className="font-medium text-sm mb-1 truncate" title={fileData.file.name}>{fileData.file.name}</h4>
-                      <p className="text-xs text-gray-600">
-                        Month: {fileData.month}, Year: {fileData.year}
-                      </p>
-                      <p className="text-xs text-gray-600">
-                        Players: {fileData.data.length}
-                      </p>
-                      {fileData.errors.length > 0 && (
-                        <div className="text-red-600 text-xs mt-1">
-                          <p>Errors:</p>
-                          <ul className="list-disc list-inside">
-                            {fileData.errors.map((error, i) => (
-                              <li key={i}>{error}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+            {/* Upload Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              {/* Activity Statement Upload */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="mb-4">
+                  <h2 className="text-xl font-semibold mb-2">Activity Statement (Pages 1-2)</h2>
+                  <p className="text-sm text-gray-600 mb-3">Upload the quarterly activity workbook exported from the template.</p>
+                  <div className="flex gap-2 flex-wrap">
+                    <div className="relative group">
+                      <button
+                        onClick={downloadActivityTemplate}
+                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-lg"
+                        aria-label="Download Template"
+                      >
+                        📥
+                      </button>
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                        Download Template
+                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-b-gray-800"></div>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => removeFile(index)}
-                      className="text-red-600 hover:text-red-800 text-xs mt-2 self-start"
-                    >
-                      Remove
-                    </button>
+                    {activityUpload && (
+                      <button
+                        onClick={() => {
+                          setActivityUpload(null);
+                          setGenerationStatus('');
+                        }}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
-                ))}
+                </div>
+
+                <div
+                  {...getActivityRootProps()}
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isActivityDragActive
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  <input {...getActivityInputProps()} />
+                  <div className="text-gray-600">
+                    {isActivityDragActive ? (
+                      <p className="text-sm">Drop the activity statement here...</p>
+                    ) : (
+                      <div>
+                        <p className="text-base mb-1">Drag & drop or click to select</p>
+                        <p className="text-xs text-gray-500">
+                          Supports .xlsx or .csv files
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {activityUpload && (
+                  <div className="mt-4">
+                    <h3 className="font-medium text-sm truncate" title={activityUpload.file.name}>{activityUpload.file.name}</h3>
+                    <p className="text-xs text-gray-600">Accounts: {activityUpload.rows.length}</p>
+                    {activityUpload.errors.length > 0 && (
+                      <div className="text-red-600 text-xs mt-2">
+                        <p>Errors:</p>
+                        <ul className="list-disc list-inside">
+                          {activityUpload.errors.map((error, i) => (
+                            <li key={i}>{error}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Pre-commitment Upload */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="mb-4">
+                  <h2 className="text-xl font-semibold mb-2">Pre-commitment Template (Pages 3-4)</h2>
+                  <p className="text-sm text-gray-600 mb-3">Upload the pre-commitment workbook with the Session Summary worksheet.</p>
+                  <div className="flex gap-2 flex-wrap">
+                    <div className="relative group">
+                      <button
+                        onClick={downloadPreCommitmentTemplate}
+                        className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-lg"
+                        aria-label="Download Template"
+                      >
+                        📥
+                      </button>
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                        Download Template
+                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-b-gray-800"></div>
+                      </div>
+                    </div>
+                    {preCommitmentUpload && (
+                      <button
+                        onClick={() => {
+                          setPreCommitmentUpload(null);
+                          setGenerationStatus('');
+                        }}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  {...getPreCommitmentRootProps()}
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isPreCommitmentDragActive
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  <input {...getPreCommitmentInputProps()} />
+                  <div className="text-gray-600">
+                    {isPreCommitmentDragActive ? (
+                      <p className="text-sm">Drop the pre-commitment workbook here...</p>
+                    ) : (
+                      <div>
+                        <p className="text-base mb-1">Drag & drop or click to select</p>
+                        <p className="text-xs text-gray-500">
+                          Supports .xlsx or .csv files
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {preCommitmentUpload && (
+                  <div className="mt-4">
+                    <h3 className="font-medium text-sm truncate" title={preCommitmentUpload.file.name}>{preCommitmentUpload.file.name}</h3>
+                    <p className="text-xs text-gray-600">Accounts: {preCommitmentUpload.players.length}</p>
+                    {preCommitmentUpload.errors.length > 0 && (
+                      <div className="text-red-600 text-xs mt-2">
+                        <p>Errors:</p>
+                        <ul className="list-disc list-inside">
+                          {preCommitmentUpload.errors.map((error, i) => (
+                            <li key={i}>{error}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Monthly Cashless Upload */}
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <div className="mb-4">
+                  <h2 className="text-xl font-semibold mb-2">Monthly Cashless CSVs (Cashless Pages)</h2>
+                  <p className="text-sm text-gray-600 mb-3">Upload the three monthly cashless files that make up the quarter.</p>
+                  <div className="relative group">
+                    <button
+                      onClick={downloadCSVTemplate}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-lg"
+                      aria-label="Download Template"
+                    >
+                      📥
+                    </button>
+                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-2 py-1 bg-gray-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                      Download Template
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-b-gray-800"></div>
+                    </div>
+                  </div>
+                </div>
+          
+                <div
+                  {...getMonthlyRootProps()}
+                  className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
+                    isMonthlyDragActive
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-gray-300 hover:border-gray-400'
+                  }`}
+                >
+                  <input {...getMonthlyInputProps()} />
+                  <div className="text-gray-600">
+                    {isMonthlyDragActive ? (
+                      <p className="text-sm">Drop the CSV files here...</p>
+                    ) : (
+                      <div>
+                        <p className="text-base mb-1">Drag & drop or click to select</p>
+                        <p className="text-xs text-gray-500">
+                          Supports .csv files
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Uploaded Files */}
+                {uploadedFiles.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-semibold mb-2 text-gray-700">Uploaded Files</h3>
+                    <div className="space-y-2">
+                      {uploadedFiles.map((fileData, index) => (
+                        <div key={index} className="border rounded-lg p-2 flex flex-col">
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-medium text-xs mb-1 truncate" title={fileData.file.name}>{fileData.file.name}</h4>
+                              <p className="text-xs text-gray-600">
+                                {fileData.month}/{fileData.year} • {fileData.data.length} players
+                              </p>
+                              {fileData.errors.length > 0 && (
+                                <div className="text-red-600 text-xs mt-1">
+                                  <p>Errors:</p>
+                                  <ul className="list-disc list-inside">
+                                    {fileData.errors.map((error, i) => (
+                                      <li key={i}>{error}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => removeFile(index)}
+                              className="text-red-600 hover:text-red-800 text-xs ml-2 flex-shrink-0"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Quarterly Data Summary */}
+            {/* Quarterly Data Summary */}
         {quarterlyData && (
           <div className="bg-white rounded-lg shadow-md p-6 mb-8">
             <h2 className="text-xl font-semibold mb-4">Quarterly Summary</h2>
@@ -1439,8 +1776,10 @@ export default function UploadInterface() {
 
         {/* Statement Period Inputs - Always visible */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-          <h2 className="text-xl font-semibold mb-4">Statement Period</h2>
-          <p className="text-sm text-gray-600 mb-4">Enter the start and end dates for the statement period. This will be used in the generated PDFs.</p>
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold mb-2">Statement Period</h2>
+            <p className="text-sm text-gray-600">The start and end dates are automatically set based on the quarter. You can adjust them if needed.</p>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
@@ -1450,7 +1789,10 @@ export default function UploadInterface() {
                 type="date"
                 id="startDate"
                 value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setStatementPeriodSaved(false);
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -1462,7 +1804,10 @@ export default function UploadInterface() {
                 type="date"
                 id="endDate"
                 value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setStatementPeriodSaved(false);
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>

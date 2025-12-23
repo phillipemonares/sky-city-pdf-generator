@@ -143,6 +143,151 @@ export async function saveGenerationBatch(
 }
 
 /**
+ * Save or update statement period for a specific quarter and year
+ * Also updates all existing batches for that quarter/year with the new dates
+ */
+export async function saveStatementPeriod(
+  quarter: number,
+  year: number,
+  startDate: Date,
+  endDate: Date
+): Promise<boolean> {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // Check if statement period already exists
+    const [existing] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT id FROM statement_periods WHERE quarter = ? AND year = ?`,
+      [quarter, year]
+    );
+
+    if (existing.length > 0) {
+      // Update existing
+      await connection.execute(
+        `UPDATE statement_periods 
+         SET start_date = ?, end_date = ?, updated_at = NOW()
+         WHERE quarter = ? AND year = ?`,
+        [startDate, endDate, quarter, year]
+      );
+    } else {
+      // Insert new
+      await connection.execute(
+        `INSERT INTO statement_periods (quarter, year, start_date, end_date, created_at, updated_at)
+         VALUES (?, ?, ?, ?, NOW(), NOW())`,
+        [quarter, year, startDate, endDate]
+      );
+    }
+
+    // Also update all existing batches for this quarter/year with the new dates
+    try {
+      await connection.execute(
+        `UPDATE generation_batches 
+         SET start_date = ?, end_date = ?, updated_at = NOW()
+         WHERE quarter = ? AND year = ?`,
+        [startDate, endDate, quarter, year]
+      );
+    } catch (error: any) {
+      // If start_date/end_date columns don't exist in generation_batches, that's okay
+      // Just log it and continue (some older batches might not have these columns)
+      if (error.code !== 'ER_BAD_FIELD_ERROR') {
+        console.warn('Could not update batches with statement period dates:', error);
+      }
+    }
+
+    await connection.commit();
+    return true;
+  } catch (error: any) {
+    await connection.rollback();
+    
+    // If table doesn't exist, create it and retry
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      try {
+        await connection.execute(`
+          CREATE TABLE IF NOT EXISTS statement_periods (
+            id VARCHAR(36) PRIMARY KEY,
+            quarter INT NOT NULL,
+            year INT NOT NULL,
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_quarter_year (quarter, year)
+          )
+        `);
+        
+        const statementPeriodId = randomUUID();
+        await connection.execute(
+          `INSERT INTO statement_periods (id, quarter, year, start_date, end_date, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, NOW(), NOW())`,
+          [statementPeriodId, quarter, year, startDate, endDate]
+        );
+        
+        // Also update all existing batches for this quarter/year with the new dates
+        try {
+          await connection.execute(
+            `UPDATE generation_batches 
+             SET start_date = ?, end_date = ?, updated_at = NOW()
+             WHERE quarter = ? AND year = ?`,
+            [startDate, endDate, quarter, year]
+          );
+        } catch (error: any) {
+          // If start_date/end_date columns don't exist in generation_batches, that's okay
+          if (error.code !== 'ER_BAD_FIELD_ERROR') {
+            console.warn('Could not update batches with statement period dates:', error);
+          }
+        }
+        
+        await connection.commit();
+        return true;
+      } catch (createError) {
+        await connection.rollback();
+        console.error('Error creating statement_periods table:', createError);
+        throw createError;
+      }
+    }
+    
+    console.error('Error saving statement period:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Get statement period for a specific quarter and year
+ */
+export async function getStatementPeriod(
+  quarter: number,
+  year: number
+): Promise<{ startDate: Date; endDate: Date } | null> {
+  try {
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT start_date, end_date FROM statement_periods 
+       WHERE quarter = ? AND year = ?`,
+      [quarter, year]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return {
+      startDate: new Date(rows[0].start_date),
+      endDate: new Date(rows[0].end_date),
+    };
+  } catch (error: any) {
+    // If table doesn't exist, return null (not an error)
+    if (error.code === 'ER_NO_SUCH_TABLE') {
+      return null;
+    }
+    console.error('Error fetching statement period:', error);
+    throw error;
+  }
+}
+
+/**
  * Get all generation batches, ordered by most recent first
  */
 export async function getAllBatches(): Promise<GenerationBatch[]> {
