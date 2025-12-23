@@ -89,11 +89,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!finalQuarterlyData || !finalPreCommitmentPlayers) {
-      return NextResponse.json(
-        { success: false, error: 'Missing quarterlyData or preCommitmentPlayers. Please send them in the request or ensure batch was initialized with them.' },
-        { status: 400 }
-      );
+    // Make quarterlyData and preCommitmentPlayers optional - use empty defaults if not provided
+    if (!finalQuarterlyData) {
+      finalQuarterlyData = { quarter: 0, year: 0, players: [], monthlyBreakdown: [] };
+      console.warn('[save-batch-chunk] No quarterlyData provided, using empty structure');
+    }
+    
+    if (!finalPreCommitmentPlayers) {
+      finalPreCommitmentPlayers = [];
+      console.warn('[save-batch-chunk] No preCommitmentPlayers provided, using empty array');
     }
 
     await connection.beginTransaction();

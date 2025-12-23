@@ -604,10 +604,41 @@ export async function getNoPlayMembersPaginated(
       };
     });
     
+    // Deduplicate by account_number: keep only unique account numbers
+    // For entries with the same account number, keep the one with the most recent batch
+    // Also include entries with empty/null account numbers
+    const accountNumberMap = new Map<string, NoPlayMemberWithBatch>();
+    const emptyAccountMembers: NoPlayMemberWithBatch[] = [];
+    
+    for (const member of allMembers) {
+      const accountNum = (member.account_number || '').trim();
+      
+      if (!accountNum) {
+        // Keep all entries without account numbers
+        emptyAccountMembers.push(member);
+      } else {
+        // For entries with account numbers, keep only one per unique account
+        const existing = accountNumberMap.get(accountNum);
+        if (!existing) {
+          accountNumberMap.set(accountNum, member);
+        } else {
+          // If duplicate, keep the one with the most recent batch
+          const existingDate = existing.latest_no_play_generation_date;
+          const currentDate = member.latest_no_play_generation_date;
+          if (currentDate && (!existingDate || currentDate > existingDate)) {
+            accountNumberMap.set(accountNum, member);
+          }
+        }
+      }
+    }
+    
+    // Combine unique account numbers with empty account number entries
+    const uniqueMembers = [...Array.from(accountNumberMap.values()), ...emptyAccountMembers];
+    
     // Filter by search term (search on decrypted data)
-    let filteredMembers = allMembers;
+    let filteredMembers = uniqueMembers;
     if (searchTerm) {
-      filteredMembers = allMembers.filter(m => 
+      filteredMembers = uniqueMembers.filter(m => 
         m.account_number?.toLowerCase().includes(searchTerm) ||
         m.first_name?.toLowerCase().includes(searchTerm) ||
         m.last_name?.toLowerCase().includes(searchTerm) ||
@@ -715,10 +746,41 @@ export async function getPlayMembersPaginated(
       };
     });
     
+    // Deduplicate by account_number: keep only unique account numbers
+    // For entries with the same account number, keep the one with the most recent batch
+    // Also include entries with empty/null account numbers
+    const accountNumberMap = new Map<string, PlayMemberWithBatch>();
+    const emptyAccountMembers: PlayMemberWithBatch[] = [];
+    
+    for (const member of allMembers) {
+      const accountNum = (member.account_number || '').trim();
+      
+      if (!accountNum) {
+        // Keep all entries without account numbers
+        emptyAccountMembers.push(member);
+      } else {
+        // For entries with account numbers, keep only one per unique account
+        const existing = accountNumberMap.get(accountNum);
+        if (!existing) {
+          accountNumberMap.set(accountNum, member);
+        } else {
+          // If duplicate, keep the one with the most recent batch
+          const existingDate = existing.latest_play_generation_date;
+          const currentDate = member.latest_play_generation_date;
+          if (currentDate && (!existingDate || currentDate > existingDate)) {
+            accountNumberMap.set(accountNum, member);
+          }
+        }
+      }
+    }
+    
+    // Combine unique account numbers with empty account number entries
+    const uniqueMembers = [...Array.from(accountNumberMap.values()), ...emptyAccountMembers];
+    
     // Filter by search term (search on decrypted data)
-    let filteredMembers = allMembers;
+    let filteredMembers = uniqueMembers;
     if (searchTerm) {
-      filteredMembers = allMembers.filter(m => 
+      filteredMembers = uniqueMembers.filter(m => 
         m.account_number?.toLowerCase().includes(searchTerm) ||
         m.first_name?.toLowerCase().includes(searchTerm) ||
         m.last_name?.toLowerCase().includes(searchTerm) ||
@@ -1171,10 +1233,41 @@ export async function getMembersPaginated(
       };
     });
     
+    // Deduplicate by account_number: keep only unique account numbers
+    // For entries with the same account number, keep the one with the most recent batch
+    // Also include entries with empty/null account numbers
+    const accountNumberMap = new Map<string, MemberWithBatch>();
+    const emptyAccountMembers: MemberWithBatch[] = [];
+    
+    for (const member of allMembers) {
+      const accountNum = (member.account_number || '').trim();
+      
+      if (!accountNum) {
+        // Keep all entries without account numbers
+        emptyAccountMembers.push(member);
+      } else {
+        // For entries with account numbers, keep only one per unique account
+        const existing = accountNumberMap.get(accountNum);
+        if (!existing) {
+          accountNumberMap.set(accountNum, member);
+        } else {
+          // If duplicate, keep the one with the most recent batch
+          const existingDate = existing.latest_generation_date;
+          const currentDate = member.latest_generation_date;
+          if (currentDate && (!existingDate || currentDate > existingDate)) {
+            accountNumberMap.set(accountNum, member);
+          }
+        }
+      }
+    }
+    
+    // Combine unique account numbers with empty account number entries
+    const uniqueMembers = [...Array.from(accountNumberMap.values()), ...emptyAccountMembers];
+    
     // Filter by search term (search on decrypted data)
-    let filteredMembers = allMembers;
+    let filteredMembers = uniqueMembers;
     if (searchTerm) {
-      filteredMembers = allMembers.filter(m => 
+      filteredMembers = uniqueMembers.filter(m => 
         m.account_number?.toLowerCase().includes(searchTerm) ||
         m.title?.toLowerCase().includes(searchTerm) ||
         m.first_name?.toLowerCase().includes(searchTerm) ||

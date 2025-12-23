@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const annotatedPlayers = buildAnnotatedPlayers(activityRows, preCommitmentPlayers, quarterlyData);
+    const annotatedPlayers = buildAnnotatedPlayers(activityRows, finalPreCommitmentPlayers, finalQuarterlyData);
 
     if (annotatedPlayers.length === 0) {
       return NextResponse.json(
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       const logoDataUrl = `data:image/png;base64,${logoBase64}`;
       
       // Generate PDF
-      const html = generateAnnotatedHTML(targetPlayer, quarterlyData, logoDataUrl);
+      const html = generateAnnotatedHTML(targetPlayer, finalQuarterlyData, logoDataUrl);
       
       await page.setContent(html, { waitUntil: 'networkidle0' });
       
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
         targetPlayer.activity.lastName
       ].filter(Boolean).join(' ') || 'Member';
 
-      const quarterLabel = `Q${quarterlyData.quarter} ${quarterlyData.year}`;
+      const quarterLabel = `Q${finalQuarterlyData.quarter || 0} ${finalQuarterlyData.year || new Date().getFullYear()}`;
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
       const pdfFileName = `SkyCity_Quarterly_Statement_${targetPlayer.account}_${quarterLabel}.pdf`;
       const subject = `Your SkyCity Quarterly Statement - ${quarterLabel}`;

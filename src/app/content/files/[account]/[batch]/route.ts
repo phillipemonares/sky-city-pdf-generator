@@ -133,10 +133,17 @@ export async function GET(
     }
     
     if (!quarterlyData) {
-      return NextResponse.json(
-        { success: false, error: 'No quarterly data found in batch' },
-        { status: 400 }
-      );
+      console.error('[content/files] No quarterly data found for batch:', batchId);
+      // Create a minimal quarterlyData structure from batch info
+      // This allows preview to work even if quarterlyData wasn't stored properly
+      quarterlyData = {
+        quarter: batch.quarter || 0,
+        year: batch.year || new Date().getFullYear(),
+        players: [],
+        monthlyBreakdown: [],
+      };
+      
+      console.warn('[content/files] Using minimal quarterlyData structure');
     }
 
     // Format dates from batch to DD/MM/YYYY format for statementPeriod
@@ -149,7 +156,8 @@ export async function GET(
     };
 
     // If batch has start_date and end_date, use them to populate quarterlyData.statementPeriod
-    if (batch.start_date && batch.end_date) {
+    // This ensures statementPeriod is set even if quarterlyData was minimal
+    if (batch.start_date && batch.end_date && quarterlyData) {
       const startDateFormatted = formatDateToDDMMYYYY(batch.start_date);
       const endDateFormatted = formatDateToDDMMYYYY(batch.end_date);
       
@@ -162,6 +170,15 @@ export async function GET(
           },
         };
       }
+    }
+    
+    // Ensure quarterlyData has quarter and year from batch if still missing
+    if (quarterlyData && (quarterlyData.quarter === undefined || quarterlyData.year === undefined)) {
+      quarterlyData = {
+        ...quarterlyData,
+        quarter: batch.quarter || 0,
+        year: batch.year || new Date().getFullYear(),
+      };
     }
 
     // Get the specific account data (optimized single query)

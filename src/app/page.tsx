@@ -102,14 +102,15 @@ export default function UploadInterface() {
     }
 
     // Otherwise, build from uploaded files (normal flow)
-    if (!activityUpload || !preCommitmentUpload || !quarterlyData) {
+    // Only activity statement is required; preCommitment and cashless are optional
+    if (!activityUpload) {
       return [];
     }
 
     return buildAnnotatedPlayers(
       activityUpload.rows,
-      preCommitmentUpload.players,
-      quarterlyData
+      preCommitmentUpload?.players || [],
+      quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] }
     );
   }, [allAnnotatedPlayers, loadedBatchId, activityUpload, preCommitmentUpload, quarterlyData]);
 
@@ -332,15 +333,7 @@ export default function UploadInterface() {
       return;
     }
 
-    if (!preCommitmentUpload || preCommitmentUpload.players.length === 0) {
-      alert('Upload the pre-commitment workbook before saving');
-      return;
-    }
-
-    if (!quarterlyData || quarterlyData.players.length === 0) {
-      alert('Upload the three monthly cashless CSV files before saving');
-      return;
-    }
+    // Pre-commitment and cashless are optional - proceed without confirmation
 
     if (annotatedPlayers.length === 0) {
       alert('No matched accounts to save');
@@ -360,9 +353,15 @@ export default function UploadInterface() {
       // First, create the batch and get batchId
       // Send quarterlyData and preCommitmentPlayers once during init to avoid sending with every chunk
       
-      // Validate that quarterlyData has required fields before sending
-      if (!quarterlyData || quarterlyData.quarter === undefined || quarterlyData.year === undefined) {
-        throw new Error('Quarterly data is missing quarter or year information. Please re-upload the CSV files.');
+      // Use defaults if quarterlyData is missing - ensure quarter and year are always set
+      const finalQuarterlyData = quarterlyData || { quarter: 0, year: new Date().getFullYear(), players: [], monthlyBreakdown: [] };
+      
+      // Ensure quarter and year are set even if quarterlyData exists but has undefined values
+      if (!finalQuarterlyData.quarter && finalQuarterlyData.quarter !== 0) {
+        finalQuarterlyData.quarter = 0;
+      }
+      if (!finalQuarterlyData.year && finalQuarterlyData.year !== 0) {
+        finalQuarterlyData.year = new Date().getFullYear();
       }
 
       const initResponse = await fetch('/api/save-batch-init', {
@@ -371,11 +370,11 @@ export default function UploadInterface() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          quarter: quarterlyData.quarter,
-          year: quarterlyData.year,
+          quarter: finalQuarterlyData.quarter || 0,
+          year: finalQuarterlyData.year || new Date().getFullYear(),
           totalAccounts: annotatedPlayers.length,
-          quarterlyData,
-          preCommitmentPlayers: preCommitmentUpload.players,
+          quarterlyData: finalQuarterlyData,
+          preCommitmentPlayers: preCommitmentUpload?.players || [],
           startDate: startDate || null,
           endDate: endDate || null,
         }),
@@ -387,6 +386,12 @@ export default function UploadInterface() {
           ? `${errorData.error}${errorData.details ? `: ${JSON.stringify(errorData.details)}` : ''}`
           : 'Failed to initialize batch';
         console.error('Batch init error:', errorData);
+        console.error('Request payload:', {
+          quarter: finalQuarterlyData.quarter || 0,
+          year: finalQuarterlyData.year || new Date().getFullYear(),
+          totalAccounts: annotatedPlayers.length,
+          hasQuarterlyData: !!finalQuarterlyData,
+        });
         throw new Error(errorMessage);
       }
 
@@ -423,8 +428,8 @@ export default function UploadInterface() {
           body: JSON.stringify({
             batchId,
             activityRows: chunk,
-            preCommitmentPlayers: preCommitmentUpload.players,
-            quarterlyData,
+            preCommitmentPlayers: preCommitmentUpload?.players || [],
+            quarterlyData: quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] },
             chunkIndex: Math.floor(i / chunkSize),
             isLastChunk: i + chunkSize >= totalRows,
           }),
@@ -738,14 +743,13 @@ export default function UploadInterface() {
       return;
     }
 
+    // Pre-commitment and cashless are optional - proceed with just activity statement if needed
     if (!preCommitmentUpload || preCommitmentUpload.players.length === 0) {
-      alert('Upload the pre-commitment workbook before generating a preview');
-      return;
+      console.warn('No pre-commitment data - preview will only show activity statements');
     }
 
     if (!quarterlyData || quarterlyData.players.length === 0) {
-      alert('Upload the three monthly cashless CSV files before generating a preview');
-      return;
+      console.warn('No cashless statement data - preview will only show activity statements');
     }
 
     if (!startDate || !endDate) {
@@ -787,17 +791,18 @@ export default function UploadInterface() {
           await new Promise(resolve => setTimeout(resolve, 300));
           
           setGenerationStatus(`Initializing batch for preview...`);
+          const finalQuarterlyData = quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] };
           const initResponse = await fetch('/api/save-batch-init', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              quarter: quarterlyData.quarter,
-              year: quarterlyData.year,
+              quarter: finalQuarterlyData.quarter || 0,
+              year: finalQuarterlyData.year || new Date().getFullYear(),
               totalAccounts: annotatedPlayers.length,
-              quarterlyData,
-              preCommitmentPlayers: preCommitmentUpload.players,
+              quarterlyData: finalQuarterlyData,
+              preCommitmentPlayers: preCommitmentUpload?.players || [],
               startDate: startDate || null,
               endDate: endDate || null,
             }),
@@ -832,8 +837,8 @@ export default function UploadInterface() {
               body: JSON.stringify({
                 batchId,
                 activityRows: chunk,
-                preCommitmentPlayers: preCommitmentUpload.players,
-                quarterlyData,
+                preCommitmentPlayers: preCommitmentUpload?.players || [],
+                quarterlyData: quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] },
                 chunkIndex: Math.floor(i / chunkSize),
                 isLastChunk: i + chunkSize >= totalRows,
               }),
@@ -939,15 +944,7 @@ export default function UploadInterface() {
       return;
     }
 
-    if (!preCommitmentUpload || preCommitmentUpload.players.length === 0) {
-      alert('Upload the pre-commitment workbook before generating PDFs');
-      return;
-    }
-
-    if (!quarterlyData || quarterlyData.players.length === 0) {
-      alert('Upload the three monthly cashless CSV files before generating PDFs');
-      return;
-    }
+    // Pre-commitment and cashless are optional - proceed without confirmation
 
     if (!startDate || !endDate) {
       alert('Please set both start and end dates for the statement period before generating PDFs');
@@ -972,8 +969,8 @@ export default function UploadInterface() {
         },
         body: JSON.stringify({
           activityRows: activityUpload.rows,
-          preCommitmentPlayers: preCommitmentUpload.players,
-          quarterlyData,
+          preCommitmentPlayers: preCommitmentUpload?.players || [],
+          quarterlyData: quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] },
           account,
         }),
       });
@@ -1017,15 +1014,7 @@ export default function UploadInterface() {
       return;
     }
 
-    if (!preCommitmentUpload || preCommitmentUpload.players.length === 0) {
-      alert('Upload the pre-commitment workbook before sending PDFs');
-      return;
-    }
-
-    if (!quarterlyData || quarterlyData.players.length === 0) {
-      alert('Upload the three monthly cashless CSV files before sending PDFs');
-      return;
-    }
+    // Pre-commitment and cashless are optional - proceed without confirmation
 
     const targetAccount = account ?? annotatedPlayers[0]?.account ?? 'ALL';
     const targetPlayer = annotatedPlayers.find(p => p.account === targetAccount);
@@ -1052,8 +1041,8 @@ export default function UploadInterface() {
         },
         body: JSON.stringify({
           activityRows: activityUpload.rows,
-          preCommitmentPlayers: preCommitmentUpload.players,
-          quarterlyData,
+          preCommitmentPlayers: preCommitmentUpload?.players || [],
+          quarterlyData: quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] },
           account,
         }),
       });
@@ -1207,21 +1196,6 @@ export default function UploadInterface() {
             </nav>
           </div>
         </div>
-
-        {/* Generation Status */}
-        {generationStatus && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8">
-            <p className="text-sm text-blue-800 mb-2">{generationStatus}</p>
-            {savingBatch && saveProgress > 0 && (
-              <div className="w-full bg-blue-200 rounded-full h-2.5 mt-2">
-                <div
-                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${saveProgress}%` }}
-                ></div>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Generation Tab */}
         {activeTab === 'generation' && (
@@ -1452,51 +1426,74 @@ export default function UploadInterface() {
                 <p className="text-lg font-medium">{annotatedPlayers.length}</p>
               </div>
             </div>
-
-            {/* Statement Period Inputs */}
-            <div className="border-t pt-4">
-              <h3 className="text-lg font-semibold mb-4">Statement Period</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
-                    Start Date
-                  </label>
-                  <input
-                    type="date"
-                    id="startDate"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
-                    End Date
-                  </label>
-                  <input
-                    type="date"
-                    id="endDate"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+            {quarterlyData.statementPeriod && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm text-blue-800">
+                  <strong>Statement Period:</strong> {quarterlyData.statementPeriod.startDate} – {quarterlyData.statementPeriod.endDate}
+                </p>
               </div>
-              {quarterlyData.statementPeriod && (
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Statement Period:</strong> {quarterlyData.statementPeriod.startDate} – {quarterlyData.statementPeriod.endDate}
-                  </p>
-                </div>
-              )}
-              {(!startDate || !endDate) && (
-                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm text-yellow-800">
-                    ⚠ Please set both start and end dates for the statement period
-                  </p>
-                </div>
-              )}
+            )}
+          </div>
+        )}
+
+        {/* Statement Period Inputs - Always visible */}
+        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-4">Statement Period</h2>
+          <p className="text-sm text-gray-600 mb-4">Enter the start and end dates for the statement period. This will be used in the generated PDFs.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-2">
+                Start Date
+              </label>
+              <input
+                type="date"
+                id="startDate"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
+            <div>
+              <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-2">
+                End Date
+              </label>
+              <input
+                type="date"
+                id="endDate"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+          {startDate && endDate && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-800">
+                <strong>Statement Period:</strong> {new Date(startDate).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' })} – {new Date(endDate).toLocaleDateString('en-AU', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+              </p>
+            </div>
+          )}
+          {(!startDate || !endDate) && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800">
+                ⚠ Please set both start and end dates for the statement period
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Generation Status - Moved below Statement Period */}
+        {generationStatus && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-8">
+            <p className="text-sm text-blue-800 mb-2">{generationStatus}</p>
+            {savingBatch && saveProgress > 0 && (
+              <div className="w-full bg-blue-200 rounded-full h-2.5 mt-2">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${saveProgress}%` }}
+                ></div>
+              </div>
+            )}
           </div>
         )}
 

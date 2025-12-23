@@ -35,6 +35,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Log the request parameters for debugging
+    console.log('[preview-batch-pdf] Request params:', { batchId, account });
+
     // Get batch metadata
     const batch = await getBatchById(batchId);
     if (!batch) {
@@ -126,11 +129,50 @@ export async function GET(request: NextRequest) {
     }
     
     if (!quarterlyData) {
-      return NextResponse.json(
-        { success: false, error: 'No quarterly data found in batch' },
-        { status: 400 }
-      );
+      console.error('[preview-batch-pdf] No quarterly data found for batch:', batchId);
+      // Try to create a minimal quarterlyData structure from batch info
+      // This allows preview to work even if quarterlyData wasn't stored properly
+      quarterlyData = {
+        quarter: batch.quarter || 0,
+        year: batch.year || new Date().getFullYear(),
+        players: [],
+        monthlyBreakdown: [],
+      };
+      
+      // Add statementPeriod if batch has start_date and end_date
+      if (batch.start_date && batch.end_date) {
+        const formatDateToDDMMYYYY = (date: Date | null): string | null => {
+          if (!date) return null;
+          const day = String(date.getDate()).padStart(2, '0');
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const year = date.getFullYear();
+          return `${day}/${month}/${year}`;
+        };
+        
+        const startDateFormatted = formatDateToDDMMYYYY(batch.start_date);
+        const endDateFormatted = formatDateToDDMMYYYY(batch.end_date);
+        
+        if (startDateFormatted && endDateFormatted) {
+          quarterlyData.statementPeriod = {
+            startDate: startDateFormatted,
+            endDate: endDateFormatted,
+          };
+        }
+      }
+      
+      console.warn('[preview-batch-pdf] Using minimal quarterlyData structure:', {
+        quarter: quarterlyData.quarter,
+        year: quarterlyData.year,
+        hasStatementPeriod: !!quarterlyData.statementPeriod,
+      });
     }
+
+    console.log('[preview-batch-pdf] Quarterly data found:', {
+      hasQuarterlyData: !!quarterlyData,
+      quarter: quarterlyData.quarter,
+      year: quarterlyData.year,
+      playersCount: quarterlyData.players?.length || 0,
+    });
 
     // Format dates from batch to DD/MM/YYYY format for statementPeriod
     const formatDateToDDMMYYYY = (date: Date | null): string | null => {
@@ -160,7 +202,15 @@ export async function GET(request: NextRequest) {
     // Determine target account
     let targetAccountNumber: string;
     if (account) {
-      targetAccountNumber = normalizeAccount(account);
+      // Handle account format that might include colon (e.g., "105101445:1")
+      // Extract just the account number part before the colon
+      const accountPart = account.split(':')[0];
+      targetAccountNumber = normalizeAccount(accountPart);
+      console.log('[preview-batch-pdf] Account lookup:', {
+        originalAccount: account,
+        accountPart,
+        normalizedAccount: targetAccountNumber,
+      });
     } else {
       // If no specific account requested, we need to get any account from the batch
       // For efficiency, we'll use the quarterly data query result's account
@@ -171,17 +221,46 @@ export async function GET(request: NextRequest) {
     }
 
     // Get the specific account data (optimized single query)
-    const matchedAccount = await getAccountFromBatch(batchId, targetAccountNumber);
+    // Try with normalized account first, then try with original account part
+    let matchedAccount = await getAccountFromBatch(batchId, targetAccountNumber);
+    
+    // If not found, try with the original account part (before normalization)
+    if (!matchedAccount && account) {
+      const accountPart = account.split(':')[0];
+      matchedAccount = await getAccountFromBatch(batchId, accountPart);
+    }
     
     if (!matchedAccount) {
+      console.error('[preview-batch-pdf] Account not found:', {
+        batchId,
+        requestedAccount: account,
+        normalizedAccount: targetAccountNumber,
+      });
       return NextResponse.json(
         { success: false, error: 'Requested account was not found in the batch' },
         { status: 404 }
       );
     }
 
+    console.log('[preview-batch-pdf] Account found:', {
+      account: matchedAccount.account_number,
+      hasActivity: matchedAccount.has_activity,
+      hasPreCommitment: matchedAccount.has_pre_commitment,
+      hasCashless: matchedAccount.has_cashless,
+    });
+
     // Extract the target player data
     const targetPlayer = matchedAccount.account_data;
+    
+    // Log what data we have for the preview
+    console.log('[preview-batch-pdf] Target player data:', {
+      account: targetPlayer.account,
+      hasActivity: !!targetPlayer.activity,
+      hasPreCommitment: !!targetPlayer.preCommitment,
+      hasCashless: !!targetPlayer.cashless,
+      preCommitmentKeys: targetPlayer.preCommitment ? Object.keys(targetPlayer.preCommitment) : null,
+      cashlessKeys: targetPlayer.cashless ? Object.keys(targetPlayer.cashless) : null,
+    });
 
     // Convert logos to base64
     const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');
@@ -243,9 +322,14 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error generating preview from batch:', error);
+    console.error('[preview-batch-pdf] Error generating preview:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { success: false, error: 'Failed to generate preview from batch' },
+      { 
+        success: false, 
+        error: 'Failed to generate preview from batch',
+        details: errorMessage 
+      },
       { status: 500 }
     );
   }

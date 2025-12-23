@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Validate required fields - check for undefined/null specifically, not falsy values
     // Also allow getting quarter/year from quarterlyData if not directly provided
+    // Use defaults if not provided (0 for quarter, current year for year)
     let quarterValue = quarter;
     let yearValue = year;
     
@@ -41,22 +42,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (quarterValue === undefined || quarterValue === null || yearValue === undefined || yearValue === null || totalAccounts === undefined || totalAccounts === null) {
-      console.error('Missing required fields:', { 
-        quarter: quarterValue, 
-        year: yearValue, 
-        totalAccounts,
-        hasQuarterlyData: !!quarterlyData,
-        quarterlyDataQuarter: quarterlyData?.quarter,
-        quarterlyDataYear: quarterlyData?.year
-      });
+    // Use defaults if still not set
+    if (quarterValue === undefined || quarterValue === null) {
+      quarterValue = 0;
+    }
+    if (yearValue === undefined || yearValue === null) {
+      yearValue = new Date().getFullYear();
+    }
+
+    // Only totalAccounts is truly required
+    if (totalAccounts === undefined || totalAccounts === null) {
+      console.error('Missing required field: totalAccounts');
       return NextResponse.json(
         { 
           success: false, 
-          error: 'Missing required fields: quarter, year, totalAccounts',
+          error: 'Missing required field: totalAccounts',
           details: {
-            received: { quarter: quarterValue, year: yearValue, totalAccounts },
-            quarterlyData: quarterlyData ? { quarter: quarterlyData.quarter, year: quarterlyData.year } : null
+            received: { quarter: quarterValue, year: yearValue, totalAccounts }
           }
         },
         { status: 400 }

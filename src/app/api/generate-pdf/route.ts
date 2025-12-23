@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       // Continue even if member saving fails
     }
 
-    const annotatedPlayers = buildAnnotatedPlayers(activityRows, preCommitmentPlayers, quarterlyData);
+    const annotatedPlayers = buildAnnotatedPlayers(activityRows, finalPreCommitmentPlayers, finalQuarterlyData);
 
     if (annotatedPlayers.length === 0) {
       return NextResponse.json(
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
           console.log(`Cashless data not found for account ${annotatedPlayer.account}, excluding from export`);
         }
         
-        const html = generateAnnotatedHTML(annotatedPlayer, quarterlyData, logoDataUrl);
+        const html = generateAnnotatedHTML(annotatedPlayer, finalQuarterlyData, logoDataUrl);
         
         await page.setContent(html, { waitUntil: 'networkidle0' });
         
@@ -119,10 +119,10 @@ export async function POST(request: NextRequest) {
       if (!requestedAccount && annotatedPlayers.length > 0) {
         try {
           await saveGenerationBatch(
-            quarterlyData.quarter,
-            quarterlyData.year,
+            finalQuarterlyData.quarter || 0,
+            finalQuarterlyData.year || new Date().getFullYear(),
             annotatedPlayers,
-            quarterlyData
+            finalQuarterlyData
           );
         } catch (dbError) {
           // Log error but don't fail the PDF generation

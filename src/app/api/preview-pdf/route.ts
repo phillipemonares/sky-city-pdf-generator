@@ -26,21 +26,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!preCommitmentPlayers || preCommitmentPlayers.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No pre-commitment data provided' },
-        { status: 400 }
-      );
-    }
+    // Pre-commitment and cashless are optional - use empty defaults if not provided
+    const finalPreCommitmentPlayers = preCommitmentPlayers || [];
+    const finalQuarterlyData = quarterlyData || { quarter: 0, year: 0, players: [], monthlyBreakdown: [] };
 
-    if (!quarterlyData || quarterlyData.players.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'No cashless monthly data provided' },
-        { status: 400 }
-      );
-    }
-
-    const annotatedPlayers = buildAnnotatedPlayers(activityRows, preCommitmentPlayers, quarterlyData);
+    const annotatedPlayers = buildAnnotatedPlayers(activityRows, finalPreCommitmentPlayers, finalQuarterlyData);
 
     if (annotatedPlayers.length === 0) {
       return NextResponse.json(
@@ -79,7 +69,7 @@ export async function POST(request: NextRequest) {
     const playHeaderBase64 = playHeaderBuffer.toString('base64');
     const playHeaderDataUrl = `data:image/png;base64,${playHeaderBase64}`;
 
-    const html = generateAnnotatedHTML(targetPlayer, quarterlyData, logoDataUrl, playHeaderDataUrl);
+    const html = generateAnnotatedHTML(targetPlayer, finalQuarterlyData, logoDataUrl, playHeaderDataUrl);
 
     // Add print button to the HTML
     const htmlWithPrintButton = html.replace(
