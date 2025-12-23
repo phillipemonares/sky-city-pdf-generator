@@ -67,6 +67,15 @@ export async function GET(request: NextRequest) {
         const metadata = JSON.parse(batchRows[0].quarterly_data);
         quarterlyData = metadata.quarterlyData || null;
         preCommitmentPlayers = metadata.preCommitmentPlayers || [];
+        
+        // Ensure quarterlyData has quarter and year from batch if missing
+        if (quarterlyData && (quarterlyData.quarter === undefined || quarterlyData.year === undefined)) {
+          quarterlyData = {
+            ...quarterlyData,
+            quarter: batch.quarter,
+            year: batch.year,
+          };
+        }
       }
     } catch (error: any) {
       // Column might not exist (for existing batches created before this feature)
@@ -280,8 +289,8 @@ export async function GET(request: NextRequest) {
           if (cashlessPlayersMap.size > 0) {
             const allCashlessPlayers = Array.from(cashlessPlayersMap.values());
             quarterlyData = {
-              quarter: batch.quarter,
-              year: batch.year,
+              quarter: batch.quarter || 0,
+              year: batch.year || 0,
               players: allCashlessPlayers,
               monthlyBreakdown: [], // We don't have monthly breakdown in stored data, but it's not critical for preview
             };
@@ -300,6 +309,15 @@ export async function GET(request: NextRequest) {
       const year = date.getFullYear();
       return `${day}/${month}/${year}`;
     };
+
+    // Ensure quarterlyData has quarter and year from batch if still missing
+    if (quarterlyData && (quarterlyData.quarter === undefined || quarterlyData.year === undefined)) {
+      quarterlyData = {
+        ...quarterlyData,
+        quarter: batch.quarter || 0,
+        year: batch.year || 0,
+      };
+    }
 
     // If batch has start_date and end_date, use them to populate quarterlyData.statementPeriod
     if (batch.start_date && batch.end_date && quarterlyData) {

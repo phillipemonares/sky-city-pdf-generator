@@ -121,3 +121,4 @@ export async function GET() {
   return NextResponse.json({ message: 'SendGrid webhook endpoint - POST only' }, { status: 405 });
 }
 
+

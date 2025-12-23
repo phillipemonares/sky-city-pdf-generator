@@ -26,9 +26,39 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { quarter, year, totalAccounts, quarterlyData, preCommitmentPlayers, startDate, endDate } = body;
 
-    if (!quarter || !year || !totalAccounts) {
+    // Validate required fields - check for undefined/null specifically, not falsy values
+    // Also allow getting quarter/year from quarterlyData if not directly provided
+    let quarterValue = quarter;
+    let yearValue = year;
+    
+    if (quarterlyData) {
+      // If quarter/year not provided directly, try to get from quarterlyData
+      if (quarterValue === undefined || quarterValue === null) {
+        quarterValue = quarterlyData.quarter;
+      }
+      if (yearValue === undefined || yearValue === null) {
+        yearValue = quarterlyData.year;
+      }
+    }
+
+    if (quarterValue === undefined || quarterValue === null || yearValue === undefined || yearValue === null || totalAccounts === undefined || totalAccounts === null) {
+      console.error('Missing required fields:', { 
+        quarter: quarterValue, 
+        year: yearValue, 
+        totalAccounts,
+        hasQuarterlyData: !!quarterlyData,
+        quarterlyDataQuarter: quarterlyData?.quarter,
+        quarterlyDataYear: quarterlyData?.year
+      });
       return NextResponse.json(
-        { success: false, error: 'Missing required fields: quarter, year, totalAccounts' },
+        { 
+          success: false, 
+          error: 'Missing required fields: quarter, year, totalAccounts',
+          details: {
+            received: { quarter: quarterValue, year: yearValue, totalAccounts },
+            quarterlyData: quarterlyData ? { quarter: quarterlyData.quarter, year: quarterlyData.year } : null
+          }
+        },
         { status: 400 }
       );
     }
@@ -55,7 +85,7 @@ export async function POST(request: NextRequest) {
       await connection.execute(
         `INSERT INTO generation_batches (id, quarter, year, generation_date, total_accounts, start_date, end_date, quarterly_data)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [batchId, quarter, year, generationDate, totalAccounts, startDateValue, endDateValue, batchMetadata]
+        [batchId, quarterValue, yearValue, generationDate, totalAccounts, startDateValue, endDateValue, batchMetadata]
       );
     } catch (error: any) {
       // If quarterly_data column doesn't exist, insert without it
@@ -64,7 +94,7 @@ export async function POST(request: NextRequest) {
           await connection.execute(
             `INSERT INTO generation_batches (id, quarter, year, generation_date, total_accounts, start_date, end_date)
              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [batchId, quarter, year, generationDate, totalAccounts, startDateValue, endDateValue]
+            [batchId, quarterValue, yearValue, generationDate, totalAccounts, startDateValue, endDateValue]
           );
         } catch (innerError: any) {
           // If start_date/end_date columns don't exist, insert without them
@@ -72,7 +102,7 @@ export async function POST(request: NextRequest) {
             await connection.execute(
               `INSERT INTO generation_batches (id, quarter, year, generation_date, total_accounts)
                VALUES (?, ?, ?, ?, ?)`,
-              [batchId, quarter, year, generationDate, totalAccounts]
+              [batchId, quarterValue, yearValue, generationDate, totalAccounts]
             );
           } else {
             throw innerError;

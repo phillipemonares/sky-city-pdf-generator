@@ -359,6 +359,12 @@ export default function UploadInterface() {
 
       // First, create the batch and get batchId
       // Send quarterlyData and preCommitmentPlayers once during init to avoid sending with every chunk
+      
+      // Validate that quarterlyData has required fields before sending
+      if (!quarterlyData || quarterlyData.quarter === undefined || quarterlyData.year === undefined) {
+        throw new Error('Quarterly data is missing quarter or year information. Please re-upload the CSV files.');
+      }
+
       const initResponse = await fetch('/api/save-batch-init', {
         method: 'POST',
         headers: {
@@ -376,12 +382,20 @@ export default function UploadInterface() {
       });
 
       if (!initResponse.ok) {
-        throw new Error('Failed to initialize batch');
+        const errorData = await initResponse.json().catch(() => ({}));
+        const errorMessage = errorData.error || errorData.details 
+          ? `${errorData.error}${errorData.details ? `: ${JSON.stringify(errorData.details)}` : ''}`
+          : 'Failed to initialize batch';
+        console.error('Batch init error:', errorData);
+        throw new Error(errorMessage);
       }
 
       const initData = await initResponse.json();
       if (!initData.success) {
-        throw new Error(initData.error || 'Failed to initialize batch');
+        const errorMessage = initData.error || initData.details 
+          ? `${initData.error}${initData.details ? `: ${JSON.stringify(initData.details)}` : ''}`
+          : 'Failed to initialize batch';
+        throw new Error(errorMessage);
       }
       batchId = initData.batchId;
       setSaveProgress(5);
