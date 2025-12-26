@@ -10,6 +10,7 @@ export {
   getMatchedAccountsByBatch, 
   getAccountFromBatch, 
   getQuarterlyDataFromBatch,
+  getAccountFromPreviousBatches,
   type GenerationBatch,
   type MatchedAccount,
 } from './db/pdf-preview';

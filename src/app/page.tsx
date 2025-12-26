@@ -97,7 +97,7 @@ export default function UploadInterface() {
     hasPreviousPage: boolean;
   } | null>(null);
   const [batchSearchQuery, setBatchSearchQuery] = useState<string>('');
-  const [searchDebounceTimer, setSearchDebounceTimer] = useState<NodeJS.Timeout | null>(null);
+  const [batchSearchInput, setBatchSearchInput] = useState<string>('');
 
   // Use allAnnotatedPlayers if we have them (from loaded batch), otherwise build from uploads
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
@@ -426,29 +426,30 @@ export default function UploadInterface() {
     await loadBatch(batchId, page, batchSearchQuery);
   };
 
-  // Handle search input with debounce
-  const handleBatchSearch = (query: string) => {
-    setBatchSearchQuery(query);
-    
-    // Clear existing timer
-    if (searchDebounceTimer) {
-      clearTimeout(searchDebounceTimer);
-    }
-    
-    // Only search if we have a loaded batch
+  // Handle search input - only update input state, don't trigger search
+  const handleBatchSearchInput = (query: string) => {
+    setBatchSearchInput(query);
+  };
+
+  // Handle search button click or Enter key
+  const handleBatchSearch = () => {
+    setBatchSearchQuery(batchSearchInput);
     if (loadedBatchId) {
-      const timer = setTimeout(() => {
-        // Reset to page 1 when searching
-        setCurrentPage(1);
-        loadBatch(loadedBatchId, 1, query);
-      }, 300); // 300ms debounce
-      
-      setSearchDebounceTimer(timer);
+      setCurrentPage(1);
+      loadBatch(loadedBatchId, 1, batchSearchInput);
+    }
+  };
+
+  // Handle Enter key in search input
+  const handleBatchSearchKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleBatchSearch();
     }
   };
 
   // Clear search and reload all data
   const clearBatchSearch = () => {
+    setBatchSearchInput('');
     setBatchSearchQuery('');
     if (loadedBatchId) {
       setCurrentPage(1);
@@ -1891,39 +1892,51 @@ export default function UploadInterface() {
               <div className="flex flex-col md:flex-row items-center gap-3">
                 {/* Server-side search input - only show for loaded batches */}
                 {loadedBatchId && (
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="Search by account, name, or email..."
-                      value={batchSearchQuery}
-                      onChange={(e) => handleBatchSearch(e.target.value)}
-                      className="px-3 py-2 pl-9 border border-gray-300 rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      disabled={loadingBatch !== null}
-                    />
-                    <svg
-                      className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                      />
-                    </svg>
-                    {batchSearchQuery && (
-                      <button
-                        onClick={clearBatchSearch}
-                        className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search by account, name, or email..."
+                        value={batchSearchInput}
+                        onChange={(e) => handleBatchSearchInput(e.target.value)}
+                        onKeyDown={handleBatchSearchKeyPress}
+                        className="px-3 py-2 pl-9 border border-gray-300 rounded-lg text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         disabled={loadingBatch !== null}
+                      />
+                      <svg
+                        className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    )}
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                        />
+                      </svg>
+                      {batchSearchInput && (
+                        <button
+                          onClick={clearBatchSearch}
+                          className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          disabled={loadingBatch !== null}
+                          type="button"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      onClick={handleBatchSearch}
+                      disabled={loadingBatch !== null}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                      type="button"
+                    >
+                      Search
+                    </button>
                   </div>
                 )}
                 <select

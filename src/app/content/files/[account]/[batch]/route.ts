@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAccountFromBatch, getBatchById } from '@/lib/db';
+import { getAccountFromBatch, getBatchById, getAccountFromPreviousBatches } from '@/lib/db';
 import { generatePreviewHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { decryptJson } from '@/lib/encryption';
@@ -91,7 +91,7 @@ export async function GET(
       }
     }
     
-    // If still not found, reconstruct from all cashless statements
+    // If still not found, reconstruct from all cashless statements in current batch
     if (!quarterlyData) {
       try {
         const [allRows] = await pool.execute<mysql.RowDataPacket[]>(
@@ -131,7 +131,7 @@ export async function GET(
         console.error('Error reconstructing quarterlyData:', error);
       }
     }
-    
+
     if (!quarterlyData) {
       console.error('[content/files] No quarterly data found for batch:', batchId);
       // Create a minimal quarterlyData structure from batch info
@@ -182,6 +182,7 @@ export async function GET(
     }
 
     // Get the specific account data (optimized single query)
+    // Normalize account number early so we can use it for previous batch lookups
     const normalizedAccount = normalizeAccount(accountNumber);
     let targetAccount = await getAccountFromBatch(batchId, normalizedAccount);
 
@@ -197,8 +198,84 @@ export async function GET(
       );
     }
 
-    // Extract the target player data
-    const accountData = targetAccount.account_data;
+    // Extract the target player data from current batch
+    let accountData = targetAccount.account_data;
+
+    // If precommitment or cashless is missing, try to get from previous batches
+    // This allows us to show the latest available data for each statement type
+    if (!accountData.preCommitment || !accountData.cashless) {
+      const previousBatches = await getAccountFromPreviousBatches(normalizedAccount, batchId);
+      
+      // If not found with normalized account, try with original account number
+      const previousBatchesOriginal = previousBatches.length === 0 
+        ? await getAccountFromPreviousBatches(accountNumber, batchId)
+        : previousBatches;
+
+      // Merge data from previous batches - get the latest available precommitment and cashless
+      for (const prevAccount of previousBatchesOriginal) {
+        // Get precommitment from previous batch if missing in current batch
+        if (!accountData.preCommitment && prevAccount.account_data.preCommitment) {
+          accountData = {
+            ...accountData,
+            preCommitment: prevAccount.account_data.preCommitment,
+          };
+          console.log(`[content/files] Merged precommitment from batch ${prevAccount.batch_id} for account ${normalizedAccount}`);
+        }
+
+        // Get cashless from previous batch if missing in current batch
+        if (!accountData.cashless && prevAccount.account_data.cashless) {
+          accountData = {
+            ...accountData,
+            cashless: prevAccount.account_data.cashless,
+          };
+          console.log(`[content/files] Merged cashless from batch ${prevAccount.batch_id} for account ${normalizedAccount}`);
+        }
+
+        // If we have both, we can break early
+        if (accountData.preCommitment && accountData.cashless) {
+          break;
+        }
+      }
+    }
+
+    // If quarterlyData is still missing monthly breakdown or we merged cashless from previous batch,
+    // try to get quarterlyData from previous batches
+    if (!quarterlyData || (quarterlyData.monthlyBreakdown && quarterlyData.monthlyBreakdown.length === 0)) {
+      const previousBatches = await getAccountFromPreviousBatches(normalizedAccount, batchId);
+      const previousBatchesOriginal = previousBatches.length === 0 
+        ? await getAccountFromPreviousBatches(accountNumber, batchId)
+        : previousBatches;
+
+      // Look for quarterlyData with monthly breakdown in previous batches
+      for (const prevAccount of previousBatchesOriginal) {
+        if (prevAccount.account_data.quarterlyData) {
+          const prevQuarterlyData = prevAccount.account_data.quarterlyData;
+          // Use the quarterlyData from previous batch if:
+          // 1. Current batch doesn't have quarterlyData, OR
+          // 2. Previous batch has monthly breakdown and current doesn't
+          if (!quarterlyData || 
+              (prevQuarterlyData.monthlyBreakdown && 
+               prevQuarterlyData.monthlyBreakdown.length > 0 && 
+               (!quarterlyData.monthlyBreakdown || quarterlyData.monthlyBreakdown.length === 0))) {
+            quarterlyData = prevQuarterlyData;
+            console.log(`[content/files] Using quarterlyData from batch ${prevAccount.batch_id} for account ${normalizedAccount}`);
+            break;
+          }
+        }
+      }
+
+      // If we still don't have quarterlyData but we have cashless in accountData,
+      // reconstruct quarterlyData from it
+      if (!quarterlyData && accountData.cashless) {
+        quarterlyData = {
+          quarter: batch.quarter,
+          year: batch.year,
+          players: [accountData.cashless],
+          monthlyBreakdown: [],
+        };
+        console.log(`[content/files] Reconstructed quarterlyData from accountData.cashless for account ${normalizedAccount}`);
+      }
+    }
 
     // Convert logo to base64
     const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');

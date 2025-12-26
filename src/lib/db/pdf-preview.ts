@@ -285,4 +285,110 @@ export async function getQuarterlyDataFromBatch(batchId: string): Promise<Quarte
   }
 }
 
+/**
+ * Get account data from previous batches (ordered by generation_date DESC)
+ * This is used to merge data from multiple batches - getting the latest available
+ * data for each statement type (activity, precommitment, cashless)
+ */
+export async function getAccountFromPreviousBatches(
+  accountNumber: string,
+  excludeBatchId: string
+): Promise<MatchedAccount[]> {
+  try {
+    // Encrypt account number for lookup (deterministic encryption allows exact match)
+    const encryptedAccountNumber = encryptDeterministic(accountNumber);
+    
+    // Get all batches for this account, excluding the current batch, ordered by generation_date DESC
+    // This ensures we get the most recent data first
+    const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT 
+        qus.id,
+        qus.batch_id,
+        qus.account_number,
+        qus.data,
+        qus.created_at,
+        qus.updated_at,
+        gb.generation_date
+       FROM quarterly_user_statements qus
+       INNER JOIN generation_batches gb ON qus.batch_id = gb.id
+       WHERE qus.account_number = ? AND qus.batch_id != ?
+       ORDER BY gb.generation_date DESC, qus.updated_at DESC, qus.created_at DESC`,
+      [encryptedAccountNumber, excludeBatchId]
+    );
+
+    // If not found with encrypted, try with unencrypted (legacy data support)
+    let unencryptedRows: mysql.RowDataPacket[] = [];
+    if (rows.length === 0) {
+      [unencryptedRows] = await pool.execute<mysql.RowDataPacket[]>(
+        `SELECT 
+          qus.id,
+          qus.batch_id,
+          qus.account_number,
+          qus.data,
+          qus.created_at,
+          qus.updated_at,
+          gb.generation_date
+         FROM quarterly_user_statements qus
+         INNER JOIN generation_batches gb ON qus.batch_id = gb.id
+         WHERE qus.account_number = ? AND qus.batch_id != ?
+         ORDER BY gb.generation_date DESC, qus.updated_at DESC, qus.created_at DESC`,
+        [accountNumber, excludeBatchId]
+      );
+    }
+
+    const allRows = rows.length > 0 ? rows : unencryptedRows;
+
+    return allRows.map(row => {
+      // Decrypt the user data (handles both encrypted and legacy unencrypted data)
+      let userData: any;
+      try {
+        userData = decryptJson<{
+          activity_statement?: ActivityStatementRow;
+          pre_commitment?: PreCommitmentPlayer;
+          cashless_statement?: any;
+          quarterlyData?: QuarterlyData;
+        }>(row.data);
+      } catch (error) {
+        console.error(`[getAccountFromPreviousBatches] Error decrypting data:`, error);
+        // Try parsing as plain JSON if decryption fails
+        try {
+          userData = JSON.parse(row.data);
+        } catch (parseError) {
+          console.error(`[getAccountFromPreviousBatches] Error parsing as JSON:`, parseError);
+          userData = {};
+        }
+      }
+      
+      // Decrypt account number (handles both encrypted and legacy unencrypted data)
+      const decryptedAccountNumber = decrypt(row.account_number || '');
+      
+      // Reconstruct AnnotatedStatementPlayer format
+      const accountData: AnnotatedStatementPlayer = {
+        account: decryptedAccountNumber,
+        activity: userData?.activity_statement != null ? userData.activity_statement : undefined,
+        preCommitment: userData?.pre_commitment != null ? userData.pre_commitment : undefined,
+        cashless: userData?.cashless_statement != null ? userData.cashless_statement : undefined,
+        quarterlyData: userData?.quarterlyData,
+      };
+
+      return {
+        id: row.id,
+        batch_id: row.batch_id,
+        account_number: decryptedAccountNumber,
+        account_data: accountData,
+        has_activity: Boolean(userData?.activity_statement),
+        has_pre_commitment: Boolean(userData?.pre_commitment),
+        has_cashless: Boolean(userData?.cashless_statement),
+        created_at: new Date(row.created_at),
+        updated_at: new Date(row.updated_at),
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching account from previous batches:', error);
+    throw error;
+  }
+}
+
+
+
 

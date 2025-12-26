@@ -369,8 +369,11 @@ export function renderPreCommitmentPage(
   const hasConsecutiveDays = !isZeroOrEmpty(preCommitment.consecutiveDays) && consecutiveDaysF !== '–';
   const sessionSummaries = preCommitment.sessionSummaries ?? [];
   
-  // Split session rows: first 9 rows on first page, rest on next page
-  const firstPageRows = sessionSummaries.slice(0, 5).map((summary, index) => {
+  // Split session rows: first 5 rows on first page, then 30 rows per page
+  const FIRST_PAGE_ROWS = 5;
+  const SUBSEQUENT_PAGE_ROWS = 30;
+  
+  const firstPageRows = sessionSummaries.slice(0, FIRST_PAGE_ROWS).map((summary) => {
     const date = formatExcelDate(summary.session);
     const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
     return `
@@ -381,18 +384,37 @@ export function renderPreCommitmentPage(
     `;
   }).join('');
   
-  const nextPageRows = sessionSummaries.slice(5).map((summary, index) => {
-    const date = formatExcelDate(summary.session);
-    const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
-    return `
-      <tr>
-        <td>${date}</td>
-        <td class="amount">${amount}</td>
-      </tr>
-    `;
-  }).join('');
+  // Split remaining rows into chunks of 25
+  const remainingRows = sessionSummaries.slice(FIRST_PAGE_ROWS);
+  const pageChunks: string[][] = [];
+  for (let i = 0; i < remainingRows.length; i += SUBSEQUENT_PAGE_ROWS) {
+    pageChunks.push(remainingRows.slice(i, i + SUBSEQUENT_PAGE_ROWS));
+  }
   
-  const hasNextPageRows = sessionSummaries.length > 5;
+  // Generate HTML for each subsequent page
+  const subsequentPages = pageChunks.map((chunk, chunkIndex) => {
+    const isLastPage = chunkIndex === pageChunks.length - 1;
+    const rows = chunk.map((summary) => {
+      const date = formatExcelDate(summary.session);
+      const amount = wrapNegativeValue(formatCurrency(summary.sessionNett));
+      return `
+        <tr>
+          <td>${date}</td>
+          <td class="amount">${amount}</td>
+        </tr>
+      `;
+    }).join('');
+    
+    // Only show footer on last page if it has 30 or fewer rows
+    const showFooter = isLastPage && chunk.length <= SUBSEQUENT_PAGE_ROWS;
+    
+    return {
+      rows,
+      showFooter,
+    };
+  });
+  
+  const hasNextPageRows = sessionSummaries.length > FIRST_PAGE_ROWS;
   
   const sessionRows = sessionSummaries.length
     ? firstPageRows
@@ -470,7 +492,7 @@ export function renderPreCommitmentPage(
     </div>
     ` : ''}
   </div>
-  ${hasNextPageRows && nextPageRows ? `
+  ${subsequentPages.map((page, index) => `
   <div class="page-break"></div>
   <div class="session-page">
     <div style="flex: 1;">
@@ -482,16 +504,18 @@ export function renderPreCommitmentPage(
           </tr>
         </thead>
         <tbody>
-          ${nextPageRows}
+          ${page.rows}
         </tbody>
       </table>
     </div>
+    ${page.showFooter ? `
     <div class="precommitment-footer">
       <p>This information is accurate as at ${quarterEnd} and will not reflect any changes you have made in MyPlay after this time.</p>
       <p>SkyCity Adelaide extracts carded data from its approved gaming systems. Whilst reasonable efforts are made to ensure the accuracy of such data, there may be instances where our systems encounter faults or errors. Accordingly, SkyCity Adelaide does not represent or warrant that the figures included in this statement are error-free or completely accurate.</p>
     </div>
+    ` : ''}
   </div>
-  ` : ''}
+  `).join('')}
   `;
 }
 
