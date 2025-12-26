@@ -1,4 +1,4 @@
-import { ActivityStatementRow, PreCommitmentPlayer, QuarterlyData } from '@/types/player-data';
+import { ActivityStatementRow, PreCommitmentPlayer, PreCommitmentSessionSummary, QuarterlyData } from '@/types/player-data';
 import {
   formatCurrency,
   formatExcelDate,
@@ -386,7 +386,7 @@ export function renderPreCommitmentPage(
   
   // Split remaining rows into chunks of 25
   const remainingRows = sessionSummaries.slice(FIRST_PAGE_ROWS);
-  const pageChunks: string[][] = [];
+  const pageChunks: PreCommitmentSessionSummary[][] = [];
   for (let i = 0; i < remainingRows.length; i += SUBSEQUENT_PAGE_ROWS) {
     pageChunks.push(remainingRows.slice(i, i + SUBSEQUENT_PAGE_ROWS));
   }
