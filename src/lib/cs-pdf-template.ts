@@ -137,15 +137,15 @@ export function generateCashlessStatements(
       const statementPeriod = `${monthName} ${statementYear}`;
 
       // Pagination logic:
-      // Page 1: 10 rows (or split if totalRows < 10)
+      // Page 1: 5 rows (or split if totalRows 5-9)
       // Page 2+: 30 rows per page (max)
-      // Special case: If totalRows < 10, split rows between page 1 and page 2 (with totals + footer on page 2)
-      // Exception: If totalRows < 4 (less than 5 including total), footer goes on page 1
+      // Special case: If totalRows 5-9, split rows between page 1 and page 2 (with totals + footer on page 2)
+      // Exception: If totalRows < 5, footer goes on page 1
       // Last page: If less than 20 rows, add footer
       const totalRows = monthTransactions.length;
       const pages: DailyTransaction[][] = [];
-      const hasVeryFewRows = totalRows > 0 && totalRows < 4; // Less than 5 rows including total
-      const needsSplitPages = totalRows > 0 && totalRows < 10 && !hasVeryFewRows; // Split rows between pages if < 10 rows (but not if very few rows)
+      const hasVeryFewRows = totalRows > 0 && totalRows < 5; // Less than 5 rows
+      const needsSplitPages = totalRows >= 5 && totalRows < 10; // Split rows between pages if 5-9 rows
       
       if (totalRows > 0) {
         if (hasVeryFewRows) {
@@ -157,11 +157,11 @@ export function generateCashlessStatements(
           pages.push(monthTransactions.slice(0, splitPoint));
           pages.push(monthTransactions.slice(splitPoint));
         } else {
-          // Normal case: Page 1 has 10 rows
-          pages.push(monthTransactions.slice(0, 10));
+          // Normal case: Page 1 has 5 rows
+          pages.push(monthTransactions.slice(0, 5));
           
           // Remaining pages: 30 rows each
-          let startIndex = 10;
+          let startIndex = 5;
           while (startIndex < totalRows) {
             pages.push(monthTransactions.slice(startIndex, startIndex + 30));
             startIndex += 30;
