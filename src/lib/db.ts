@@ -652,6 +652,7 @@ export interface NoPlayMemberWithBatch {
   address1: string;
   address2: string;
   suburb: string;
+  is_email: number;
 }
 
 /**
@@ -670,6 +671,7 @@ export interface PlayMemberWithBatch {
   address1: string;
   address2: string;
   suburb: string;
+  is_email: number;
 }
 
 /**
@@ -696,7 +698,8 @@ export async function getNoPlayMembersPaginated(
         latest_no_play.generation_date as latest_no_play_generation_date,
         latest_no_play.statement_period,
         latest_no_play.statement_date,
-        latest_no_play.player_data
+        latest_no_play.player_data,
+        COALESCE(m.is_email, 0) as is_email
        FROM (
          SELECT 
            npp.account_number,
@@ -710,6 +713,7 @@ export async function getNoPlayMembersPaginated(
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
+       LEFT JOIN members m ON latest_no_play.account_number = m.account_number
        WHERE latest_no_play.rn = 1
        ORDER BY latest_no_play.account_number ASC`
     );
@@ -747,6 +751,7 @@ export async function getNoPlayMembersPaginated(
         address1: playerInfo.address1 || '',
         address2: playerInfo.address2 || '',
         suburb: playerInfo.suburb || '',
+        is_email: row.is_email ?? 0,
       };
     });
     
@@ -838,7 +843,8 @@ export async function getPlayMembersPaginated(
         latest_play.generation_date as latest_play_generation_date,
         latest_play.statement_period,
         latest_play.statement_date,
-        latest_play.player_data
+        latest_play.player_data,
+        COALESCE(m.is_email, 0) as is_email
        FROM (
          SELECT 
            npp.account_number,
@@ -852,6 +858,7 @@ export async function getPlayMembersPaginated(
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'Play'
        ) as latest_play
+       LEFT JOIN members m ON latest_play.account_number = m.account_number
        WHERE latest_play.rn = 1
        ORDER BY latest_play.account_number ASC`
     );
@@ -889,6 +896,7 @@ export async function getPlayMembersPaginated(
         address1: playerInfo.address1 || '',
         address2: playerInfo.address2 || '',
         suburb: playerInfo.suburb || '',
+        is_email: row.is_email ?? 0,
       };
     });
     

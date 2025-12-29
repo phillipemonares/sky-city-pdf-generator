@@ -710,9 +710,11 @@ export default function MembersPage() {
                         <>
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">State</th>
                           <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Post Code</th>
-                          <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Email</th>
-                          <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Postal</th>
                         </>
+                      )}
+                      <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Email</th>
+                      {activeTab === 'quarterly' && (
+                        <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Is Postal</th>
                       )}
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs">Action</th>
                     </tr>
@@ -843,6 +845,15 @@ export default function MembersPage() {
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{address || <span className="text-gray-400">N/A</span>}</td>
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || <span className="text-gray-400">N/A</span>}</td>
                             <td className="px-3 py-1.5 border border-gray-200">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                member.is_email 
+                                  ? 'bg-green-100 text-green-800' 
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                {member.is_email ? 'Yes' : 'No'}
+                              </span>
+                            </td>
+                            <td className="px-3 py-1.5 border border-gray-200">
                               {previewUrl ? (
                                 <div className="flex items-center gap-2">
                                   <a
@@ -908,6 +919,15 @@ export default function MembersPage() {
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || <span className="text-gray-400">N/A</span>}</td>
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{address || <span className="text-gray-400">N/A</span>}</td>
                             <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || <span className="text-gray-400">N/A</span>}</td>
+                            <td className="px-3 py-1.5 border border-gray-200">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                member.is_email 
+                                  ? 'bg-green-100 text-green-800' 
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                {member.is_email ? 'Yes' : 'No'}
+                              </span>
+                            </td>
                             <td className="px-3 py-1.5 border border-gray-200">
                               {previewUrl ? (
                                 <div className="flex items-center gap-2">
