@@ -238,61 +238,37 @@ export default function MembersPage() {
           }));
       }
     } else {
+      // Export selected members only - return early if none selected
+      if (selectedMembers.size === 0) {
+        alert('Please select at least one member to export');
+        return;
+      }
+      
       // Export selected members
-      if (selectedMembers.size > 0) {
-        // Export selected members
-        if (activeTab === 'quarterly') {
-          membersToExport = members
-            .filter(m => selectedMembers.has(m.id) && m.latest_batch_id)
-            .map(m => ({
-              account: m.account_number,
-              batchId: m.latest_batch_id!,
-              name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
-            }));
-        } else if (activeTab === 'play') {
-          membersToExport = playMembers
-            .filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id)
-            .map(m => ({
-              account: m.account_number,
-              batchId: m.latest_play_batch_id!,
-              name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-            }));
-        } else {
-          membersToExport = noPlayMembers
-            .filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id)
-            .map(m => ({
-              account: m.account_number,
-              batchId: m.latest_no_play_batch_id!,
-              name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-            }));
-        }
+      if (activeTab === 'quarterly') {
+        membersToExport = members
+          .filter(m => selectedMembers.has(m.id) && m.latest_batch_id)
+          .map(m => ({
+            account: m.account_number,
+            batchId: m.latest_batch_id!,
+            name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
+          }));
+      } else if (activeTab === 'play') {
+        membersToExport = playMembers
+          .filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id)
+          .map(m => ({
+            account: m.account_number,
+            batchId: m.latest_play_batch_id!,
+            name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
+          }));
       } else {
-        // No members selected - export all filtered on current page
-        if (activeTab === 'quarterly') {
-          membersToExport = members
-            .filter(m => m.latest_batch_id)
-            .map(m => ({
-              account: m.account_number,
-              batchId: m.latest_batch_id!,
-              name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
-            }));
-        } else if (activeTab === 'play') {
-          membersToExport = playMembers
-            .filter(m => m.latest_play_batch_id)
-            .map(m => ({
-              account: m.account_number,
-              batchId: m.latest_play_batch_id!,
-              name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-            }));
-        } else {
-          membersToExport = noPlayMembers
-            .filter(m => m.latest_no_play_batch_id)
-            .map(m => ({
-              account: m.account_number,
-              batchId: m.latest_no_play_batch_id!,
-              name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-            }));
-        }
+        membersToExport = noPlayMembers
+          .filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id)
+          .map(m => ({
+            account: m.account_number,
+            batchId: m.latest_no_play_batch_id!,
+            name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
+          }));
       }
     }
 
