@@ -32,6 +32,14 @@ export default function MembersPage() {
     failedCount: number;
     failedAccounts: string[];
   } | null>(null);
+  const [sendingAll, setSendingAll] = useState<boolean>(false);
+  const [sendAllProgress, setSendAllProgress] = useState<{ current: number; total: number } | null>(null);
+  const [sendAllResults, setSendAllResults] = useState<{
+    isOpen: boolean;
+    successCount: number;
+    failedCount: number;
+    failedAccounts: string[];
+  } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
@@ -440,6 +448,150 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
+  // Send all emails for members with is_email = true/yes
+  const sendAllEmails = useCallback(async () => {
+    if (activeTab !== 'play' && activeTab !== 'no-play') {
+      return;
+    }
+
+    try {
+      setSendingAll(true);
+      setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
+
+      // Fetch all eligible members across all pages
+      const apiEndpoint = activeTab === 'play' ? '/api/list-play-members' : '/api/list-no-play-members';
+      const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
+      const pageSize = 100; // Use max page size to minimize requests
+      
+      // First, get the first page to know total pages
+      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}`);
+      if (!firstPageResponse.ok) {
+        throw new Error('Failed to fetch members');
+      }
+      const firstPageData = await firstPageResponse.json();
+      if (!firstPageData.success) {
+        throw new Error('Failed to fetch members');
+      }
+
+      const totalPages = firstPageData.totalPages || 1;
+      let allMembers = [...(firstPageData.members || [])];
+
+      // Fetch remaining pages if needed
+      if (totalPages > 1) {
+        setSendAllProgress({ current: 1, total: totalPages });
+        const remainingPages = [];
+        for (let page = 2; page <= totalPages; page++) {
+          remainingPages.push(
+            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}`)
+              .then(res => res.json())
+              .then(data => {
+                setSendAllProgress({ current: page, total: totalPages });
+                return data.members || [];
+              })
+          );
+        }
+        const remainingMembers = await Promise.all(remainingPages);
+        allMembers = allMembers.concat(...remainingMembers);
+      }
+
+      // Filter members where is_email is true (1) and have batch ID and email
+      const eligibleMembers = allMembers.filter(m => {
+        // Check if is_email is truthy (1, true, "yes", "true", etc.)
+        const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
+                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
+                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
+        const hasBatchId = activeTab === 'play' ? !!m.latest_play_batch_id : !!m.latest_no_play_batch_id;
+        const hasEmailAddress = m.email && m.email.trim() !== '';
+        return isEmailEnabled && hasBatchId && hasEmailAddress;
+      });
+
+      if (eligibleMembers.length === 0) {
+        alert('No members with email enabled found to send emails to.');
+        return;
+      }
+
+      // Confirm before sending
+      const confirmed = confirm(
+        `You are about to send ${eligibleMembers.length} email(s) to members with email enabled.\n\n` +
+        `This may take several minutes. Do you want to continue?`
+      );
+      if (!confirmed) {
+        setSendingAll(false);
+        setSendAllProgress(null);
+        return;
+      }
+
+      // Now send emails
+      setSendAllProgress({ current: 0, total: eligibleMembers.length });
+
+      const sendApiEndpoint = activeTab === 'play' ? '/api/send-play-member-pdf' : '/api/send-no-play-member-pdf';
+      let successCount = 0;
+      let failedCount = 0;
+      const failedAccounts: string[] = [];
+
+      // Send emails sequentially to avoid overwhelming the server
+      for (let i = 0; i < eligibleMembers.length; i++) {
+        const member = eligibleMembers[i];
+        const batchId = activeTab === 'play' ? member.latest_play_batch_id : member.latest_no_play_batch_id;
+
+        try {
+          const response = await fetch(sendApiEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              account: member.account_number,
+              batchId: batchId,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            successCount++;
+          } else {
+            failedCount++;
+            failedAccounts.push(member.account_number);
+          }
+        } catch (error) {
+          failedCount++;
+          failedAccounts.push(member.account_number);
+          console.error(`Error sending email to ${member.account_number}:`, error);
+        }
+
+        // Update progress
+        setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
+
+        // Small delay between emails to avoid rate limiting
+        if (i < eligibleMembers.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      // Show results
+      setSendAllResults({
+        isOpen: true,
+        successCount,
+        failedCount,
+        failedAccounts: failedAccounts.slice(0, 10), // Show first 10 failed accounts
+      });
+
+      // Refresh the current tab's data
+      if (activeTab === 'play') {
+        await loadPlayMembers(currentPage, pageSize, activeSearch);
+      } else {
+        await loadNoPlayMembers(currentPage, pageSize, activeSearch);
+      }
+    } catch (error) {
+      console.error('Error sending all emails:', error);
+      alert('Failed to send emails. Please try again.');
+    } finally {
+      setSendingAll(false);
+      setSendAllProgress(null);
+    }
+  }, [activeTab, playMembers, noPlayMembers, currentPage, pageSize, activeSearch, loadPlayMembers, loadNoPlayMembers]);
+
   // Load members on component mount and when page/tab/search changes
   useEffect(() => {
     if (activeTab === 'quarterly') {
@@ -565,6 +717,15 @@ export default function MembersPage() {
                 >
                   {exporting ? (exportProgress ? `Exporting... ${exportProgress.current}/${exportProgress.total}` : 'Exporting...') : 'Export All'}
                 </button>
+                {(activeTab === 'play' || activeTab === 'no-play') && (
+                  <button
+                    onClick={sendAllEmails}
+                    disabled={sendingAll || loadingMembers || (activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                  >
+                    {sendingAll ? (sendAllProgress ? `Sending... ${sendAllProgress.current}/${sendAllProgress.total}` : 'Sending...') : 'Send All'}
+                  </button>
+                )}
                 {exportProgress && (
                   <div className="text-sm text-gray-600 flex items-center">
                     <div className="w-32 bg-gray-200 rounded-full h-2 mr-2">
@@ -574,6 +735,17 @@ export default function MembersPage() {
                       ></div>
                     </div>
                     <span>{Math.round((exportProgress.current / exportProgress.total) * 100)}%</span>
+                  </div>
+                )}
+                {sendAllProgress && (
+                  <div className="text-sm text-gray-600 flex items-center">
+                    <div className="w-32 bg-gray-200 rounded-full h-2 mr-2">
+                      <div 
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-300" 
+                        style={{ width: `${(sendAllProgress.current / sendAllProgress.total) * 100}%` }}
+                      ></div>
+                    </div>
+                    <span>{Math.round((sendAllProgress.current / sendAllProgress.total) * 100)}%</span>
                   </div>
                 )}
                 <select
@@ -1072,6 +1244,17 @@ export default function MembersPage() {
           successCount={exportResults.successCount}
           failedCount={exportResults.failedCount}
           failedAccounts={exportResults.failedAccounts}
+        />
+      )}
+
+      {/* Send All Results Dialog */}
+      {sendAllResults && (
+        <ExportResultsDialog
+          isOpen={sendAllResults.isOpen}
+          onClose={() => setSendAllResults(null)}
+          successCount={sendAllResults.successCount}
+          failedCount={sendAllResults.failedCount}
+          failedAccounts={sendAllResults.failedAccounts}
         />
       )}
     </div>
