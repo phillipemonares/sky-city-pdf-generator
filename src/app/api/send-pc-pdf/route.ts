@@ -168,7 +168,8 @@ export async function POST(request: NextRequest) {
           }
         ],
         custom_args: {
-          email_tracking_id: trackingId
+          email_tracking_id: trackingId,
+          sender_email: process.env.SENDGRID_FROM_EMAIL || 'statements@e.skycity.com.au'
         }
       };
 

@@ -48,6 +48,16 @@ export async function POST(request: NextRequest) {
           continue;
         }
         
+        // Filter by sender email - only process emails from statements@e.skycity.com.au
+        const senderEmail = custom_args?.sender_email;
+        const expectedSenderEmail = process.env.SENDGRID_FROM_EMAIL || 'statements@e.skycity.com.au';
+        
+        if (senderEmail && senderEmail !== expectedSenderEmail) {
+          // Skip events from other sender emails
+          skippedCount++;
+          continue;
+        }
+        
         // Extract email_tracking_id from custom_args
         let trackingId = custom_args?.email_tracking_id;
         
