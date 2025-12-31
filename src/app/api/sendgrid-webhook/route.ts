@@ -10,11 +10,8 @@ import mysql from 'mysql2/promise';
  * Receives events from SendGrid and updates email tracking records.
  * 
  * Events handled:
- * - processed: Email was sent (update status to 'sent', set sent_at)
  * - delivered: Email was delivered (update status to 'delivered')
  * - open: Email was opened (increment open_count, set opened_at/last_opened_at)
- * - bounce: Email bounced (update status to 'bounced')
- * - dropped: Email was dropped (update status to 'failed')
  * 
  * SendGrid sends events as an array in the request body.
  * 
@@ -256,21 +253,6 @@ export async function POST(request: NextRequest) {
         const eventTimestamp = timestamp ? new Date(timestamp * 1000) : new Date();
 
         switch (eventType) {
-          case 'processed':
-            // Email was sent
-            // Update with the sg_message_id from webhook (this is the authoritative format)
-            console.log('[SendGrid Webhook] Updating processed event with message ID:', {
-              trackingId,
-              sg_message_id,
-              email
-            });
-            await updateEmailTrackingStatus(trackingId, {
-              status: 'sent',
-              sendgrid_message_id: sg_message_id || null,
-              sent_at: eventTimestamp,
-            });
-            break;
-
           case 'delivered':
             // Email was delivered
             await updateEmailTrackingStatus(trackingId, {
@@ -382,23 +364,6 @@ export async function POST(request: NextRequest) {
             }
             break;
 
-          case 'bounce':
-            // Email bounced
-            await updateEmailTrackingStatus(trackingId, {
-              status: 'bounced',
-              error_message: event.reason || 'Email bounced',
-            });
-            break;
-
-          case 'dropped':
-            // Email was dropped
-            await updateEmailTrackingStatus(trackingId, {
-              status: 'failed',
-              error_message: event.reason || 'Email was dropped',
-            });
-            break;
-
-          case 'deferred':
           case 'delivery':
           case 'spamreport':
           case 'unsubscribe':
