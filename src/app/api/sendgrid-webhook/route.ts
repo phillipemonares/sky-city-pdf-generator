@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { updateEmailTrackingStatus, recordEmailOpen } from '@/lib/db/email';
+import { updateEmailTrackingStatus, recordEmailOpen, findTrackingRecordByEmailAndMessageId, emailExistsInTracking } from '@/lib/db/email';
 
 /**
  * SendGrid Event Webhook Handler
@@ -39,15 +39,36 @@ export async function POST(request: NextRequest) {
       try {
         const { event: eventType, email, timestamp, sg_message_id, custom_args } = event;
         
+        // First, check if this email exists in our tracking table
+        // Only process events for emails we actually sent
+        const emailExists = await emailExistsInTracking(email);
+        if (!emailExists) {
+          // Silently skip events for emails not in our tracking table
+          skippedCount++;
+          continue;
+        }
+        
         // Extract email_tracking_id from custom_args
-        const trackingId = custom_args?.email_tracking_id;
+        let trackingId = custom_args?.email_tracking_id;
+        
+        // If no tracking ID in custom_args, try to find it by email and message ID
+        if (!trackingId && email && sg_message_id) {
+          trackingId = await findTrackingRecordByEmailAndMessageId(email, sg_message_id) || null;
+        }
+        
+        // If still no tracking ID, try to find by email only (most recent)
+        if (!trackingId && email) {
+          trackingId = await findTrackingRecordByEmailAndMessageId(email, null) || null;
+        }
         
         if (!trackingId) {
-          console.warn('[SendGrid Webhook] Event missing email_tracking_id:', {
+          // Email exists in tracking but we can't find the specific record
+          // This shouldn't happen often, but log it for debugging
+          console.warn('[SendGrid Webhook] Email in tracking table but could not find tracking ID:', {
             eventType,
             email,
-            hasCustomArgs: !!custom_args,
-            customArgsKeys: custom_args ? Object.keys(custom_args) : null
+            sg_message_id,
+            hasCustomArgs: !!custom_args
           });
           skippedCount++;
           continue;

@@ -168,6 +168,65 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
 }
 
 /**
+ * Find email tracking record by email address and SendGrid message ID
+ * Used to match webhook events to tracking records when custom_args are missing
+ */
+export async function findTrackingRecordByEmailAndMessageId(
+  email: string,
+  sendgridMessageId?: string | null
+): Promise<string | null> {
+  const connection = await pool.getConnection();
+  
+  try {
+    let query = `SELECT id FROM email_tracking WHERE recipient_email = ?`;
+    const values: any[] = [email];
+    
+    // If we have a SendGrid message ID, use it for more precise matching
+    if (sendgridMessageId) {
+      query += ` AND sendgrid_message_id = ?`;
+      values.push(sendgridMessageId);
+    }
+    
+    // Order by most recent first
+    query += ` ORDER BY created_at DESC LIMIT 1`;
+    
+    const [rows] = await connection.execute<mysql.RowDataPacket[]>(query, values);
+    
+    if (rows.length > 0) {
+      return rows[0].id;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error finding tracking record by email:', error);
+    return null;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
+ * Check if an email exists in the tracking table
+ */
+export async function emailExistsInTracking(email: string): Promise<boolean> {
+  const connection = await pool.getConnection();
+  
+  try {
+    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM email_tracking WHERE recipient_email = ?`,
+      [email]
+    );
+    
+    return (rows[0]?.count || 0) > 0;
+  } catch (error) {
+    console.error('Error checking if email exists in tracking:', error);
+    return false;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
  * Get email tracking records with optional filters
  */
 export async function getEmailTrackingRecords(filters?: {
@@ -282,6 +341,7 @@ export async function getEmailTrackingRecords(filters?: {
     throw error;
   }
 }
+
 
 
 
