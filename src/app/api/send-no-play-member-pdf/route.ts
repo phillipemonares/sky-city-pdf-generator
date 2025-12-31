@@ -121,7 +121,8 @@ export async function POST(request: NextRequest) {
         member.first_name,
         member.last_name
       ].filter(Boolean).join(' ') || 'Member';
-      const firstName = member.first_name || 'Member';
+      // Extract only the first word from firstName (in case it contains multiple names)
+      const firstName = (member.first_name || 'Member').split(' ')[0];
 
       const statementPeriod = targetPlayer.player_data.statementPeriod || 'Current Period';
       

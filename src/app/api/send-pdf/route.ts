@@ -115,7 +115,8 @@ export async function POST(request: NextRequest) {
         targetPlayer.activity.firstName,
         targetPlayer.activity.lastName
       ].filter(Boolean).join(' ') || 'Member';
-      const firstName = targetPlayer.activity.firstName || 'Member';
+      // Extract only the first word from firstName (in case it contains multiple names)
+      const firstName = (targetPlayer.activity.firstName || 'Member').split(' ')[0];
 
       const quarterLabel = `Q${finalQuarterlyData.quarter || 0} ${finalQuarterlyData.year || new Date().getFullYear()}`;
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
