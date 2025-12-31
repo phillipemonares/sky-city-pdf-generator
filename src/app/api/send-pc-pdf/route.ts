@@ -103,11 +103,26 @@ export async function POST(request: NextRequest) {
         memberData.first_name,
         memberData.last_name
       ].filter(Boolean).join(' ') || 'Member';
+      const firstName = memberData.first_name || 'Member';
 
       const statementPeriod = playerData.statementPeriod || 'Current Period';
+      
+      // Parse statement period to extract dates in format "1 March 2025 and 30 June 2025"
+      let formattedPeriod = statementPeriod;
+      if (statementPeriod.includes(' - ')) {
+        const [startDate, endDate] = statementPeriod.split(' - ');
+        formattedPeriod = `${startDate.trim()} and ${endDate.trim()}`;
+      } else if (statementPeriod.includes(' and ')) {
+        // Already in correct format
+        formattedPeriod = statementPeriod;
+      }
+
+      // Logo URL
+      const logoUrl = 'https://i.imgur.com/MilwIKt.png';
+
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
       const pdfFileName = `SkyCity_PreCommitment_Statement_${playerData.playerInfo.playerAccount}_${statementPeriod.replace(/\s+/g, '_')}.pdf`;
-      const subject = `Your SkyCity Pre-Commitment Statement - ${statementPeriod}`;
+      const subject = 'Your MyPlay Statement';
       const normalizedAccount = normalizeAccount(playerData.playerInfo.playerAccount);
 
       // Create email tracking record before sending
@@ -124,13 +139,24 @@ export async function POST(request: NextRequest) {
         to: memberData.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
-        text: `Dear ${playerName},\n\nPlease find attached your pre-commitment statement for ${statementPeriod}.\n\nThank you for being a valued member of SkyCity.\n\nBest regards,\nSkyCity Team`,
+        text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Pre-Commitment Statement for the period ${formattedPeriod} is now available for viewing and is attached to this email.\n\nWe would like to inform you that the attached statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.\n\nThe period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.\n\nIf you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8212 2811. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nPlease feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.\n\nKind Regards,\nSkyCity Adelaide`,
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #1a1a1a;">Dear ${playerName},</h2>
-            <p>Please find attached your pre-commitment statement for <strong>${statementPeriod}</strong>.</p>
-            <p>Thank you for being a valued member of SkyCity.</p>
-            <p>Best regards,<br>SkyCity Team</p>
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0; padding: 20px;">
+            <div style="text-align: left; margin-bottom: 20px;">
+              <img src="${logoUrl}" alt="SkyCity Adelaide" style="max-width: 200px; height: auto;" />
+            </div>
+            <div style="text-align: right; margin-bottom: 20px;">
+              <p style="margin: 0; color: #1a1a1a; font-size: 14px;">Account: ${normalizedAccount}</p>
+            </div>
+            <div style="color: #1a1a1a; line-height: 1.6;">
+              <p style="margin: 0 0 20px 0;">Dear ${firstName},</p>
+              <p style="margin: 0 0 20px 0;">Your Pre-Commitment Statement for the period ${formattedPeriod} is now available for viewing and is attached to this email.</p>
+              <p style="margin: 0 0 20px 0;">We would like to inform you that the attached statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.</p>
+              <p style="margin: 0 0 20px 0;">The period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.</p>
+              <p style="margin: 0 0 20px 0;">If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8212 2811. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.</p>
+              <p style="margin: 0 0 20px 0;">Please feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.</p>
+              <p style="margin: 0;">Kind Regards,<br>SkyCity Adelaide</p>
+            </div>
           </div>
         `,
         attachments: [

@@ -2,21 +2,19 @@
 
 import { useEffect } from 'react';
 
-interface ExportResultsDialogProps {
+interface SuccessDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  successCount: number;
-  failedCount: number;
-  failedAccounts?: string[];
+  message: string;
+  title?: string;
 }
 
-export default function ExportResultsDialog({
+export default function SuccessDialog({
   isOpen,
   onClose,
-  successCount,
-  failedCount,
-  failedAccounts = [],
-}: ExportResultsDialogProps) {
+  message,
+  title = 'Success',
+}: SuccessDialogProps) {
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
@@ -41,39 +39,22 @@ export default function ExportResultsDialog({
       <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-700">
-          <h2 className="text-lg font-semibold text-white">Export Results</h2>
+          <h2 className="text-lg font-semibold text-white">{title}</h2>
         </div>
 
         {/* Content */}
         <div className="px-6 py-4">
           <div className="space-y-3 text-white">
-            <p className="text-base">
-              Successfully exported {successCount} PDF{successCount !== 1 ? 's' : ''}
-            </p>
-            
-            {failedCount > 0 && (
-              <>
-                <p className="text-base">
-                  Note: {failedCount} PDF{failedCount !== 1 ? 's' : ''} failed to export.
-                </p>
-                
-                {failedAccounts.length > 0 && (
-                  <div className="mt-3">
-                    <p className="text-sm font-medium mb-2">Failed accounts:</p>
-                    <div className="bg-gray-700 rounded p-3 max-h-32 overflow-y-auto">
-                      <p className="text-sm text-gray-300 break-words">
-                        {failedAccounts.join(', ')}
-                        {failedAccounts.length < failedCount && '...'}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                
-                <p className="text-sm text-gray-400 mt-3">
-                  Check the console for more details.
-                </p>
-              </>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="flex-shrink-0">
+                <div className="flex items-center justify-center h-10 w-10 rounded-full bg-green-500">
+                  <svg className="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+              </div>
+              <p className="text-base">{message}</p>
+            </div>
           </div>
         </div>
 
@@ -90,12 +71,4 @@ export default function ExportResultsDialog({
     </div>
   );
 }
-
-
-
-
-
-
-
-
 

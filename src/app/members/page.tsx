@@ -5,6 +5,8 @@ import Navigation from '@/components/Navigation';
 import EditMemberModal from '@/components/EditMemberModal';
 import SendEmailModal from '@/components/SendEmailModal';
 import ExportResultsDialog from '@/components/ExportResultsDialog';
+import SuccessDialog from '@/components/SuccessDialog';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
 import JSZip from 'jszip';
 
@@ -39,6 +41,14 @@ export default function MembersPage() {
     successCount: number;
     failedCount: number;
     failedAccounts: string[];
+  } | null>(null);
+  const [deleteSuccessDialog, setDeleteSuccessDialog] = useState<{
+    isOpen: boolean;
+    message: string;
+  } | null>(null);
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
+    isOpen: boolean;
+    count: number;
   } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
@@ -149,7 +159,7 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab]);
 
-  const handleDeleteSelected = useCallback(async () => {
+  const handleDeleteSelected = useCallback(() => {
     if (selectedMembers.size === 0) {
       alert('Please select at least one member to delete');
       return;
@@ -161,7 +171,14 @@ export default function MembersPage() {
       return;
     }
 
-    if (!confirm(`Are you sure you want to delete ${selectedMembers.size} member(s)? This action cannot be undone.`)) {
+    setDeleteConfirmDialog({
+      isOpen: true,
+      count: selectedMembers.size,
+    });
+  }, [selectedMembers, activeTab]);
+
+  const performDelete = useCallback(async () => {
+    if (selectedMembers.size === 0) {
       return;
     }
 
@@ -183,7 +200,10 @@ export default function MembersPage() {
         // Clear selection and reload members
         setSelectedMembers(new Set());
         await loadMembers(currentPage, pageSize, activeSearch);
-        alert(`Successfully deleted ${data.deletedCount} member(s)`);
+        setDeleteSuccessDialog({
+          isOpen: true,
+          message: `Successfully deleted ${data.deletedCount} member${data.deletedCount !== 1 ? 's' : ''}`,
+        });
       } else {
         alert(`Error: ${data.error || 'Failed to delete members'}`);
       }
@@ -193,7 +213,7 @@ export default function MembersPage() {
     } finally {
       setDeleting(false);
     }
-  }, [selectedMembers, currentPage, pageSize, loadMembers, activeTab, activeSearch]);
+  }, [selectedMembers, currentPage, pageSize, loadMembers, activeSearch]);
 
   const exportPDFs = useCallback(async (exportAll: boolean = false) => {
     const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
@@ -689,14 +709,26 @@ export default function MembersPage() {
                 </p>
               </div>
               <div className="flex gap-2 items-center">
-                {selectedMembers.size > 0 && activeTab === 'quarterly' && (
-                  <button
-                    onClick={handleDeleteSelected}
-                    disabled={deleting || loadingMembers}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400"
-                  >
-                    {deleting ? 'Deleting...' : `Delete Selected (${selectedMembers.size})`}
-                  </button>
+                {selectedMembers.size > 0 && (
+                  <>
+                    {activeTab === 'quarterly' && (
+                      <button
+                        onClick={handleDeleteSelected}
+                        disabled={deleting || loadingMembers}
+                        className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:bg-gray-400 flex items-center gap-2"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        {deleting ? 'Deleting...' : `Delete Selected (${selectedMembers.size})`}
+                      </button>
+                    )}
+                    {(activeTab === 'play' || activeTab === 'no-play') && (
+                      <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium">
+                        {selectedMembers.size} selected (deletion not available for pre-commitment members)
+                      </div>
+                    )}
+                  </>
                 )}
                 {(() => {
                   const exportCount = getExportCount();
@@ -1255,6 +1287,29 @@ export default function MembersPage() {
           successCount={sendAllResults.successCount}
           failedCount={sendAllResults.failedCount}
           failedAccounts={sendAllResults.failedAccounts}
+        />
+      )}
+
+      {/* Delete Success Dialog */}
+      {deleteSuccessDialog && (
+        <SuccessDialog
+          isOpen={deleteSuccessDialog.isOpen}
+          onClose={() => setDeleteSuccessDialog(null)}
+          message={deleteSuccessDialog.message}
+          title="Delete Successful"
+        />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirmDialog && (
+        <ConfirmDialog
+          isOpen={deleteConfirmDialog.isOpen}
+          onClose={() => setDeleteConfirmDialog(null)}
+          onConfirm={performDelete}
+          message={`Are you sure you want to delete ${deleteConfirmDialog.count} member${deleteConfirmDialog.count !== 1 ? 's' : ''}? This action cannot be undone.`}
+          title="Confirm Deletion"
+          confirmText="Delete"
+          cancelText="Cancel"
         />
       )}
     </div>

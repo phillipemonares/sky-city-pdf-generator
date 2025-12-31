@@ -4,6 +4,27 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect, useRef } from 'react';
 
+// Helper function to get user initials from email/username
+const getInitials = (email: string | null): string => {
+  if (!email) return '?';
+  
+  // Extract the part before @ if it's an email
+  const namePart = email.split('@')[0];
+  
+  // Split by dots and get first letter of each part
+  const parts = namePart.split('.');
+  
+  if (parts.length >= 2) {
+    // Get first letter of first and last part
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  } else if (parts.length === 1) {
+    // If no dots, get first letter
+    return parts[0][0].toUpperCase();
+  }
+  
+  return '?';
+};
+
 export default function Navigation() {
   const pathname = usePathname();
   const router = useRouter();
@@ -203,23 +224,18 @@ export default function Navigation() {
             >
               Users
             </Link>
-
-            <Link
-              href="/settings"
-              className={`px-6 py-3 font-medium text-sm transition-colors border-b-2 ${
-                pathname === '/settings'
-                  ? 'border-blue-600 text-blue-600 bg-blue-50'
-                  : 'border-transparent text-gray-600 hover:text-gray-900 hover:border-gray-300'
-              }`}
-            >
-              Settings
-            </Link>
           </div>
 
           {/* User Info and Logout */}
           {!loading && username && (
             <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">{username}</span>
+              <Link
+                href="/settings"
+                className="flex items-center justify-center w-10 h-10 rounded-full bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 transition-colors cursor-pointer"
+                title={username}
+              >
+                {getInitials(username)}
+              </Link>
               <button
                 onClick={handleLogout}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors"
