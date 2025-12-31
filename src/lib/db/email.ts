@@ -130,8 +130,9 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
   
   try {
     // Get current record to check if this is the first open
+    // Also get sent_at to validate the open timestamp
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(
-      `SELECT opened_at, open_count, last_opened_at FROM email_tracking WHERE id = ?`,
+      `SELECT opened_at, open_count, last_opened_at, sent_at FROM email_tracking WHERE id = ?`,
       [trackingId]
     );
     
@@ -141,6 +142,23 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
     }
     
     const currentRecord = rows[0];
+    
+    // CRITICAL: Validate that opened_at is after sent_at
+    // If email hasn't been sent yet, or opened_at is before sent_at, reject this open
+    if (currentRecord.sent_at) {
+      const sentAt = new Date(currentRecord.sent_at);
+      const timeDiff = openedAt.getTime() - sentAt.getTime();
+      
+      if (timeDiff < 0) {
+        console.warn(`[Email Tracking] Rejecting open event: opened_at (${openedAt.toISOString()}) is before sent_at (${sentAt.toISOString()}) for tracking ID: ${trackingId}`);
+        return;
+      }
+    } else {
+      // Email hasn't been sent yet - reject this open
+      console.warn(`[Email Tracking] Rejecting open event: email not yet sent for tracking ID: ${trackingId}`);
+      return;
+    }
+    
     const isFirstOpen = !currentRecord.opened_at;
     
     // Deduplication: Only count opens that are at least 5 minutes apart
@@ -205,22 +223,39 @@ export async function findTrackingRecordByEmailAndMessageId(
   const connection = await pool.getConnection();
   
   try {
-    let query = `SELECT id FROM email_tracking WHERE recipient_email = ?`;
+    let query = `SELECT id, sendgrid_message_id FROM email_tracking WHERE recipient_email = ?`;
     const values: any[] = [email];
     
     // If we have a SendGrid message ID, use it for more precise matching
     if (sendgridMessageId) {
+      // Try exact match first
       query += ` AND sendgrid_message_id = ?`;
       values.push(sendgridMessageId);
     }
     
-    // Order by most recent first
-    query += ` ORDER BY created_at DESC LIMIT 1`;
+    // Order by most recent first, prioritize records with message IDs
+    query += ` ORDER BY 
+      CASE WHEN sendgrid_message_id IS NOT NULL THEN 0 ELSE 1 END,
+      created_at DESC 
+      LIMIT 1`;
     
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(query, values);
     
     if (rows.length > 0) {
-      return rows[0].id;
+      const matchedId = rows[0].id;
+      const storedMessageId = rows[0].sendgrid_message_id;
+      
+      // Log for debugging message ID matching
+      if (sendgridMessageId && storedMessageId && sendgridMessageId !== storedMessageId) {
+        console.log('[Email Tracking] Message ID mismatch (but found by email):', {
+          email,
+          searchMessageId: sendgridMessageId,
+          storedMessageId,
+          matchedTrackingId: matchedId
+        });
+      }
+      
+      return matchedId;
     }
     
     return null;

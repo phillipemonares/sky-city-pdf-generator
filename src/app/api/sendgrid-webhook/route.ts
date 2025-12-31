@@ -137,17 +137,66 @@ export async function POST(request: NextRequest) {
           continue;
         }
         
-        // Extract email_tracking_id from custom_args
+        // Extract email_tracking_id from custom_args (most reliable method)
         let trackingId = custom_args?.email_tracking_id;
         
         // If no tracking ID in custom_args, try to find it by email and message ID
+        // Note: SendGrid's sg_message_id format may differ from x-message-id header
+        // sg_message_id can be like "filter0001p1mdw1-12345-67-89" or just the short ID
         if (!trackingId && email && sg_message_id) {
+          // Try exact match first
           trackingId = await findTrackingRecordByEmailAndMessageId(email, sg_message_id) || null;
+          
+          // If no exact match, try to extract the short ID from sg_message_id
+          // SendGrid format: "filter0001p1mdw1-12345-67-89" or just "12345-67-89"
+          // The x-message-id header is usually just the short part after the filter prefix
+          if (!trackingId && sg_message_id.includes('-')) {
+            const parts = sg_message_id.split('-');
+            if (parts.length >= 3) {
+              // Extract the short ID part (last 3 segments)
+              const shortId = parts.slice(-3).join('-');
+              trackingId = await findTrackingRecordByEmailAndMessageId(email, shortId) || null;
+            }
+          }
         }
         
-        // If still no tracking ID, try to find by email only (most recent)
+        // Only use email-only fallback if we have no other way to match
+        // This is risky because it could match the wrong record, so we'll be very strict
         if (!trackingId && email) {
-          trackingId = await findTrackingRecordByEmailAndMessageId(email, null) || null;
+          // Only match by email if there's exactly one recent pending/sent record
+          // This prevents matching old records
+          const connection = await pool.getConnection();
+          try {
+            const [rows] = await connection.execute<any[]>(
+              `SELECT id FROM email_tracking 
+               WHERE recipient_email = ? 
+               AND status IN ('pending', 'sent', 'delivered')
+               AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+               ORDER BY created_at DESC 
+               LIMIT 2`,
+              [email]
+            );
+            
+            // Only use this if there's exactly one match
+            if (rows.length === 1) {
+              trackingId = rows[0].id;
+              console.log('[SendGrid Webhook] Matched by email only (single recent record):', {
+                email,
+                trackingId,
+                eventType
+              });
+            } else if (rows.length > 1) {
+              // Multiple records - can't safely match, skip this event
+              console.warn('[SendGrid Webhook] Cannot match by email - multiple recent records found:', {
+                email,
+                count: rows.length,
+                eventType,
+                sg_message_id
+              });
+            }
+          } finally {
+            connection.release();
+          }
         }
         
         if (!trackingId) {
@@ -157,7 +206,8 @@ export async function POST(request: NextRequest) {
             eventType,
             email,
             sg_message_id,
-            hasCustomArgs: !!custom_args
+            hasCustomArgs: !!custom_args,
+            customArgsTrackingId: custom_args?.email_tracking_id
           });
           skippedCount++;
           continue;
@@ -167,7 +217,10 @@ export async function POST(request: NextRequest) {
           eventType,
           email,
           trackingId,
-          timestamp
+          timestamp,
+          sg_message_id,
+          hasCustomArgs: !!custom_args,
+          customArgsTrackingId: custom_args?.email_tracking_id
         });
 
         const eventTimestamp = timestamp ? new Date(timestamp * 1000) : new Date();
@@ -175,6 +228,12 @@ export async function POST(request: NextRequest) {
         switch (eventType) {
           case 'processed':
             // Email was sent
+            // Update with the sg_message_id from webhook (this is the authoritative format)
+            console.log('[SendGrid Webhook] Updating processed event with message ID:', {
+              trackingId,
+              sg_message_id,
+              email
+            });
             await updateEmailTrackingStatus(trackingId, {
               status: 'sent',
               sendgrid_message_id: sg_message_id || null,
@@ -198,14 +257,16 @@ export async function POST(request: NextRequest) {
             // 1. Check if open happened too quickly after delivery (likely preload)
             // 2. Check for specific user agents that indicate machine opens
             // 3. Check if sg_machine_open flag is set
+            // 4. Validate that opened_at is after sent_at
             
-            // Get the sent_at time to check if open is suspiciously fast
+            // Get the sent_at time to check if open is suspiciously fast or invalid
             let isSuspiciousOpen = false;
+            let isInvalidOpen = false;
             if (trackingId) {
               try {
                 const connection = await pool.getConnection();
                 const [rows] = await connection.execute<any[]>(
-                  `SELECT sent_at FROM email_tracking WHERE id = ?`,
+                  `SELECT sent_at, opened_at FROM email_tracking WHERE id = ?`,
                   [trackingId]
                 );
                 connection.release();
@@ -213,36 +274,80 @@ export async function POST(request: NextRequest) {
                 if (rows.length > 0 && rows[0].sent_at) {
                   const sentAt = new Date(rows[0].sent_at);
                   const timeSinceSent = eventTimestamp.getTime() - sentAt.getTime();
-                  // If opened within 10 seconds of being sent, it's likely a machine open
-                  const MIN_TIME_FOR_REAL_OPEN_MS = 10 * 1000; // 10 seconds
-                  if (timeSinceSent < MIN_TIME_FOR_REAL_OPEN_MS) {
-                    isSuspiciousOpen = true;
-                    console.log(`[SendGrid Webhook] Suspicious open detected: opened ${Math.round(timeSinceSent / 1000)}s after send - likely machine open`);
+                  
+                  // CRITICAL: If opened_at is before sent_at, this is definitely wrong
+                  if (timeSinceSent < 0) {
+                    isInvalidOpen = true;
+                    console.warn(`[SendGrid Webhook] INVALID open detected: opened ${Math.abs(Math.round(timeSinceSent / 1000))}s BEFORE send - rejecting for tracking ID: ${trackingId}`);
                   }
+                  // If opened within 2 minutes of being sent, it's likely a machine open (Gmail preloading)
+                  // Gmail often preloads images within 1-2 minutes of delivery
+                  else {
+                    const MIN_TIME_FOR_REAL_OPEN_MS = 2 * 60 * 1000; // 2 minutes
+                    if (timeSinceSent < MIN_TIME_FOR_REAL_OPEN_MS) {
+                      isSuspiciousOpen = true;
+                      console.log(`[SendGrid Webhook] Suspicious open detected: opened ${Math.round(timeSinceSent / 1000)}s after send - likely machine open/preload`);
+                    }
+                  }
+                } else if (!rows[0]?.sent_at) {
+                  // If email hasn't been sent yet, this open is invalid
+                  isInvalidOpen = true;
+                  console.warn(`[SendGrid Webhook] INVALID open detected: email not yet sent - rejecting for tracking ID: ${trackingId}`);
                 }
               } catch (err) {
-                // If we can't check, continue with other checks
-                console.warn('[SendGrid Webhook] Could not check sent_at time for suspicious open detection');
+                // If we can't check, be conservative and skip this open
+                console.warn('[SendGrid Webhook] Could not check sent_at time for suspicious open detection - skipping open');
+                isSuspiciousOpen = true;
               }
             }
+            
+            // Check user agent for known machine open patterns
+            const userAgent = event.useragent || '';
+            const isGmailPreload = userAgent.toLowerCase().includes('gmail') && 
+                                   (userAgent.toLowerCase().includes('imageproxy') || 
+                                    userAgent.toLowerCase().includes('proxy'));
+            const isAppleMailPrivacy = userAgent.toLowerCase().includes('applewebkit') && 
+                                       userAgent.toLowerCase().includes('apple');
+            
+            // Check IP address - Gmail preloading often comes from Google IPs
+            const ip = event.ip || '';
+            const isGoogleIP = ip.startsWith('66.249.') || ip.startsWith('64.233.') || 
+                             ip.startsWith('72.14.') || ip.startsWith('74.125.');
+            
+            const isLikelyMachineOpen = isMachineOpen || isGmailPreload || isAppleMailPrivacy || isGoogleIP;
             
             console.log('[SendGrid Webhook] Open event:', {
               trackingId,
               email,
               isMachineOpen,
               isSuspiciousOpen,
+              isInvalidOpen,
+              isLikelyMachineOpen,
               sgMachineOpen: event.sg_machine_open,
               userAgent: event.useragent,
-              ip: event.ip
+              ip: event.ip,
+              isGmailPreload,
+              isAppleMailPrivacy,
+              isGoogleIP
             });
             
-            // Only record if not a machine open AND not suspicious
-            if (!isMachineOpen && !isSuspiciousOpen) {
+            // Only record if:
+            // 1. Not a machine open (by flag or pattern detection)
+            // 2. Not suspicious timing
+            // 3. Not invalid (before sent_at)
+            if (!isLikelyMachineOpen && !isSuspiciousOpen && !isInvalidOpen) {
               await recordEmailOpen(trackingId, eventTimestamp);
               console.log('[SendGrid Webhook] Recorded email open for:', trackingId);
             } else {
-              // Log machine/suspicious opens but don't count them
-              const reason = isMachineOpen ? 'machine open flag' : 'suspicious timing';
+              // Log machine/suspicious/invalid opens but don't count them
+              let reason = 'unknown';
+              if (isInvalidOpen) reason = 'invalid (before sent_at)';
+              else if (isMachineOpen) reason = 'machine open flag';
+              else if (isGmailPreload) reason = 'Gmail preload';
+              else if (isAppleMailPrivacy) reason = 'Apple Mail Privacy';
+              else if (isGoogleIP) reason = 'Google IP';
+              else if (isSuspiciousOpen) reason = 'suspicious timing';
+              
               console.log(`[SendGrid Webhook] Skipping open (${reason}) for tracking ID: ${trackingId}`);
             }
             break;
