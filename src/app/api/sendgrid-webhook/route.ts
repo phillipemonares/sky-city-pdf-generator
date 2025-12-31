@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateEmailTrackingStatus, recordEmailOpen, findTrackingRecordByEmailAndMessageId, emailExistsInTracking } from '@/lib/db/email';
+import { pool } from '@/lib/db';
 import { createVerify } from 'crypto';
+import mysql from 'mysql2/promise';
 
 /**
  * SendGrid Event Webhook Handler
@@ -189,23 +191,59 @@ export async function POST(request: NextRequest) {
 
           case 'open':
             // Email was opened
-            // Check if this is a machine open (Apple Mail Privacy Protection, etc.)
+            // Check if this is a machine open (Apple Mail Privacy Protection, Gmail preloading, etc.)
             const isMachineOpen = event.sg_machine_open === true;
+            
+            // Additional checks for machine opens:
+            // 1. Check if open happened too quickly after delivery (likely preload)
+            // 2. Check for specific user agents that indicate machine opens
+            // 3. Check if sg_machine_open flag is set
+            
+            // Get the sent_at time to check if open is suspiciously fast
+            let isSuspiciousOpen = false;
+            if (trackingId) {
+              try {
+                const connection = await pool.getConnection();
+                const [rows] = await connection.execute<any[]>(
+                  `SELECT sent_at FROM email_tracking WHERE id = ?`,
+                  [trackingId]
+                );
+                connection.release();
+                
+                if (rows.length > 0 && rows[0].sent_at) {
+                  const sentAt = new Date(rows[0].sent_at);
+                  const timeSinceSent = eventTimestamp.getTime() - sentAt.getTime();
+                  // If opened within 10 seconds of being sent, it's likely a machine open
+                  const MIN_TIME_FOR_REAL_OPEN_MS = 10 * 1000; // 10 seconds
+                  if (timeSinceSent < MIN_TIME_FOR_REAL_OPEN_MS) {
+                    isSuspiciousOpen = true;
+                    console.log(`[SendGrid Webhook] Suspicious open detected: opened ${Math.round(timeSinceSent / 1000)}s after send - likely machine open`);
+                  }
+                }
+              } catch (err) {
+                // If we can't check, continue with other checks
+                console.warn('[SendGrid Webhook] Could not check sent_at time for suspicious open detection');
+              }
+            }
             
             console.log('[SendGrid Webhook] Open event:', {
               trackingId,
               email,
               isMachineOpen,
-              sgMachineOpen: event.sg_machine_open
+              isSuspiciousOpen,
+              sgMachineOpen: event.sg_machine_open,
+              userAgent: event.useragent,
+              ip: event.ip
             });
             
-            // Only record if not a machine open (optional - you may want to record all opens)
-            if (!isMachineOpen) {
+            // Only record if not a machine open AND not suspicious
+            if (!isMachineOpen && !isSuspiciousOpen) {
               await recordEmailOpen(trackingId, eventTimestamp);
               console.log('[SendGrid Webhook] Recorded email open for:', trackingId);
             } else {
-              // Log machine opens but don't count them
-              console.log(`[SendGrid Webhook] Machine open detected for tracking ID: ${trackingId}`);
+              // Log machine/suspicious opens but don't count them
+              const reason = isMachineOpen ? 'machine open flag' : 'suspicious timing';
+              console.log(`[SendGrid Webhook] Skipping open (${reason}) for tracking ID: ${trackingId}`);
             }
             break;
 
