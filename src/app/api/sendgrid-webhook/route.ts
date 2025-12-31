@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { updateEmailTrackingStatus, recordEmailOpen, findTrackingRecordByEmailAndMessageId, emailExistsInTracking } from '@/lib/db/email';
+import { createVerify } from 'crypto';
 
 /**
  * SendGrid Event Webhook Handler
@@ -14,12 +15,88 @@ import { updateEmailTrackingStatus, recordEmailOpen, findTrackingRecordByEmailAn
  * - dropped: Email was dropped (update status to 'failed')
  * 
  * SendGrid sends events as an array in the request body.
+ * 
+ * Signature verification is performed to ensure requests are from SendGrid.
  */
 export async function POST(request: NextRequest) {
   console.log('[SendGrid Webhook] Received POST request');
   
   try {
-    const events = await request.json();
+    // Get raw body text for signature verification
+    const rawBody = await request.text();
+    
+    // Verify signature if public key is configured
+    const publicKey = process.env.SENDGRID_WEBHOOK_PUBLIC_KEY;
+    if (publicKey) {
+      const signature = request.headers.get('x-twilio-email-event-webhook-signature');
+      const timestamp = request.headers.get('x-twilio-email-event-webhook-timestamp');
+      
+      if (!signature || !timestamp) {
+        console.error('[SendGrid Webhook] Missing signature or timestamp headers');
+        return NextResponse.json(
+          { success: false, error: 'Missing webhook signature headers' },
+          { status: 401 }
+        );
+      }
+      
+      // Verify signature: concatenate timestamp + raw body
+      const payload = timestamp + rawBody;
+      
+      try {
+        // Convert base64 public key to PEM format
+        // SendGrid provides the key in base64 SPKI format, need to wrap in PEM headers
+        const publicKeyPEM = `-----BEGIN PUBLIC KEY-----\n${publicKey}\n-----END PUBLIC KEY-----`;
+        
+        // Verify signature: concatenate timestamp + raw body
+        const verify = createVerify('SHA256');
+        verify.update(payload, 'utf8');
+        verify.end();
+        
+        const signatureBuffer = Buffer.from(signature, 'base64');
+        
+        // Verify the signature using the public key
+        const isValid = verify.verify(publicKeyPEM, signatureBuffer);
+        
+        if (!isValid) {
+          console.error('[SendGrid Webhook] Invalid signature - request rejected');
+          return NextResponse.json(
+            { success: false, error: 'Invalid webhook signature' },
+            { status: 401 }
+          );
+        }
+        
+        console.log('[SendGrid Webhook] Signature verified successfully');
+      } catch (verifyError) {
+        console.error('[SendGrid Webhook] Signature verification error:', verifyError);
+        return NextResponse.json(
+          { success: false, error: 'Signature verification failed' },
+          { status: 401 }
+        );
+      }
+      
+      // Check timestamp to prevent replay attacks (within 5 minutes)
+      const requestTime = parseInt(timestamp, 10);
+      const currentTime = Math.floor(Date.now() / 1000);
+      const timeDiff = Math.abs(currentTime - requestTime);
+      const MAX_TIME_DIFF = 5 * 60; // 5 minutes
+      
+      if (timeDiff > MAX_TIME_DIFF) {
+        console.error('[SendGrid Webhook] Request timestamp too old or too far in future:', {
+          requestTime,
+          currentTime,
+          timeDiff
+        });
+        return NextResponse.json(
+          { success: false, error: 'Request timestamp out of acceptable range' },
+          { status: 401 }
+        );
+      }
+    } else {
+      console.warn('[SendGrid Webhook] SENDGRID_WEBHOOK_PUBLIC_KEY not set - skipping signature verification');
+    }
+    
+    // Parse the JSON body
+    const events = JSON.parse(rawBody);
     console.log('[SendGrid Webhook] Parsed events:', {
       isArray: Array.isArray(events),
       count: Array.isArray(events) ? events.length : 0,

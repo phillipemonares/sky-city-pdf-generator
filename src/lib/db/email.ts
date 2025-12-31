@@ -122,6 +122,8 @@ export async function updateEmailTrackingStatus(
 
 /**
  * Record an email open event
+ * Includes deduplication to prevent counting rapid duplicate events
+ * Only counts opens that are at least 5 minutes apart
  */
 export async function recordEmailOpen(trackingId: string, openedAt: Date): Promise<void> {
   const connection = await pool.getConnection();
@@ -129,7 +131,7 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
   try {
     // Get current record to check if this is the first open
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(
-      `SELECT opened_at, open_count FROM email_tracking WHERE id = ?`,
+      `SELECT opened_at, open_count, last_opened_at FROM email_tracking WHERE id = ?`,
       [trackingId]
     );
     
@@ -140,6 +142,31 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
     
     const currentRecord = rows[0];
     const isFirstOpen = !currentRecord.opened_at;
+    
+    // Deduplication: Only count opens that are at least 5 minutes apart
+    // This prevents rapid duplicate events from being counted multiple times
+    const MIN_OPEN_INTERVAL_MINUTES = 5;
+    const minOpenIntervalMs = MIN_OPEN_INTERVAL_MINUTES * 60 * 1000;
+    
+    if (!isFirstOpen && currentRecord.last_opened_at) {
+      const lastOpenedAt = new Date(currentRecord.last_opened_at);
+      const timeSinceLastOpen = openedAt.getTime() - lastOpenedAt.getTime();
+      
+      // If this open is too soon after the last one, only update last_opened_at but don't increment count
+      if (timeSinceLastOpen < minOpenIntervalMs) {
+        console.log(`[Email Tracking] Open event too soon after last open (${Math.round(timeSinceLastOpen / 1000)}s), skipping count increment for tracking ID: ${trackingId}`);
+        // Still update last_opened_at to track the most recent open time
+        await connection.execute(
+          `UPDATE email_tracking 
+           SET last_opened_at = ?, updated_at = NOW()
+           WHERE id = ?`,
+          [openedAt, trackingId]
+        );
+        return;
+      }
+    }
+    
+    // This is either the first open, or enough time has passed since the last open
     const newOpenCount = (currentRecord.open_count || 0) + 1;
     
     if (isFirstOpen) {
@@ -151,7 +178,7 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
         [openedAt, openedAt, newOpenCount, trackingId]
       );
     } else {
-      // Subsequent open - only update last_opened_at and count
+      // Subsequent open - update last_opened_at and increment count
       await connection.execute(
         `UPDATE email_tracking 
          SET last_opened_at = ?, open_count = ?, updated_at = NOW()
