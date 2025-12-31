@@ -143,15 +143,20 @@ export async function recordEmailOpen(trackingId: string, openedAt: Date): Promi
     
     const currentRecord = rows[0];
     
-    // CRITICAL: Validate that opened_at is after sent_at
-    // If email hasn't been sent yet, or opened_at is before sent_at, reject this open
+    // Validate that opened_at is after sent_at (with a small buffer for timezone differences)
+    // Only reject if it's significantly before sent_at (more than 1 hour), which would indicate a real problem
     if (currentRecord.sent_at) {
       const sentAt = new Date(currentRecord.sent_at);
       const timeDiff = openedAt.getTime() - sentAt.getTime();
+      const MAX_NEGATIVE_DIFF_MS = 60 * 60 * 1000; // 1 hour buffer for timezone/timing differences
       
-      if (timeDiff < 0) {
-        console.warn(`[Email Tracking] Rejecting open event: opened_at (${openedAt.toISOString()}) is before sent_at (${sentAt.toISOString()}) for tracking ID: ${trackingId}`);
+      if (timeDiff < -MAX_NEGATIVE_DIFF_MS) {
+        // Only reject if it's more than 1 hour before sent_at (truly impossible)
+        console.warn(`[Email Tracking] Rejecting open event: opened_at (${openedAt.toISOString()}) is more than 1 hour before sent_at (${sentAt.toISOString()}) for tracking ID: ${trackingId}`);
         return;
+      } else if (timeDiff < 0) {
+        // If it's within 1 hour before, log but allow it (likely timezone issue)
+        console.log(`[Email Tracking] Open event timestamp is before sent_at but within acceptable range (${Math.round(Math.abs(timeDiff) / 1000)}s difference) - allowing for tracking ID: ${trackingId}`);
       }
     } else {
       // Email hasn't been sent yet - reject this open

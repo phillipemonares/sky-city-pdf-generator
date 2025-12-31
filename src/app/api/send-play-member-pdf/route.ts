@@ -201,7 +201,40 @@ export async function POST(request: NextRequest) {
         const [response] = await sgMail.send(msg);
         
         // Extract SendGrid message ID from response headers
-        const messageId = response.headers?.['x-message-id']?.[0] || null;
+        // SendGrid headers can be in different formats - try multiple approaches
+        let messageId: string | null = null;
+        
+        if (response?.headers) {
+          // Try different header formats
+          const headers = response.headers;
+          
+          // Try as object with lowercase key
+          if (headers['x-message-id']) {
+            messageId = Array.isArray(headers['x-message-id']) 
+              ? headers['x-message-id'][0] 
+              : headers['x-message-id'];
+          }
+          // Try as object with different case
+          else if (headers['X-Message-Id']) {
+            messageId = Array.isArray(headers['X-Message-Id']) 
+              ? headers['X-Message-Id'][0] 
+              : headers['X-Message-Id'];
+          }
+          // Try as Map
+          else if (headers instanceof Map) {
+            messageId = headers.get('x-message-id') || headers.get('X-Message-Id') || null;
+          }
+        }
+        
+        // Log if message ID extraction failed for debugging
+        if (!messageId) {
+          console.warn('[Send Email] Could not extract SendGrid message ID from response:', {
+            hasResponse: !!response,
+            hasHeaders: !!response?.headers,
+            headersKeys: response?.headers ? Object.keys(response.headers) : [],
+            responseType: typeof response
+          });
+        }
         
         // Update tracking record with sent status
         await updateEmailTrackingStatus(trackingId, {

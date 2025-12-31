@@ -271,77 +271,62 @@ export async function POST(request: NextRequest) {
             // 3. Check if sg_machine_open flag is set
             // 4. Validate that opened_at is after sent_at
             
-            // Get the sent_at time to check if open is invalid (before sent_at)
-            let isInvalidOpen = false;
-            if (trackingId) {
-              try {
-                const connection = await pool.getConnection();
-                const [rows] = await connection.execute<any[]>(
-                  `SELECT sent_at, opened_at FROM email_tracking WHERE id = ?`,
-                  [trackingId]
-                );
-                connection.release();
-                
-                if (rows.length > 0 && rows[0].sent_at) {
-                  const sentAt = new Date(rows[0].sent_at);
-                  const timeSinceSent = eventTimestamp.getTime() - sentAt.getTime();
-                  
-                  // CRITICAL: If opened_at is before sent_at, this is definitely wrong
-                  if (timeSinceSent < 0) {
-                    isInvalidOpen = true;
-                    console.warn(`[SendGrid Webhook] INVALID open detected: opened ${Math.abs(Math.round(timeSinceSent / 1000))}s BEFORE send - rejecting for tracking ID: ${trackingId}`);
-                  }
-                } else if (!rows[0]?.sent_at) {
-                  // If email hasn't been sent yet, this open is invalid
-                  isInvalidOpen = true;
-                  console.warn(`[SendGrid Webhook] INVALID open detected: email not yet sent - rejecting for tracking ID: ${trackingId}`);
-                }
-              } catch (err) {
-                // If we can't check, log but don't block the open
-                console.warn('[SendGrid Webhook] Could not check sent_at time for validation - allowing open');
-              }
-            }
+            // Note: Timestamp validation is handled in recordEmailOpen function
+            // We'll let recordEmailOpen validate and reject truly invalid opens
+            // This avoids timezone issues and allows SendGrid's timestamps to be trusted
             
             // Check user agent for known machine open patterns
             const userAgent = event.useragent || '';
-            const isGmailPreload = userAgent.toLowerCase().includes('gmail') && 
-                                   (userAgent.toLowerCase().includes('imageproxy') || 
-                                    userAgent.toLowerCase().includes('proxy'));
-            const isAppleMailPrivacy = userAgent.toLowerCase().includes('applewebkit') && 
-                                       userAgent.toLowerCase().includes('apple');
+            const userAgentLower = userAgent.toLowerCase();
             
-            // Check IP address - Gmail preloading often comes from Google IPs
+            // Gmail preload detection - look for Gmail with imageproxy/proxy
+            const isGmailPreload = userAgentLower.includes('gmail') && 
+                                   (userAgentLower.includes('imageproxy') || 
+                                    userAgentLower.includes('proxy'));
+            
+            // Apple Mail Privacy Protection - be very specific
+            // Apple Mail Privacy uses specific user agents, not just any AppleWebKit
+            // Look for Mail.app specific patterns or privacy proxy indicators
+            const isAppleMailPrivacy = (userAgentLower.includes('mail.app') || 
+                                       userAgentLower.includes('apple mail') ||
+                                       (userAgentLower.includes('macos') && userAgentLower.includes('mail') && !userAgentLower.includes('chrome') && !userAgentLower.includes('safari'))) &&
+                                       (userAgentLower.includes('privacy') || userAgentLower.includes('proxy'));
+            
+            // Check IP address - Google IPs alone aren't enough to flag as machine open
+            // Many legitimate users might route through Google IPs
+            // Only use IP as a secondary indicator, not primary
             const ip = event.ip || '';
             const isGoogleIP = ip.startsWith('66.249.') || ip.startsWith('64.233.') || 
-                             ip.startsWith('72.14.') || ip.startsWith('74.125.');
+                              ip.startsWith('72.14.') || ip.startsWith('74.125.');
             
-            const isLikelyMachineOpen = isMachineOpen || isGmailPreload || isAppleMailPrivacy || isGoogleIP;
+            // Only flag as machine open if we have strong primary indicators
+            // Don't rely solely on IP or broad user agent patterns
+            // Google IP alone is not enough - it needs to be combined with other indicators
+            const isLikelyMachineOpen = isMachineOpen || isGmailPreload || isAppleMailPrivacy;
             
             console.log('[SendGrid Webhook] Open event:', {
               trackingId,
               email,
               isMachineOpen,
-              isInvalidOpen,
               isLikelyMachineOpen,
               sgMachineOpen: event.sg_machine_open,
               userAgent: event.useragent,
               ip: event.ip,
               isGmailPreload,
               isAppleMailPrivacy,
-              isGoogleIP
+              isGoogleIP,
+              eventTimestamp: eventTimestamp.toISOString()
             });
             
-            // Only record if:
-            // 1. Not a machine open (by flag or pattern detection)
-            // 2. Not invalid (before sent_at)
-            if (!isLikelyMachineOpen && !isInvalidOpen) {
+            // Only record if not a machine open (by flag or pattern detection)
+            // Timestamp validation is handled inside recordEmailOpen function
+            if (!isLikelyMachineOpen) {
               await recordEmailOpen(trackingId, eventTimestamp);
               console.log('[SendGrid Webhook] Recorded email open for:', trackingId);
             } else {
-              // Log machine/invalid opens but don't count them
+              // Log machine opens but don't count them
               let reason = 'unknown';
-              if (isInvalidOpen) reason = 'invalid (before sent_at)';
-              else if (isMachineOpen) reason = 'machine open flag';
+              if (isMachineOpen) reason = 'machine open flag';
               else if (isGmailPreload) reason = 'Gmail preload';
               else if (isAppleMailPrivacy) reason = 'Apple Mail Privacy';
               else if (isGoogleIP) reason = 'Google IP';
