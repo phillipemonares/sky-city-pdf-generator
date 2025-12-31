@@ -168,22 +168,18 @@ export async function POST(request: NextRequest) {
         let trackingId = custom_args?.email_tracking_id;
         
         // If no tracking ID in custom_args, try to find it by email and message ID
-        // Note: SendGrid's sg_message_id format may differ from x-message-id header
-        // sg_message_id can be like "filter0001p1mdw1-12345-67-89" or just the short ID
+        // Note: SendGrid's sg_message_id format in webhooks is like:
+        // "howUkB_9RS6qS1FZhl6lYg.recvd-5fb7fdbd94-j4dtp-1-6954A7B8-D.0"
+        // But we might store just the prefix: "howUkB_9RS6qS1FZhl6lYg"
+        // The findTrackingRecordByEmailAndMessageId function handles partial matching
         if (!trackingId && email && sg_message_id) {
-          // Try exact match first
           trackingId = await findTrackingRecordByEmailAndMessageId(email, sg_message_id) || null;
           
-          // If no exact match, try to extract the short ID from sg_message_id
-          // SendGrid format: "filter0001p1mdw1-12345-67-89" or just "12345-67-89"
-          // The x-message-id header is usually just the short part after the filter prefix
-          if (!trackingId && sg_message_id.includes('-')) {
-            const parts = sg_message_id.split('-');
-            if (parts.length >= 3) {
-              // Extract the short ID part (last 3 segments)
-              const shortId = parts.slice(-3).join('-');
-              trackingId = await findTrackingRecordByEmailAndMessageId(email, shortId) || null;
-            }
+          // If still no match, try with just the prefix (part before first dot)
+          // This handles cases where the stored ID format differs
+          if (!trackingId && sg_message_id.includes('.')) {
+            const prefix = sg_message_id.split('.')[0];
+            trackingId = await findTrackingRecordByEmailAndMessageId(email, prefix) || null;
           }
         }
         

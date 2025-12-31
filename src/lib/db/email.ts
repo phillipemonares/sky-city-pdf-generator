@@ -250,17 +250,55 @@ export async function findTrackingRecordByEmailAndMessageId(
       const matchedId = rows[0].id;
       const storedMessageId = rows[0].sendgrid_message_id;
       
-      // Log for debugging message ID matching
-      if (sendgridMessageId && storedMessageId && sendgridMessageId !== storedMessageId) {
-        console.log('[Email Tracking] Message ID mismatch (but found by email):', {
-          email,
-          searchMessageId: sendgridMessageId,
-          storedMessageId,
-          matchedTrackingId: matchedId
-        });
+      // If exact match found, return it
+      if (sendgridMessageId && storedMessageId && sendgridMessageId === storedMessageId) {
+        return matchedId;
       }
       
-      return matchedId;
+      // If we searched with message ID but got a different one, check if it's a partial match
+      // SendGrid webhook sends full ID like "howUkB_9RS6qS1FZhl6lYg.recvd-5fb7fdbd94-j4dtp-1-6954A7B8-D.0"
+      // But we might store just "howUkB_9RS6qS1FZhl6lYg" (the prefix before the first dot)
+      if (sendgridMessageId && storedMessageId) {
+        const webhookPrefix = sendgridMessageId.split('.')[0]; // Get part before first dot
+        if (webhookPrefix === storedMessageId || sendgridMessageId.startsWith(storedMessageId + '.')) {
+          // Partial match - the stored ID is a prefix of the webhook ID
+          console.log('[Email Tracking] Partial message ID match:', {
+            email,
+            webhookMessageId: sendgridMessageId,
+            storedMessageId,
+            matchedTrackingId: matchedId
+          });
+          return matchedId;
+        }
+      }
+      
+      // If no message ID was provided in search, return the match by email
+      if (!sendgridMessageId) {
+        return matchedId;
+      }
+    }
+    
+    // If exact match failed, try partial match (webhook ID starts with stored ID)
+    if (sendgridMessageId && rows.length === 0) {
+      const [partialRows] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT id, sendgrid_message_id FROM email_tracking 
+         WHERE recipient_email = ? 
+         AND sendgrid_message_id IS NOT NULL
+         AND ? LIKE CONCAT(sendgrid_message_id, '%')
+         ORDER BY created_at DESC 
+         LIMIT 1`,
+        [email, sendgridMessageId]
+      );
+      
+      if (partialRows.length > 0) {
+        console.log('[Email Tracking] Found partial message ID match:', {
+          email,
+          webhookMessageId: sendgridMessageId,
+          storedMessageId: partialRows[0].sendgrid_message_id,
+          matchedTrackingId: partialRows[0].id
+        });
+        return partialRows[0].id;
+      }
     }
     
     return null;
