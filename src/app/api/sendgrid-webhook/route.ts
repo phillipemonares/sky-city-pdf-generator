@@ -16,16 +16,25 @@ import { updateEmailTrackingStatus, recordEmailOpen } from '@/lib/db/email';
  * SendGrid sends events as an array in the request body.
  */
 export async function POST(request: NextRequest) {
+  console.log('[SendGrid Webhook] Received POST request');
+  
   try {
     const events = await request.json();
+    console.log('[SendGrid Webhook] Parsed events:', {
+      isArray: Array.isArray(events),
+      count: Array.isArray(events) ? events.length : 0,
+      firstEventType: Array.isArray(events) && events.length > 0 ? events[0].event : null
+    });
     
     // SendGrid sends events as an array
     if (!Array.isArray(events)) {
-      console.error('Invalid webhook payload: expected array');
+      console.error('[SendGrid Webhook] Invalid webhook payload: expected array, got:', typeof events);
       return NextResponse.json({ success: false, error: 'Invalid payload format' }, { status: 400 });
     }
 
     // Process each event
+    let processedCount = 0;
+    let skippedCount = 0;
     for (const event of events) {
       try {
         const { event: eventType, email, timestamp, sg_message_id, custom_args } = event;
@@ -34,9 +43,22 @@ export async function POST(request: NextRequest) {
         const trackingId = custom_args?.email_tracking_id;
         
         if (!trackingId) {
-          console.warn('Event missing email_tracking_id:', eventType, email);
+          console.warn('[SendGrid Webhook] Event missing email_tracking_id:', {
+            eventType,
+            email,
+            hasCustomArgs: !!custom_args,
+            customArgsKeys: custom_args ? Object.keys(custom_args) : null
+          });
+          skippedCount++;
           continue;
         }
+        
+        console.log('[SendGrid Webhook] Processing event:', {
+          eventType,
+          email,
+          trackingId,
+          timestamp
+        });
 
         const eventTimestamp = timestamp ? new Date(timestamp * 1000) : new Date();
 
@@ -62,12 +84,20 @@ export async function POST(request: NextRequest) {
             // Check if this is a machine open (Apple Mail Privacy Protection, etc.)
             const isMachineOpen = event.sg_machine_open === true;
             
+            console.log('[SendGrid Webhook] Open event:', {
+              trackingId,
+              email,
+              isMachineOpen,
+              sgMachineOpen: event.sg_machine_open
+            });
+            
             // Only record if not a machine open (optional - you may want to record all opens)
             if (!isMachineOpen) {
               await recordEmailOpen(trackingId, eventTimestamp);
+              console.log('[SendGrid Webhook] Recorded email open for:', trackingId);
             } else {
               // Log machine opens but don't count them
-              console.log(`Machine open detected for tracking ID: ${trackingId}`);
+              console.log(`[SendGrid Webhook] Machine open detected for tracking ID: ${trackingId}`);
             }
             break;
 
@@ -100,15 +130,31 @@ export async function POST(request: NextRequest) {
           default:
             console.log(`Unhandled event type: ${eventType} for tracking ID: ${trackingId}`);
         }
+        
+        processedCount++;
       } catch (eventError) {
-        console.error('Error processing webhook event:', eventError, event);
+        console.error('[SendGrid Webhook] Error processing webhook event:', {
+          error: eventError instanceof Error ? eventError.message : String(eventError),
+          stack: eventError instanceof Error ? eventError.stack : null,
+          eventType: event?.event,
+          email: event?.email
+        });
         // Continue processing other events even if one fails
       }
     }
 
+    console.log('[SendGrid Webhook] Completed processing:', {
+      totalEvents: events.length,
+      processed: processedCount,
+      skipped: skippedCount
+    });
+
     return NextResponse.json({ success: true, processed: events.length });
   } catch (error) {
-    console.error('Error processing SendGrid webhook:', error);
+    console.error('[SendGrid Webhook] Top-level error:', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : null
+    });
     return NextResponse.json(
       { success: false, error: 'Failed to process webhook' },
       { status: 500 }
@@ -120,6 +166,7 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({ message: 'SendGrid webhook endpoint - POST only' }, { status: 405 });
 }
+
 
 
 
