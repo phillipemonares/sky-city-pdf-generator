@@ -271,8 +271,7 @@ export async function POST(request: NextRequest) {
             // 3. Check if sg_machine_open flag is set
             // 4. Validate that opened_at is after sent_at
             
-            // Get the sent_at time to check if open is suspiciously fast or invalid
-            let isSuspiciousOpen = false;
+            // Get the sent_at time to check if open is invalid (before sent_at)
             let isInvalidOpen = false;
             if (trackingId) {
               try {
@@ -292,24 +291,14 @@ export async function POST(request: NextRequest) {
                     isInvalidOpen = true;
                     console.warn(`[SendGrid Webhook] INVALID open detected: opened ${Math.abs(Math.round(timeSinceSent / 1000))}s BEFORE send - rejecting for tracking ID: ${trackingId}`);
                   }
-                  // If opened within 2 minutes of being sent, it's likely a machine open (Gmail preloading)
-                  // Gmail often preloads images within 1-2 minutes of delivery
-                  else {
-                    const MIN_TIME_FOR_REAL_OPEN_MS = 2 * 60 * 1000; // 2 minutes
-                    if (timeSinceSent < MIN_TIME_FOR_REAL_OPEN_MS) {
-                      isSuspiciousOpen = true;
-                      console.log(`[SendGrid Webhook] Suspicious open detected: opened ${Math.round(timeSinceSent / 1000)}s after send - likely machine open/preload`);
-                    }
-                  }
                 } else if (!rows[0]?.sent_at) {
                   // If email hasn't been sent yet, this open is invalid
                   isInvalidOpen = true;
                   console.warn(`[SendGrid Webhook] INVALID open detected: email not yet sent - rejecting for tracking ID: ${trackingId}`);
                 }
               } catch (err) {
-                // If we can't check, be conservative and skip this open
-                console.warn('[SendGrid Webhook] Could not check sent_at time for suspicious open detection - skipping open');
-                isSuspiciousOpen = true;
+                // If we can't check, log but don't block the open
+                console.warn('[SendGrid Webhook] Could not check sent_at time for validation - allowing open');
               }
             }
             
@@ -332,7 +321,6 @@ export async function POST(request: NextRequest) {
               trackingId,
               email,
               isMachineOpen,
-              isSuspiciousOpen,
               isInvalidOpen,
               isLikelyMachineOpen,
               sgMachineOpen: event.sg_machine_open,
@@ -345,20 +333,18 @@ export async function POST(request: NextRequest) {
             
             // Only record if:
             // 1. Not a machine open (by flag or pattern detection)
-            // 2. Not suspicious timing
-            // 3. Not invalid (before sent_at)
-            if (!isLikelyMachineOpen && !isSuspiciousOpen && !isInvalidOpen) {
+            // 2. Not invalid (before sent_at)
+            if (!isLikelyMachineOpen && !isInvalidOpen) {
               await recordEmailOpen(trackingId, eventTimestamp);
               console.log('[SendGrid Webhook] Recorded email open for:', trackingId);
             } else {
-              // Log machine/suspicious/invalid opens but don't count them
+              // Log machine/invalid opens but don't count them
               let reason = 'unknown';
               if (isInvalidOpen) reason = 'invalid (before sent_at)';
               else if (isMachineOpen) reason = 'machine open flag';
               else if (isGmailPreload) reason = 'Gmail preload';
               else if (isAppleMailPrivacy) reason = 'Apple Mail Privacy';
               else if (isGoogleIP) reason = 'Google IP';
-              else if (isSuspiciousOpen) reason = 'suspicious timing';
               
               console.log(`[SendGrid Webhook] Skipping open (${reason}) for tracking ID: ${trackingId}`);
             }
