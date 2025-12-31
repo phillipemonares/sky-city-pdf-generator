@@ -29,12 +29,18 @@ export async function POST(request: NextRequest) {
     
     // Verify signature if public key is configured
     const publicKey = process.env.SENDGRID_WEBHOOK_PUBLIC_KEY;
-    if (publicKey) {
+    const skipVerification = process.env.SENDGRID_SKIP_VERIFICATION === 'true';
+    
+    if (publicKey && !skipVerification) {
       const signature = request.headers.get('x-twilio-email-event-webhook-signature');
       const timestamp = request.headers.get('x-twilio-email-event-webhook-timestamp');
       
       if (!signature || !timestamp) {
-        console.error('[SendGrid Webhook] Missing signature or timestamp headers');
+        console.error('[SendGrid Webhook] Missing signature or timestamp headers', {
+          hasSignature: !!signature,
+          hasTimestamp: !!timestamp,
+          headers: Object.fromEntries(request.headers.entries())
+        });
         return NextResponse.json(
           { success: false, error: 'Missing webhook signature headers' },
           { status: 401 }
@@ -42,25 +48,44 @@ export async function POST(request: NextRequest) {
       }
       
       // Verify signature: concatenate timestamp + raw body
+      // SendGrid uses ECDSA with SHA-256 for signature verification
       const payload = timestamp + rawBody;
       
       try {
         // Convert base64 public key to PEM format
         // SendGrid provides the key in base64 SPKI format, need to wrap in PEM headers
-        const publicKeyPEM = `-----BEGIN PUBLIC KEY-----\n${publicKey}\n-----END PUBLIC KEY-----`;
+        // The key might already be in PEM format, or might have whitespace
+        let publicKeyPEM: string;
+        
+        if (publicKey.includes('BEGIN PUBLIC KEY')) {
+          // Key is already in PEM format, just clean up whitespace
+          publicKeyPEM = publicKey.replace(/\r\n/g, '\n').trim();
+        } else {
+          // Key is in base64 format, need to wrap in PEM headers
+          // Remove all whitespace first
+          const cleanPublicKey = publicKey.replace(/\s/g, '');
+          // Add PEM headers
+          publicKeyPEM = `-----BEGIN PUBLIC KEY-----\n${cleanPublicKey}\n-----END PUBLIC KEY-----`;
+        }
         
         // Verify signature: concatenate timestamp + raw body
+        // SendGrid uses ECDSA with SHA-256 for signature verification
         const verify = createVerify('SHA256');
         verify.update(payload, 'utf8');
-        verify.end();
         
         const signatureBuffer = Buffer.from(signature, 'base64');
         
         // Verify the signature using the public key
+        // verify() handles the finalization automatically
         const isValid = verify.verify(publicKeyPEM, signatureBuffer);
         
         if (!isValid) {
-          console.error('[SendGrid Webhook] Invalid signature - request rejected');
+          console.error('[SendGrid Webhook] Invalid signature - request rejected', {
+            timestamp,
+            payloadLength: payload.length,
+            signatureLength: signature.length,
+            publicKeyLength: publicKey.length
+          });
           return NextResponse.json(
             { success: false, error: 'Invalid webhook signature' },
             { status: 401 }
@@ -69,7 +94,10 @@ export async function POST(request: NextRequest) {
         
         console.log('[SendGrid Webhook] Signature verified successfully');
       } catch (verifyError) {
-        console.error('[SendGrid Webhook] Signature verification error:', verifyError);
+        console.error('[SendGrid Webhook] Signature verification error:', {
+          error: verifyError instanceof Error ? verifyError.message : String(verifyError),
+          stack: verifyError instanceof Error ? verifyError.stack : undefined
+        });
         return NextResponse.json(
           { success: false, error: 'Signature verification failed' },
           { status: 401 }
@@ -93,6 +121,8 @@ export async function POST(request: NextRequest) {
           { status: 401 }
         );
       }
+    } else if (skipVerification) {
+      console.warn('[SendGrid Webhook] Signature verification disabled via SENDGRID_SKIP_VERIFICATION');
     } else {
       console.warn('[SendGrid Webhook] SENDGRID_WEBHOOK_PUBLIC_KEY not set - skipping signature verification');
     }
