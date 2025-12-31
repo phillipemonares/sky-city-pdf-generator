@@ -90,6 +90,31 @@ export default function EmailReportsPage() {
     setCurrentPage(1);
   };
 
+  // Format recipient name: remove titles and fix duplicate last names
+  const formatRecipientName = (name: string | null): string => {
+    if (!name) return '';
+    
+    // Remove common titles (case-insensitive)
+    let formatted = name
+      .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Miss|Dr\.?|Prof\.?|Sir|Madam)\s+/i, '')
+      .trim();
+    
+    // Fix duplicate last names (e.g., "Monares Monares" -> "Monares")
+    const parts = formatted.split(/\s+/);
+    if (parts.length >= 2) {
+      const lastPart = parts[parts.length - 1];
+      const secondLastPart = parts[parts.length - 2];
+      
+      // If last two parts are the same, remove the duplicate
+      if (lastPart.toLowerCase() === secondLastPart.toLowerCase()) {
+        parts.pop(); // Remove the last duplicate
+        formatted = parts.join(' ');
+      }
+    }
+    
+    return formatted;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'sent':
@@ -298,7 +323,9 @@ export default function EmailReportsPage() {
                       <tr key={record.id} className="hover:bg-gray-50">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm font-medium text-gray-900">
-                            {record.recipient_name || record.recipient_email}
+                            {record.recipient_name 
+                              ? formatRecipientName(record.recipient_name) 
+                              : record.recipient_email}
                           </div>
                           <div className="text-sm text-gray-500">{record.recipient_email}</div>
                         </td>
