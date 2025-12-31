@@ -350,6 +350,7 @@ export async function POST(request: NextRequest) {
         member.first_name,
         member.last_name
       ].filter(Boolean).join(' ') || 'Member';
+      const firstName = member.first_name || 'Member';
 
       const quarterLabel = `Q${batch.quarter} ${batch.year}`;
       const pdfBase64 = Buffer.from(pdfBuffer).toString('base64');
@@ -371,10 +372,10 @@ export async function POST(request: NextRequest) {
         to: member.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
-        text: `Dear ${playerName},\n\nPlease find attached your quarterly statement for ${quarterLabel}.\n\nThank you for being a valued member of SkyCity.\n\nBest regards,\nSkyCity Team`,
+        text: `Dear ${firstName},\n\nPlease find attached your quarterly statement for ${quarterLabel}.\n\nThank you for being a valued member of SkyCity.\n\nBest regards,\nSkyCity Team`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #1a1a1a;">Dear ${playerName},</h2>
+            <h2 style="color: #1a1a1a;">Dear ${firstName},</h2>
             <p>Please find attached your quarterly statement for <strong>${quarterLabel}</strong>.</p>
             <p>Thank you for being a valued member of SkyCity.</p>
             <p>Best regards,<br>SkyCity Team</p>

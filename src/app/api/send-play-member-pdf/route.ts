@@ -125,12 +125,16 @@ export async function POST(request: NextRequest) {
 
       const statementPeriod = targetPlayer.player_data.statementPeriod || 'Current Period';
       
-      // Parse statement period to extract dates in format "1 March 2025 and 30 June 2025"
+      // Parse statement period to extract dates in format "1 March 2025 – 30 June 2025"
       let formattedPeriod = statementPeriod;
       if (statementPeriod.includes(' - ')) {
         const [startDate, endDate] = statementPeriod.split(' - ');
-        formattedPeriod = `${startDate.trim()} and ${endDate.trim()}`;
+        formattedPeriod = `${startDate.trim()} – ${endDate.trim()}`;
       } else if (statementPeriod.includes(' and ')) {
+        // Convert "and" to en dash format
+        const [startDate, endDate] = statementPeriod.split(' and ');
+        formattedPeriod = `${startDate.trim()} – ${endDate.trim()}`;
+      } else if (statementPeriod.includes(' – ')) {
         // Already in correct format
         formattedPeriod = statementPeriod;
       }
@@ -157,7 +161,7 @@ export async function POST(request: NextRequest) {
         to: member.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
-        text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Pre-Commitment Statement for the period ${formattedPeriod} is now available for viewing and is attached to this email.\n\nWe would like to inform you that the attached statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.\n\nThe period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.\n\nIf you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8212 2811. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nPlease feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.\n\nKind Regards,\nSkyCity Adelaide`,
+        text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Pre-Commitment Statement for the period ${formattedPeriod} is now available for viewing and is attached to this email.\n\nWe would like to inform you that the attached statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.\n\nThe period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.\n\nIf you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nPlease feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.\n\nKind Regards,\nSkyCity Adelaide`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0; padding: 20px;">
             <div style="text-align: left; margin-bottom: 20px;">
@@ -171,7 +175,7 @@ export async function POST(request: NextRequest) {
               <p style="margin: 0 0 20px 0;">Your Pre-Commitment Statement for the period ${formattedPeriod} is now available for viewing and is attached to this email.</p>
               <p style="margin: 0 0 20px 0;">We would like to inform you that the attached statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.</p>
               <p style="margin: 0 0 20px 0;">The period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.</p>
-              <p style="margin: 0 0 20px 0;">If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8212 2811. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.</p>
+              <p style="margin: 0 0 20px 0;">If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.</p>
               <p style="margin: 0 0 20px 0;">Please feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.</p>
               <p style="margin: 0;">Kind Regards,<br>SkyCity Adelaide</p>
             </div>
