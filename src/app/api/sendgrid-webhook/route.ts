@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
     let skippedCount = 0;
     for (const event of events) {
       try {
-        const { event: eventType, email, timestamp, sg_message_id, custom_args } = event;
+        const { event: eventType, email, timestamp, sg_message_id, custom_args, from } = event;
         
         // First, check if this email exists in our tracking table
         // Only process events for emails we actually sent
@@ -154,14 +154,41 @@ export async function POST(request: NextRequest) {
           continue;
         }
         
-        // Filter by sender email - only process emails from statements@e.skycity.com.au
-        const senderEmail = custom_args?.sender_email;
+        // STRICT FILTER: Only process events from our specific sender email
+        // Check both 'from' field (SendGrid includes this) and custom_args.sender_email
         const expectedSenderEmail = process.env.SENDGRID_FROM_EMAIL || 'statements@e.skycity.com.au';
+        const senderEmailFromEvent = from || custom_args?.sender_email;
         
-        if (senderEmail && senderEmail !== expectedSenderEmail) {
-          // Skip events from other sender emails
+        // Log sender email for debugging
+        console.log('[SendGrid Webhook] Event sender verification:', {
+          eventType,
+          email,
+          from: from || 'not provided',
+          customArgsSender: custom_args?.sender_email || 'not provided',
+          senderEmailFromEvent: senderEmailFromEvent || 'not provided',
+          expectedSender: expectedSenderEmail
+        });
+        
+        // If we have a sender email in the event, it MUST match our expected sender
+        if (senderEmailFromEvent && senderEmailFromEvent !== expectedSenderEmail) {
+          console.log('[SendGrid Webhook] Skipping event - sender email mismatch:', {
+            eventType,
+            email,
+            senderEmail: senderEmailFromEvent,
+            expectedSender: expectedSenderEmail
+          });
           skippedCount++;
           continue;
+        }
+        
+        // If sender email is missing, we can still process if email exists in tracking
+        // (This means it was sent by us, so it's from our sender email)
+        if (!senderEmailFromEvent) {
+          console.log('[SendGrid Webhook] No sender email in event, but email exists in tracking - assuming from our sender:', {
+            eventType,
+            email,
+            expectedSender: expectedSenderEmail
+          });
         }
         
         // Extract email_tracking_id from custom_args (most reliable method)

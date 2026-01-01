@@ -345,7 +345,7 @@ export async function getEmailTrackingRecords(filters?: {
   search?: string;
   limit?: number;
   offset?: number;
-}): Promise<{ records: EmailTracking[]; total: number }> {
+}): Promise<{ records: EmailTracking[]; total: number; stats: { total: number; sent: number; delivered: number; opened: number; bounced: number; failed: number } }> {
   try {
     const conditions: string[] = [];
     const values: any[] = [];
@@ -400,6 +400,28 @@ export async function getEmailTrackingRecords(filters?: {
     );
     const total = countRows[0]?.total || 0;
     
+    // Get aggregate statistics
+    const [statsRows] = await pool.execute<mysql.RowDataPacket[]>(
+      `SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
+        SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+        SUM(CASE WHEN open_count > 0 THEN 1 ELSE 0 END) as opened,
+        SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) as bounced,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+       FROM email_tracking ${whereClause}`,
+      values
+    );
+    
+    const stats = {
+      total: Number(statsRows[0]?.total || 0),
+      sent: Number(statsRows[0]?.sent || 0),
+      delivered: Number(statsRows[0]?.delivered || 0),
+      opened: Number(statsRows[0]?.opened || 0),
+      bounced: Number(statsRows[0]?.bounced || 0),
+      failed: Number(statsRows[0]?.failed || 0),
+    };
+    
     // Get records with pagination
     // Note: LIMIT and OFFSET must be integers - validate and use in SQL string (safe since we validate them)
     const limitValue = Number(filters?.limit || 50);
@@ -440,7 +462,7 @@ export async function getEmailTrackingRecords(filters?: {
       updated_at: new Date(row.updated_at),
     }));
     
-    return { records, total };
+    return { records, total, stats };
   } catch (error) {
     console.error('Error getting email tracking records:', error);
     throw error;

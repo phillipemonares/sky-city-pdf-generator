@@ -26,6 +26,14 @@ export default function EmailReportsPage() {
   const [emailRecords, setEmailRecords] = useState<EmailTracking[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [total, setTotal] = useState<number>(0);
+  const [stats, setStats] = useState({
+    total: 0,
+    sent: 0,
+    delivered: 0,
+    opened: 0,
+    bounced: 0,
+    failed: 0,
+  });
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize] = useState<number>(50);
   
@@ -60,6 +68,14 @@ export default function EmailReportsPage() {
         if (data.success) {
           setEmailRecords(data.records || []);
           setTotal(data.total || 0);
+          setStats(data.stats || {
+            total: 0,
+            sent: 0,
+            delivered: 0,
+            opened: 0,
+            bounced: 0,
+            failed: 0,
+          });
         }
       }
     } catch (error) {
@@ -145,16 +161,11 @@ export default function EmailReportsPage() {
     }
   };
 
-  // Calculate statistics
-  const stats = {
-    total: total,
-    sent: emailRecords.filter(r => r.status === 'sent' || r.status === 'delivered').length,
-    opened: emailRecords.filter(r => r.open_count > 0).length,
-    bounced: emailRecords.filter(r => r.status === 'bounced').length,
-    failed: emailRecords.filter(r => r.status === 'failed').length,
-  };
-
-  const openRate = stats.sent > 0 ? ((stats.opened / stats.sent) * 100).toFixed(1) : '0.0';
+  // Calculate delivered count (sent + delivered statuses)
+  const deliveredCount = stats.sent + stats.delivered;
+  
+  // Calculate open rate based on delivered emails
+  const openRate = deliveredCount > 0 ? ((stats.opened / deliveredCount) * 100).toFixed(1) : '0.0';
 
   const totalPages = Math.ceil(total / pageSize);
 
@@ -179,7 +190,7 @@ export default function EmailReportsPage() {
           </div>
           <div className="bg-white rounded-lg shadow p-4">
             <div className="text-sm text-gray-600 mb-1">Delivered</div>
-            <div className="text-2xl font-bold text-green-600">{stats.sent.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-green-600">{deliveredCount.toLocaleString()}</div>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
             <div className="text-sm text-gray-600 mb-1">Opened</div>

@@ -41,12 +41,13 @@ export async function GET(request: NextRequest) {
     filters.limit = limit;
     filters.offset = offset;
     
-    const { records, total } = await getEmailTrackingRecords(filters);
+    const { records, total, stats } = await getEmailTrackingRecords(filters);
     
     return NextResponse.json({
       success: true,
       records,
       total,
+      stats,
       limit,
       offset,
     });
