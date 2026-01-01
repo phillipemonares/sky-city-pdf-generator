@@ -446,7 +446,7 @@ export function renderActivityPages(
     </div>
 
     <div class="contact-info">
-      If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8212 2811 and ask to be put through to the Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.
+      If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141 and ask to be put through to the Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.
       <br><br>
       Please feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.
     </div>
