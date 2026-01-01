@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import Navigation from '@/components/Navigation';
 import EditMemberModal from '@/components/EditMemberModal';
 import SendEmailModal from '@/components/SendEmailModal';
@@ -49,6 +49,10 @@ export default function MembersPage() {
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
     isOpen: boolean;
     count: number;
+  } | null>(null);
+  const [sendAllConfirmDialog, setSendAllConfirmDialog] = useState<{
+    isOpen: boolean;
+    eligibleCount: number;
   } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
@@ -468,83 +472,29 @@ export default function MembersPage() {
     }
   }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
 
-  // Send all emails for members with is_email = true/yes
-  const sendAllEmails = useCallback(async () => {
-    if (activeTab !== 'play' && activeTab !== 'no-play') {
+  // Store eligible members for sending (used after confirmation)
+  const eligibleMembersRef = useRef<Array<{ account_number: string; latest_batch_id?: string | null; latest_play_batch_id?: string | null; latest_no_play_batch_id?: string | null }>>([]);
+
+  // Actually send the emails (called after confirmation)
+  const performSendAllEmails = useCallback(async () => {
+    const eligibleMembers = eligibleMembersRef.current;
+    
+    if (eligibleMembers.length === 0) {
+      setSendingAll(false);
+      setSendAllProgress(null);
       return;
     }
 
     try {
-      setSendingAll(true);
-      setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
-
-      // Fetch all eligible members across all pages
-      const apiEndpoint = activeTab === 'play' ? '/api/list-play-members' : '/api/list-no-play-members';
-      const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
-      const pageSize = 100; // Use max page size to minimize requests
-      
-      // First, get the first page to know total pages
-      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}`);
-      if (!firstPageResponse.ok) {
-        throw new Error('Failed to fetch members');
-      }
-      const firstPageData = await firstPageResponse.json();
-      if (!firstPageData.success) {
-        throw new Error('Failed to fetch members');
-      }
-
-      const totalPages = firstPageData.totalPages || 1;
-      let allMembers = [...(firstPageData.members || [])];
-
-      // Fetch remaining pages if needed
-      if (totalPages > 1) {
-        setSendAllProgress({ current: 1, total: totalPages });
-        const remainingPages = [];
-        for (let page = 2; page <= totalPages; page++) {
-          remainingPages.push(
-            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}`)
-              .then(res => res.json())
-              .then(data => {
-                setSendAllProgress({ current: page, total: totalPages });
-                return data.members || [];
-              })
-          );
-        }
-        const remainingMembers = await Promise.all(remainingPages);
-        allMembers = allMembers.concat(...remainingMembers);
-      }
-
-      // Filter members where is_email is true (1) and have batch ID and email
-      const eligibleMembers = allMembers.filter(m => {
-        // Check if is_email is truthy (1, true, "yes", "true", etc.)
-        const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
-                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
-                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
-        const hasBatchId = activeTab === 'play' ? !!m.latest_play_batch_id : !!m.latest_no_play_batch_id;
-        const hasEmailAddress = m.email && m.email.trim() !== '';
-        return isEmailEnabled && hasBatchId && hasEmailAddress;
-      });
-
-      if (eligibleMembers.length === 0) {
-        alert('No members with email enabled found to send emails to.');
-        return;
-      }
-
-      // Confirm before sending
-      const confirmed = confirm(
-        `You are about to send ${eligibleMembers.length} email(s) to members with email enabled.\n\n` +
-        `This may take several minutes. Do you want to continue?`
-      );
-      if (!confirmed) {
-        setSendingAll(false);
-        setSendAllProgress(null);
-        return;
-      }
-
       // Now send emails
       setSendAllProgress({ current: 0, total: eligibleMembers.length });
 
-      const sendApiEndpoint = activeTab === 'play' ? '/api/send-play-member-pdf' : '/api/send-no-play-member-pdf';
+      const sendApiEndpoint = activeTab === 'quarterly' 
+        ? '/api/send-member-pdf' 
+        : activeTab === 'play' 
+        ? '/api/send-play-member-pdf' 
+        : '/api/send-no-play-member-pdf';
+      
       let successCount = 0;
       let failedCount = 0;
       const failedAccounts: string[] = [];
@@ -552,7 +502,11 @@ export default function MembersPage() {
       // Send emails sequentially to avoid overwhelming the server
       for (let i = 0; i < eligibleMembers.length; i++) {
         const member = eligibleMembers[i];
-        const batchId = activeTab === 'play' ? member.latest_play_batch_id : member.latest_no_play_batch_id;
+        const batchId = activeTab === 'quarterly' 
+          ? member.latest_batch_id 
+          : activeTab === 'play' 
+          ? member.latest_play_batch_id 
+          : member.latest_no_play_batch_id;
 
         try {
           const response = await fetch(sendApiEndpoint, {
@@ -598,7 +552,9 @@ export default function MembersPage() {
       });
 
       // Refresh the current tab's data
-      if (activeTab === 'play') {
+      if (activeTab === 'quarterly') {
+        await loadMembers(currentPage, pageSize, activeSearch);
+      } else if (activeTab === 'play') {
         await loadPlayMembers(currentPage, pageSize, activeSearch);
       } else {
         await loadNoPlayMembers(currentPage, pageSize, activeSearch);
@@ -609,8 +565,139 @@ export default function MembersPage() {
     } finally {
       setSendingAll(false);
       setSendAllProgress(null);
+      eligibleMembersRef.current = [];
     }
-  }, [activeTab, playMembers, noPlayMembers, currentPage, pageSize, activeSearch, loadPlayMembers, loadNoPlayMembers]);
+  }, [activeTab, currentPage, pageSize, activeSearch, loadMembers, loadPlayMembers, loadNoPlayMembers]);
+
+  // Send all emails for members with is_email = true/yes
+  const sendAllEmails = useCallback(async () => {
+    try {
+      setSendingAll(true);
+      setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
+
+      // Fetch all eligible members across all pages
+      let apiEndpoint: string;
+      if (activeTab === 'quarterly') {
+        apiEndpoint = '/api/list-members';
+      } else if (activeTab === 'play') {
+        apiEndpoint = '/api/list-play-members';
+      } else {
+        apiEndpoint = '/api/list-no-play-members';
+      }
+
+      const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
+      const pageSize = 100; // Use max page size to minimize requests
+      
+      // First, get the first page to know total pages
+      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}`);
+      if (!firstPageResponse.ok) {
+        throw new Error('Failed to fetch members');
+      }
+      const firstPageData = await firstPageResponse.json();
+      if (!firstPageData.success) {
+        throw new Error('Failed to fetch members');
+      }
+
+      const totalPages = firstPageData.totalPages || 1;
+      let allMembers = [...(firstPageData.members || [])];
+
+      // Fetch remaining pages if needed
+      if (totalPages > 1) {
+        setSendAllProgress({ current: 1, total: totalPages });
+        const remainingPages = [];
+        for (let page = 2; page <= totalPages; page++) {
+          remainingPages.push(
+            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}`)
+              .then(res => res.json())
+              .then(data => {
+                setSendAllProgress({ current: page, total: totalPages });
+                return data.members || [];
+              })
+          );
+        }
+        const remainingMembers = await Promise.all(remainingPages);
+        allMembers = allMembers.concat(...remainingMembers);
+      }
+
+      // Filter members where is_email is true (1) and have batch ID and email
+      let eligibleMembers = allMembers.filter(m => {
+        // Check if is_email is truthy (1, true, "yes", "true", etc.)
+        const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
+                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
+                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
+        const hasBatchId = activeTab === 'quarterly' 
+          ? !!m.latest_batch_id 
+          : activeTab === 'play' 
+          ? !!m.latest_play_batch_id 
+          : !!m.latest_no_play_batch_id;
+        const hasEmailAddress = m.email && m.email.trim() !== '';
+        return isEmailEnabled && hasBatchId && hasEmailAddress;
+      });
+
+      // For quarterly tab, verify preview exists before sending
+      if (activeTab === 'quarterly') {
+        setSendAllProgress({ current: 0, total: eligibleMembers.length });
+        const membersWithPreview: typeof eligibleMembers = [];
+        
+        for (let i = 0; i < eligibleMembers.length; i++) {
+          const member = eligibleMembers[i];
+          const previewUrl = `/content/files/${member.account_number}/${member.latest_batch_id}/`;
+          
+          try {
+            // Check if preview exists by fetching it with a timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+            
+            const previewResponse = await fetch(previewUrl, { 
+              method: 'GET',
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (previewResponse.ok) {
+              membersWithPreview.push(member);
+            } else {
+              console.log(`Skipping ${member.account_number}: preview not available (status: ${previewResponse.status})`);
+            }
+          } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+              console.log(`Skipping ${member.account_number}: preview check timed out`);
+            } else {
+              console.log(`Skipping ${member.account_number}: preview check failed`, error);
+            }
+          }
+          
+          // Update progress during preview check
+          setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
+        }
+        
+        eligibleMembers = membersWithPreview;
+      }
+
+      if (eligibleMembers.length === 0) {
+        alert('No members with email enabled and valid preview found to send emails to.');
+        setSendingAll(false);
+        setSendAllProgress(null);
+        return;
+      }
+
+      // Store eligible members and show confirmation dialog
+      eligibleMembersRef.current = eligibleMembers;
+      setSendAllConfirmDialog({
+        isOpen: true,
+        eligibleCount: eligibleMembers.length,
+      });
+      
+      // Reset progress while waiting for confirmation
+      setSendAllProgress(null);
+    } catch (error) {
+      console.error('Error preparing to send all emails:', error);
+      alert('Failed to prepare email sending. Please try again.');
+      setSendingAll(false);
+      setSendAllProgress(null);
+    }
+  }, [activeTab, activeSearch]);
 
   // Load members on component mount and when page/tab/search changes
   useEffect(() => {
@@ -749,15 +836,13 @@ export default function MembersPage() {
                 >
                   {exporting ? (exportProgress ? `Exporting... ${exportProgress.current}/${exportProgress.total}` : 'Exporting...') : 'Export All'}
                 </button>
-                {(activeTab === 'play' || activeTab === 'no-play') && (
-                  <button
-                    onClick={sendAllEmails}
-                    disabled={sendingAll || loadingMembers || (activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
-                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:bg-gray-400"
-                  >
-                    {sendingAll ? (sendAllProgress ? `Sending... ${sendAllProgress.current}/${sendAllProgress.total}` : 'Sending...') : 'Send All'}
-                  </button>
-                )}
+                <button
+                  onClick={sendAllEmails}
+                  disabled={sendingAll || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
+                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                >
+                  {sendingAll ? (sendAllProgress ? `Sending... ${sendAllProgress.current}/${sendAllProgress.total}` : 'Sending...') : 'Send All'}
+                </button>
                 {exportProgress && (
                   <div className="text-sm text-gray-600 flex items-center">
                     <div className="w-32 bg-gray-200 rounded-full h-2 mr-2">
@@ -1310,6 +1395,24 @@ export default function MembersPage() {
           title="Confirm Deletion"
           confirmText="Delete"
           cancelText="Cancel"
+        />
+      )}
+
+      {/* Send All Confirmation Dialog */}
+      {sendAllConfirmDialog && (
+        <ConfirmDialog
+          isOpen={sendAllConfirmDialog.isOpen}
+          onClose={() => {
+            setSendAllConfirmDialog(null);
+            setSendingAll(false);
+            eligibleMembersRef.current = [];
+          }}
+          onConfirm={performSendAllEmails}
+          message={`You are about to send ${sendAllConfirmDialog.eligibleCount} email(s) to members with email enabled.\n\nThis may take several minutes. Do you want to continue?`}
+          title="Confirm Send All Emails"
+          confirmText="Send All"
+          cancelText="Cancel"
+          confirmButtonClass="bg-purple-600 hover:bg-purple-700"
         />
       )}
     </div>

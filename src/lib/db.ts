@@ -411,6 +411,7 @@ export async function updateAccountData(
 
 /**
  * Delete a generation batch and all associated matched accounts (cascade)
+ * Also deletes members associated with this batch
  */
 export async function deleteBatch(batchId: string): Promise<boolean> {
   const connection = await pool.getConnection();
@@ -418,10 +419,33 @@ export async function deleteBatch(batchId: string): Promise<boolean> {
   try {
     await connection.beginTransaction();
 
+    // First, get all account numbers from quarterly_user_statements for this batch
+    const [accountRows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT DISTINCT account_number FROM quarterly_user_statements WHERE batch_id = ?`,
+      [batchId]
+    );
+
+    // Delete quarterly_user_statements entries for this batch
+    await connection.execute(
+      `DELETE FROM quarterly_user_statements WHERE batch_id = ?`,
+      [batchId]
+    );
+
+    // Delete the generation_batches entry
     await connection.execute(
       `DELETE FROM generation_batches WHERE id = ?`,
       [batchId]
     );
+
+    // Delete members that match the account numbers from this batch
+    if (accountRows.length > 0) {
+      const accountNumbers = accountRows.map(row => row.account_number);
+      const placeholders = accountNumbers.map(() => '?').join(',');
+      await connection.execute(
+        `DELETE FROM members WHERE account_number IN (${placeholders})`,
+        accountNumbers
+      );
+    }
 
     await connection.commit();
     return true;
