@@ -566,7 +566,208 @@ export default function MembersPage() {
 
   // Actually send the emails (called after confirmation)
   const performSendAllEmails = useCallback(async () => {
-    const eligibleMembers = eligibleMembersRef.current;
+    let eligibleMembers = eligibleMembersRef.current;
+    
+    // For quarterly tab, fetch member data now (after confirmation)
+    if (activeTab === 'quarterly' && eligibleMembers.length === 0) {
+      try {
+        setSendingAll(true);
+        setSendAllProgress({ current: 0, total: 1 });
+
+        const apiEndpoint = '/api/list-members';
+        const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
+        const isEmailParam = '&is_email=1';
+        const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
+        const filterParams = `${isEmailParam}${isPostalParam}`;
+        const pageSize = 100;
+        
+        // Get first page to know total pages
+        const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${filterParams}`);
+        if (!firstPageResponse.ok) {
+          throw new Error('Failed to fetch members');
+        }
+        const firstPageData = await firstPageResponse.json();
+        if (!firstPageData.success) {
+          throw new Error('Failed to fetch members');
+        }
+
+        const totalMembers = firstPageData.total || 0;
+        const calculatedTotalPages = Math.ceil(totalMembers / pageSize);
+        const totalPages = Math.max(calculatedTotalPages, firstPageData.totalPages || 1);
+        
+        let allMembers = [...(firstPageData.members || [])];
+
+        // Fetch remaining pages if needed
+        if (totalPages > 1) {
+          setSendAllProgress({ current: 1, total: totalPages });
+          const remainingPages = [];
+          for (let page = 2; page <= totalPages; page++) {
+            remainingPages.push(
+              fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}${filterParams}`)
+                .then(res => res.json())
+                .then(data => {
+                  setSendAllProgress({ current: page, total: totalPages });
+                  return data.members || [];
+                })
+                .catch(error => {
+                  console.error(`Error fetching page ${page}:`, error);
+                  return [];
+                })
+            );
+          }
+          const remainingMembers = await Promise.all(remainingPages);
+          allMembers = allMembers.concat(...remainingMembers);
+        }
+
+        // Filter members where is_email is true (1) and have batch ID and email
+        let filteredMembers = allMembers.filter(m => {
+          const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
+                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
+                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
+          const hasBatchId = !!m.latest_batch_id;
+          const hasEmailAddress = m.email && m.email.trim() !== '';
+          return isEmailEnabled && hasBatchId && hasEmailAddress;
+        });
+
+        // For quarterly tab, verify preview exists before sending
+        setSendAllProgress({ current: 0, total: filteredMembers.length });
+        const membersWithPreview: typeof filteredMembers = [];
+        
+        for (let i = 0; i < filteredMembers.length; i++) {
+          const member = filteredMembers[i];
+          const previewUrl = `/content/files/${member.account_number}/${member.latest_batch_id}/`;
+          
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            
+            const previewResponse = await fetch(previewUrl, { 
+              method: 'GET',
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (previewResponse.ok) {
+              membersWithPreview.push(member);
+            }
+          } catch (error) {
+            // Skip members without preview
+          }
+          
+          setSendAllProgress({ current: i + 1, total: filteredMembers.length });
+        }
+        
+        eligibleMembers = membersWithPreview;
+
+        if (eligibleMembers.length === 0) {
+          setAlertDialog({
+            isOpen: true,
+            message: 'No members with email enabled and valid preview found to send emails to.',
+            type: 'warning',
+          });
+          setSendingAll(false);
+          setSendAllProgress(null);
+          return;
+        }
+
+        // Store eligible members for sending
+        eligibleMembersRef.current = eligibleMembers;
+      } catch (error) {
+        console.error('Error fetching eligible members:', error);
+        setAlertDialog({
+          isOpen: true,
+          message: 'Failed to fetch eligible members. Please try again.',
+          type: 'error',
+        });
+        setSendingAll(false);
+        setSendAllProgress(null);
+        return;
+      }
+    }
+    
+    // For play and no-play tabs, fetch member data now (after confirmation)
+    if ((activeTab === 'play' || activeTab === 'no-play') && eligibleMembers.length === 0) {
+      try {
+        setSendingAll(true);
+        setSendAllProgress({ current: 0, total: 1 });
+
+        const apiEndpoint = activeTab === 'play' ? '/api/list-play-members' : '/api/list-no-play-members';
+        const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
+        const isEmailParam = '&is_email=1';
+        const pageSize = 100;
+        
+        // Get first page to know total pages
+        const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${isEmailParam}`);
+        if (!firstPageResponse.ok) {
+          throw new Error('Failed to fetch members');
+        }
+        const firstPageData = await firstPageResponse.json();
+        if (!firstPageData.success) {
+          throw new Error('Failed to fetch members');
+        }
+
+        const totalPages = firstPageData.totalPages || 1;
+        let allMembers = [...(firstPageData.members || [])];
+
+        // Fetch remaining pages if needed
+        if (totalPages > 1) {
+          setSendAllProgress({ current: 1, total: totalPages });
+          const remainingPages = [];
+          for (let page = 2; page <= totalPages; page++) {
+            remainingPages.push(
+              fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}${isEmailParam}`)
+                .then(res => res.json())
+                .then(data => {
+                  setSendAllProgress({ current: page, total: totalPages });
+                  return data.members || [];
+                })
+                .catch(error => {
+                  console.error(`Error fetching page ${page}:`, error);
+                  return [];
+                })
+            );
+          }
+          const remainingMembers = await Promise.all(remainingPages);
+          allMembers = allMembers.concat(...remainingMembers);
+        }
+
+        // Filter members where is_email is true (1) and have batch ID and email
+        const filteredMembers = allMembers.filter(m => {
+          const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
+                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
+                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
+          const hasBatchId = activeTab === 'play' ? !!m.latest_play_batch_id : !!m.latest_no_play_batch_id;
+          const hasEmailAddress = m.email && m.email.trim() !== '';
+          return isEmailEnabled && hasBatchId && hasEmailAddress;
+        });
+
+        if (filteredMembers.length === 0) {
+          setAlertDialog({
+            isOpen: true,
+            message: 'No members with email enabled found to send emails to.',
+            type: 'warning',
+          });
+          setSendingAll(false);
+          setSendAllProgress(null);
+          return;
+        }
+
+        // Store eligible members for sending
+        eligibleMembers = filteredMembers;
+        eligibleMembersRef.current = eligibleMembers;
+      } catch (error) {
+        console.error('Error fetching eligible members:', error);
+        setAlertDialog({
+          isOpen: true,
+          message: 'Failed to fetch eligible members. Please try again.',
+          type: 'error',
+        });
+        setSendingAll(false);
+        setSendAllProgress(null);
+        return;
+      }
+    }
     
     if (eligibleMembers.length === 0) {
       setSendingAll(false);
@@ -664,104 +865,35 @@ export default function MembersPage() {
 
   // Send all emails for members with is_email = true/yes
   const sendAllEmails = useCallback(async () => {
-    // For quarterly tab, use the existing logic with confirmation dialog
+    // For quarterly tab, get count first, show dialog, then fetch data after confirmation
     if (activeTab === 'quarterly') {
       try {
         setSendingAll(true);
-        setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
+        setSendAllProgress({ current: 0, total: 1 });
 
         const apiEndpoint = '/api/list-members';
         const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
-        // Don't apply is_email filter when counting for "Send All" - we'll filter client-side
-        // Only apply is_postal filter if set
+        // Use is_email filter to only count members with email enabled
+        const isEmailParam = '&is_email=1';
         const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
-        const filterParams = `${isPostalParam}`;
-        const pageSize = 100; // Use max page size to minimize requests
+        const filterParams = `${isEmailParam}${isPostalParam}`;
         
-        // First, get the first page to know total pages
-        const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${filterParams}`);
-        if (!firstPageResponse.ok) {
-          throw new Error('Failed to fetch members');
+        // Make a single API call with pageSize=1 just to get the total count
+        const countResponse = await fetch(`${apiEndpoint}?page=1&pageSize=1${searchParam}${filterParams}`);
+        if (!countResponse.ok) {
+          throw new Error('Failed to fetch member count');
         }
-        const firstPageData = await firstPageResponse.json();
-        if (!firstPageData.success) {
-          throw new Error('Failed to fetch members');
-        }
-
-        // Calculate total pages based on total count
-        const totalMembers = firstPageData.total || 0;
-        const calculatedTotalPages = Math.ceil(totalMembers / pageSize);
-        const totalPages = Math.max(calculatedTotalPages, firstPageData.totalPages || 1);
-        
-        let allMembers = [...(firstPageData.members || [])];
-
-        // Fetch remaining pages if needed
-        if (totalPages > 1) {
-          setSendAllProgress({ current: 1, total: totalPages });
-          const remainingPages = [];
-          for (let page = 2; page <= totalPages; page++) {
-            remainingPages.push(
-              fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}${filterParams}`)
-                .then(res => res.json())
-                .then(data => {
-                  setSendAllProgress({ current: page, total: totalPages });
-                  return data.members || [];
-                })
-                .catch(error => {
-                  console.error(`Error fetching page ${page}:`, error);
-                  return [];
-                })
-            );
-          }
-          const remainingMembers = await Promise.all(remainingPages);
-          allMembers = allMembers.concat(...remainingMembers);
+        const countData = await countResponse.json();
+        if (!countData.success) {
+          throw new Error('Failed to fetch member count');
         }
 
-        // Filter members where is_email is true (1) and have batch ID and email
-        let eligibleMembers = allMembers.filter(m => {
-          const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
-                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
-                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
-          const hasBatchId = !!m.latest_batch_id;
-          const hasEmailAddress = m.email && m.email.trim() !== '';
-          return isEmailEnabled && hasBatchId && hasEmailAddress;
-        });
+        const estimatedCount = countData.total || 0;
 
-        // For quarterly tab, verify preview exists before sending
-        setSendAllProgress({ current: 0, total: eligibleMembers.length });
-        const membersWithPreview: typeof eligibleMembers = [];
-        
-        for (let i = 0; i < eligibleMembers.length; i++) {
-          const member = eligibleMembers[i];
-          const previewUrl = `/content/files/${member.account_number}/${member.latest_batch_id}/`;
-          
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-            
-            const previewResponse = await fetch(previewUrl, { 
-              method: 'GET',
-              signal: controller.signal
-            });
-            
-            clearTimeout(timeoutId);
-            
-            if (previewResponse.ok) {
-              membersWithPreview.push(member);
-            }
-          } catch (error) {
-            // Skip members without preview
-          }
-          
-          setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
-        }
-        
-        eligibleMembers = membersWithPreview;
-
-        if (eligibleMembers.length === 0) {
+        if (estimatedCount === 0) {
           setAlertDialog({
             isOpen: true,
-            message: 'No members with email enabled and valid preview found to send emails to.',
+            message: 'No members with email enabled found to send emails to.',
             type: 'warning',
           });
           setSendingAll(false);
@@ -769,14 +901,14 @@ export default function MembersPage() {
           return;
         }
 
-        // Store eligible members and show confirmation dialog
-        eligibleMembersRef.current = eligibleMembers;
+        // Show confirmation dialog immediately with the count
+        // Note: Actual eligible count may be slightly lower after filtering for batch_id, email, and preview
+        setSendingAll(false);
+        setSendAllProgress(null);
         setSendAllConfirmDialog({
           isOpen: true,
-          eligibleCount: eligibleMembers.length,
+          eligibleCount: estimatedCount,
         });
-        
-        setSendAllProgress(null);
       } catch (error) {
         console.error('Error preparing to send all emails:', error);
         setAlertDialog({
@@ -790,63 +922,33 @@ export default function MembersPage() {
       return;
     }
 
-    // For play and no-play tabs, use the original working logic (exactly as commit 2a91f7c)
+    // For play and no-play tabs, get count first, show dialog, then fetch data after confirmation
     if (activeTab !== 'play' && activeTab !== 'no-play') {
       return;
     }
 
     try {
       setSendingAll(true);
-      setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
+      setSendAllProgress({ current: 0, total: 1 });
 
-      // Fetch all eligible members across all pages
+      // Fetch count of eligible members
       const apiEndpoint = activeTab === 'play' ? '/api/list-play-members' : '/api/list-no-play-members';
       const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
-      const pageSize = 100; // Use max page size to minimize requests
+      const isEmailParam = '&is_email=1'; // Only count members with email enabled
       
-      // First, get the first page to know total pages
-      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}`);
-      if (!firstPageResponse.ok) {
-        throw new Error('Failed to fetch members');
+      // Make a single API call with pageSize=1 just to get the total count
+      const countResponse = await fetch(`${apiEndpoint}?page=1&pageSize=1${searchParam}${isEmailParam}`);
+      if (!countResponse.ok) {
+        throw new Error('Failed to fetch member count');
       }
-      const firstPageData = await firstPageResponse.json();
-      if (!firstPageData.success) {
-        throw new Error('Failed to fetch members');
-      }
-
-      const totalPages = firstPageData.totalPages || 1;
-      let allMembers = [...(firstPageData.members || [])];
-
-      // Fetch remaining pages if needed
-      if (totalPages > 1) {
-        setSendAllProgress({ current: 1, total: totalPages });
-        const remainingPages = [];
-        for (let page = 2; page <= totalPages; page++) {
-          remainingPages.push(
-            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}`)
-              .then(res => res.json())
-              .then(data => {
-                setSendAllProgress({ current: page, total: totalPages });
-                return data.members || [];
-              })
-          );
-        }
-        const remainingMembers = await Promise.all(remainingPages);
-        allMembers = allMembers.concat(...remainingMembers);
+      const countData = await countResponse.json();
+      if (!countData.success) {
+        throw new Error('Failed to fetch member count');
       }
 
-      // Filter members where is_email is true (1) and have batch ID and email
-      const eligibleMembers = allMembers.filter(m => {
-        // Check if is_email is truthy (1, true, "yes", "true", etc.)
-        const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
-                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
-                              (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
-        const hasBatchId = activeTab === 'play' ? !!m.latest_play_batch_id : !!m.latest_no_play_batch_id;
-        const hasEmailAddress = m.email && m.email.trim() !== '';
-        return isEmailEnabled && hasBatchId && hasEmailAddress;
-      });
+      const estimatedCount = countData.total || 0;
 
-      if (eligibleMembers.length === 0) {
+      if (estimatedCount === 0) {
         setAlertDialog({
           isOpen: true,
           message: 'No members with email enabled found to send emails to.',
@@ -857,77 +959,15 @@ export default function MembersPage() {
         return;
       }
 
-      // Store eligible members and show confirmation dialog
-      eligibleMembersRef.current = eligibleMembers;
+      // Show confirmation dialog immediately with the count
+      // Note: Actual eligible count may be slightly lower after filtering for batch_id and email
+      setSendingAll(false);
+      setSendAllProgress(null);
       setSendAllConfirmDialog({
         isOpen: true,
-        eligibleCount: eligibleMembers.length,
+        eligibleCount: estimatedCount,
       });
-      setSendAllProgress(null);
       return;
-
-      // Now send emails directly (like the working version)
-      setSendAllProgress({ current: 0, total: eligibleMembers.length });
-
-      const sendApiEndpoint = activeTab === 'play' ? '/api/send-play-member-pdf' : '/api/send-no-play-member-pdf';
-      let successCount = 0;
-      let failedCount = 0;
-      const failedAccounts: string[] = [];
-
-      // Send emails sequentially to avoid overwhelming the server
-      for (let i = 0; i < eligibleMembers.length; i++) {
-        const member = eligibleMembers[i];
-        const batchId = activeTab === 'play' ? member.latest_play_batch_id : member.latest_no_play_batch_id;
-
-        try {
-          const response = await fetch(sendApiEndpoint, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              account: member.account_number,
-              batchId: batchId,
-            }),
-          });
-
-          const data = await response.json();
-
-          if (data.success) {
-            successCount++;
-          } else {
-            failedCount++;
-            failedAccounts.push(member.account_number);
-          }
-        } catch (error) {
-          failedCount++;
-          failedAccounts.push(member.account_number);
-          console.error(`Error sending email to ${member.account_number}:`, error);
-        }
-
-        // Update progress
-        setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
-
-        // Small delay between emails to avoid rate limiting
-        if (i < eligibleMembers.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      }
-
-      // Show results
-      setSendAllResults({
-        isOpen: true,
-        successCount,
-        failedCount,
-        failedAccounts: failedAccounts.slice(0, 10), // Show first 10 failed accounts
-      });
-
-      // Refresh the current tab's data (without filters parameter like working version)
-      if (activeTab === 'play') {
-        await loadPlayMembers(currentPage, pageSize, activeSearch);
-      } else {
-        await loadNoPlayMembers(currentPage, pageSize, activeSearch);
-      }
     } catch (error) {
       console.error('Error sending all emails:', error);
       setAlertDialog({
@@ -1705,7 +1745,7 @@ export default function MembersPage() {
             eligibleMembersRef.current = [];
           }}
           onConfirm={performSendAllEmails}
-          message={`You are about to send ${sendAllConfirmDialog.eligibleCount} email(s) to members with email enabled.\n\nThis may take several minutes. Do you want to continue?`}
+          message={`You are about to send ${sendAllConfirmDialog.eligibleCount.toLocaleString()} email(s) to members with email enabled.\n\nThis may take several minutes. Do you want to continue?`}
           title="Confirm Send All Emails"
           confirmText="Send All"
           cancelText="Cancel"
