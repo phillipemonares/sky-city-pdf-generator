@@ -1113,24 +1113,13 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
       const postCode = encryptionEnabled && row.postCode ? encrypt(row.postCode) : (row.postCode || '');
       
       // Parse emailTick and postalTick from activity statement
-      // Convert to 1 if truthy (1, '1', 'true', 'yes', 'Y', 'y', 'x', 'X', etc.), otherwise 0
-      const emailTickValue = (row.emailTick || '').toString().trim().toLowerCase();
-      const isEmail = emailTickValue === '1' || 
-                     emailTickValue === 'true' || 
-                     emailTickValue === 'yes' || 
-                     emailTickValue === 'y' || 
-                     emailTickValue === 'x' ||
-                     emailTickValue === '✓' ||
-                     emailTickValue === 'checked' ? 1 : 0;
+      // Values are 0 or 1: 1 = true (enabled), 0 = false (disabled)
+      // Handle both numeric (0, 1) and string ('0', '1') values
+      const emailTickValue = String(row.emailTick || '').trim();
+      const isEmail = emailTickValue === '1' ? 1 : 0;
       
-      const postalTickValue = (row.postalTick || '').toString().trim().toLowerCase();
-      const isPostal = postalTickValue === '1' || 
-                      postalTickValue === 'true' || 
-                      postalTickValue === 'yes' || 
-                      postalTickValue === 'y' || 
-                      postalTickValue === 'x' ||
-                      postalTickValue === '✓' ||
-                      postalTickValue === 'checked' ? 1 : 0;
+      const postalTickValue = String(row.postalTick || '').trim();
+      const isPostal = postalTickValue === '1' ? 1 : 0;
       
       if (existing.length > 0) {
         // Update existing member - use the account number that was found in the database
