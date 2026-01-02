@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navigation from '@/components/Navigation';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { parseExcelFile, parseExcelFileWithMemberContacts, parseCSVFile, validatePreCommitmentFile } from '@/lib/pc-parser';
 import { PreCommitmentPlayer } from '@/types/player-data';
 
@@ -60,6 +61,10 @@ export default function NoPlayPage() {
   const [memberInfoMap, setMemberInfoMap] = useState<Map<string, MemberInfo['member']>>(new Map());
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
+    isOpen: boolean;
+    batchId: string;
+  } | null>(null);
 
   // Filter players by Play/No-Play status
   const playPlayers = uploadedFile?.players.filter(p => p.noPlayStatus === 'Play') || [];
@@ -409,10 +414,17 @@ export default function NoPlayPage() {
   };
 
   const deleteBatch = async (batchId: string) => {
-    if (!confirm('Are you sure you want to delete this batch? This action cannot be undone.')) {
-      return;
-    }
+    setDeleteConfirmDialog({
+      isOpen: true,
+      batchId,
+    });
+  };
 
+  const performDeleteBatch = async () => {
+    if (!deleteConfirmDialog) return;
+    
+    const { batchId } = deleteConfirmDialog;
+    
     try {
       setDeletingBatch(batchId);
       setGenerationStatus('Deleting batch...');
@@ -435,6 +447,7 @@ export default function NoPlayPage() {
       setGenerationStatus('Error deleting batch');
     } finally {
       setDeletingBatch(null);
+      setDeleteConfirmDialog(null);
     }
   };
 
@@ -1106,6 +1119,19 @@ export default function NoPlayPage() {
             </div>
           </div>
         )}
+
+      {/* Delete Batch Confirmation Dialog */}
+      {deleteConfirmDialog && (
+        <ConfirmDialog
+          isOpen={deleteConfirmDialog.isOpen}
+          onClose={() => setDeleteConfirmDialog(null)}
+          onConfirm={performDeleteBatch}
+          message="Are you sure you want to delete this pre-commitment batch? This will permanently delete the batch and all associated player records. This action cannot be undone."
+          title="Delete Pre-Commitment Batch"
+          confirmText="Delete Batch"
+          cancelText="Cancel"
+        />
+      )}
 
       </div>
     </div>

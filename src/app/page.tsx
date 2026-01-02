@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navigation from '@/components/Navigation';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import {
   parseCSVFile as parseMonthlyCSVFile,
   transformCSVToPlayerData,
@@ -98,6 +99,10 @@ export default function UploadInterface() {
   } | null>(null);
   const [batchSearchQuery, setBatchSearchQuery] = useState<string>('');
   const [batchSearchInput, setBatchSearchInput] = useState<string>('');
+  const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
+    isOpen: boolean;
+    batchId: string;
+  } | null>(null);
 
   // Use allAnnotatedPlayers if we have them (from loaded batch), otherwise build from uploads
   const annotatedPlayers = useMemo<AnnotatedStatementPlayer[]>(() => {
@@ -634,10 +639,17 @@ export default function UploadInterface() {
   };
 
   const deleteBatch = async (batchId: string) => {
-    if (!confirm('Are you sure you want to delete this batch? This action cannot be undone.')) {
-      return;
-    }
+    setDeleteConfirmDialog({
+      isOpen: true,
+      batchId,
+    });
+  };
 
+  const performDeleteBatch = async () => {
+    if (!deleteConfirmDialog) return;
+    
+    const { batchId } = deleteConfirmDialog;
+    
     try {
       setDeletingBatch(batchId);
       setGenerationStatus('Deleting batch...');
@@ -661,6 +673,7 @@ export default function UploadInterface() {
       setGenerationStatus('Error deleting batch');
     } finally {
       setDeletingBatch(null);
+      setDeleteConfirmDialog(null);
     }
   };
 
@@ -2207,6 +2220,19 @@ export default function UploadInterface() {
             </div>
           </div>
         )}
+
+      {/* Delete Batch Confirmation Dialog */}
+      {deleteConfirmDialog && (
+        <ConfirmDialog
+          isOpen={deleteConfirmDialog.isOpen}
+          onClose={() => setDeleteConfirmDialog(null)}
+          onConfirm={performDeleteBatch}
+          message="Are you sure you want to delete this quarterly statement batch? This will permanently delete the batch and all associated member records. This action cannot be undone."
+          title="Delete Quarterly Statement Batch"
+          confirmText="Delete Batch"
+          cancelText="Cancel"
+        />
+      )}
 
       </div>
     </div>

@@ -420,6 +420,7 @@ export async function deleteBatch(batchId: string): Promise<boolean> {
     await connection.beginTransaction();
 
     // First, get all account numbers from quarterly_user_statements for this batch
+    // These are stored encrypted using encryptDeterministic
     const [accountRows] = await connection.execute<mysql.RowDataPacket[]>(
       `SELECT DISTINCT account_number FROM quarterly_user_statements WHERE batch_id = ?`,
       [batchId]
@@ -438,13 +439,45 @@ export async function deleteBatch(batchId: string): Promise<boolean> {
     );
 
     // Delete members that match the account numbers from this batch
+    // Account numbers in quarterly_user_statements are encrypted using encryptDeterministic
+    // We need to decrypt them and then re-encrypt to match members (or use decrypted if members aren't encrypted)
     if (accountRows.length > 0) {
-      const accountNumbers = accountRows.map(row => row.account_number);
-      const placeholders = accountNumbers.map(() => '?').join(',');
-      await connection.execute(
-        `DELETE FROM members WHERE account_number IN (${placeholders})`,
-        accountNumbers
-      );
+      const encryptedAccountNumbers = accountRows.map(row => row.account_number);
+      
+      // Decrypt account numbers from quarterly_user_statements
+      const decryptedAccountNumbers = encryptedAccountNumbers.map(encrypted => {
+        try {
+          return decrypt(encrypted);
+        } catch {
+          return null;
+        }
+      }).filter((acc): acc is string => acc !== null);
+      
+      if (decryptedAccountNumbers.length > 0) {
+        // Normalize and re-encrypt account numbers to match members table format
+        const normalizedAndEncrypted = decryptedAccountNumbers.map(acc => {
+          const normalized = normalizeAccount(acc);
+          return encryptDeterministic(normalized);
+        });
+        
+        // Try deleting with encrypted account numbers (members should be encrypted with encryptDeterministic)
+        const placeholders = normalizedAndEncrypted.map(() => '?').join(',');
+        const [deleteResult] = await connection.execute<mysql.ResultSetHeader>(
+          `DELETE FROM members WHERE account_number IN (${placeholders})`,
+          normalizedAndEncrypted
+        );
+        
+        // If no rows were deleted, also try with normalized but unencrypted account numbers
+        // (handles case where members might not be encrypted yet)
+        if (deleteResult.affectedRows === 0) {
+          const normalizedAccountNumbers = decryptedAccountNumbers.map(acc => normalizeAccount(acc));
+          const decryptedPlaceholders = normalizedAccountNumbers.map(() => '?').join(',');
+          await connection.execute(
+            `DELETE FROM members WHERE account_number IN (${decryptedPlaceholders})`,
+            normalizedAccountNumbers
+          );
+        }
+      }
     }
 
     await connection.commit();
