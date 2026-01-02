@@ -11,10 +11,18 @@ interface User {
   created_at: string;
 }
 
+interface AlertDialogState {
+  isOpen: boolean;
+  message: string;
+  title?: string;
+  type?: 'info' | 'error' | 'warning';
+}
+
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [alertDialog, setAlertDialog] = useState<AlertDialogState | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -513,6 +521,17 @@ export default function UsersPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Alert Dialog */}
+      {alertDialog && (
+        <AlertDialog
+          isOpen={alertDialog.isOpen}
+          onClose={() => setAlertDialog(null)}
+          message={alertDialog.message}
+          title={alertDialog.title}
+          type={alertDialog.type}
+        />
       )}
     </div>
   );

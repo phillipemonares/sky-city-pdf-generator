@@ -18,9 +18,17 @@ interface ExportJob {
   error_message: string | null;
 }
 
+interface AlertDialogState {
+  isOpen: boolean;
+  message: string;
+  title?: string;
+  type?: 'info' | 'error' | 'warning';
+}
+
 export default function PDFExportPage() {
   const [exportHistory, setExportHistory] = useState<ExportJob[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [alertDialog, setAlertDialog] = useState<AlertDialogState | null>(null);
 
   const loadExportHistory = useCallback(async () => {
     try {
