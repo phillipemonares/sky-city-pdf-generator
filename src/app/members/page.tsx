@@ -54,6 +54,11 @@ export default function MembersPage() {
     isOpen: boolean;
     eligibleCount: number;
   } | null>(null);
+  const [syncing, setSyncing] = useState<boolean>(false);
+  const [syncResult, setSyncResult] = useState<{
+    isOpen: boolean;
+    message: string;
+  } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
     try {
@@ -796,6 +801,47 @@ export default function MembersPage() {
                 </p>
               </div>
               <div className="flex gap-2 items-center">
+                {activeTab === 'quarterly' && (
+                  <button
+                    onClick={async () => {
+                      setSyncing(true);
+                      try {
+                        const response = await fetch('/api/sync-members', {
+                          method: 'POST',
+                        });
+                        const data = await response.json();
+                        if (data.success) {
+                          setSyncResult({
+                            isOpen: true,
+                            message: data.message || 'Members synced successfully!'
+                          });
+                          // Reload members after sync
+                          loadMembers(currentPage, pageSize, activeSearch);
+                        } else {
+                          setSyncResult({
+                            isOpen: true,
+                            message: `Error: ${data.error || 'Failed to sync members'}`
+                          });
+                        }
+                      } catch (error) {
+                        setSyncResult({
+                          isOpen: true,
+                          message: `Error: ${error instanceof Error ? error.message : 'Failed to sync members'}`
+                        });
+                      } finally {
+                        setSyncing(false);
+                      }
+                    }}
+                    disabled={syncing || loadingMembers}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400 flex items-center gap-2"
+                    title="Sync members from all existing quarterly batches"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    {syncing ? 'Syncing...' : 'Sync Members'}
+                  </button>
+                )}
                 {selectedMembers.size > 0 && (
                   <>
                     {activeTab === 'quarterly' && (
@@ -1413,6 +1459,16 @@ export default function MembersPage() {
           confirmText="Send All"
           cancelText="Cancel"
           confirmButtonClass="bg-purple-600 hover:bg-purple-700"
+        />
+      )}
+
+      {/* Sync Result Dialog */}
+      {syncResult && (
+        <SuccessDialog
+          isOpen={syncResult.isOpen}
+          onClose={() => setSyncResult(null)}
+          message={syncResult.message}
+          title="Sync Members"
         />
       )}
     </div>

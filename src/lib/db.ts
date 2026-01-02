@@ -2,7 +2,7 @@ import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { AnnotatedStatementPlayer, QuarterlyData, PreCommitmentPlayer, ActivityStatementRow, PlayerData } from '@/types/player-data';
 import { normalizeAccount } from './pdf-shared';
-import { decryptMemberFields, decrypt, encryptDeterministic, isEncryptionEnabled, decryptJson, encryptJson } from './encryption';
+import { decryptMemberFields, decrypt, encrypt, encryptDeterministic, isEncryptionEnabled, decryptJson, encryptJson } from './encryption';
 
 // Re-export PDF preview functions from separate module
 export { 
@@ -1052,6 +1052,7 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
     await connection.beginTransaction();
 
     let savedCount = 0;
+    const encryptionEnabled = isEncryptionEnabled();
 
     // Deduplicate by account number - keep the last occurrence (most recent data)
     // Also filter out empty/whitespace-only account numbers
@@ -1067,15 +1068,43 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
     const uniqueRows = Array.from(uniqueAccountsMap.entries());
 
     for (const [normalizedAccount, row] of uniqueRows) {
+      // Prepare account number for lookup and storage
+      // If encryption is enabled, account numbers are stored encrypted using encryptDeterministic
+      const accountForLookup = encryptionEnabled 
+        ? encryptDeterministic(normalizedAccount) 
+        : normalizedAccount;
       
-      // Check if member already exists
-      const [existing] = await connection.execute<mysql.RowDataPacket[]>(
-        `SELECT id FROM members WHERE account_number = ?`,
-        [normalizedAccount]
+      // Check if member already exists - try encrypted first if encryption is enabled
+      let [existing] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT id, account_number FROM members WHERE account_number = ?`,
+        [accountForLookup]
       );
       
+      let accountForUpdate = accountForLookup;
+      
+      // If encryption is enabled and not found, also try with plain account (for migration compatibility)
+      if (existing.length === 0 && encryptionEnabled) {
+        [existing] = await connection.execute<mysql.RowDataPacket[]>(
+          `SELECT id, account_number FROM members WHERE account_number = ?`,
+          [normalizedAccount]
+        );
+        if (existing.length > 0) {
+          accountForUpdate = normalizedAccount;
+        }
+      }
+      
+      // Prepare field values - encrypt if encryption is enabled
+      const title = encryptionEnabled && row.title ? encrypt(row.title) : (row.title || '');
+      const firstName = encryptionEnabled && row.firstName ? encrypt(row.firstName) : (row.firstName || '');
+      const lastName = encryptionEnabled && row.lastName ? encrypt(row.lastName) : (row.lastName || '');
+      const email = encryptionEnabled && row.email ? encrypt(row.email) : (row.email || '');
+      const address = encryptionEnabled && row.address ? encrypt(row.address) : (row.address || '');
+      const suburb = encryptionEnabled && row.suburb ? encrypt(row.suburb) : (row.suburb || '');
+      const state = encryptionEnabled && row.state ? encrypt(row.state) : (row.state || '');
+      const postCode = encryptionEnabled && row.postCode ? encrypt(row.postCode) : (row.postCode || '');
+      
       if (existing.length > 0) {
-        // Update existing member
+        // Update existing member - use the account number that was found in the database
         await connection.execute(
           `UPDATE members 
            SET title = ?, first_name = ?, last_name = ?, email = ?, 
@@ -1084,21 +1113,21 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
                is_postal = COALESCE(is_postal, 0), updated_at = NOW()
            WHERE account_number = ?`,
           [
-            row.title || '',
-            row.firstName || '',
-            row.lastName || '',
-            row.email || '',
-            row.address || '',
-            row.suburb || '',
-            row.state || '',
-            row.postCode || '',
+            title,
+            firstName,
+            lastName,
+            email,
+            address,
+            suburb,
+            state,
+            postCode,
             row.country || '',
             row.playerType || '',
-            normalizedAccount
+            accountForUpdate
           ]
         );
       } else {
-        // Insert new member
+        // Insert new member - use encrypted account number if encryption is enabled
         const memberId = randomUUID();
         await connection.execute(
           `INSERT INTO members 
@@ -1107,15 +1136,15 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             memberId,
-            normalizedAccount,
-            row.title || '',
-            row.firstName || '',
-            row.lastName || '',
-            row.email || '',
-            row.address || '',
-            row.suburb || '',
-            row.state || '',
-            row.postCode || '',
+            accountForLookup, // Use encrypted account if encryption is enabled
+            title,
+            firstName,
+            lastName,
+            email,
+            address,
+            suburb,
+            state,
+            postCode,
             row.country || '',
             row.playerType || '',
             0, // is_email default to 0 for activity statements
@@ -1134,6 +1163,96 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
     throw error;
   } finally {
     connection.release();
+  }
+}
+
+/**
+ * Sync members from all existing quarterly batches
+ * Extracts activity statement data from all batches and saves/updates members
+ * Processes batches in order (newest first) so newer data overwrites older data
+ * Returns the count of newly saved members and updated members
+ */
+export async function syncMembersFromBatches(): Promise<{ savedCount: number; updatedCount: number; totalProcessed: number }> {
+  try {
+    // Get all batches (already ordered by generation_date DESC - newest first)
+    const batches = await getAllBatches();
+    
+    if (batches.length === 0) {
+      return { savedCount: 0, updatedCount: 0, totalProcessed: 0 };
+    }
+    
+    // Collect all activity statement rows from all batches
+    // Use Map to track by account number, so newer batches overwrite older ones
+    const activityRowsMap = new Map<string, ActivityStatementRow>();
+    
+    // Process batches in order (newest first) so newer data overwrites older data
+    for (const batch of batches) {
+      try {
+        const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+          `SELECT account_number, data
+           FROM quarterly_user_statements
+           WHERE batch_id = ?`,
+          [batch.id]
+        );
+        
+        for (const row of rows) {
+          try {
+            // Decrypt the user data
+            const userData = decryptJson<{
+              activity_statement?: ActivityStatementRow;
+              pre_commitment?: PreCommitmentPlayer;
+              cashless_statement?: any;
+            }>(row.data);
+            
+            // Decrypt account number
+            const account = decrypt(row.account_number || '');
+            const normalizedAccount = normalizeAccount(account);
+            
+            // Only process if we have activity statement data and valid account
+            // Map.set will overwrite if key exists, so newer batches overwrite older ones
+            if (userData.activity_statement && normalizedAccount) {
+              activityRowsMap.set(normalizedAccount, userData.activity_statement);
+            }
+          } catch (error) {
+            console.error(`Error processing account in batch ${batch.id}:`, error);
+            // Continue with next account
+          }
+        }
+      } catch (error) {
+        console.error(`Error processing batch ${batch.id}:`, error);
+        // Continue with next batch
+      }
+    }
+    
+    // Convert map to array
+    const allActivityRows = Array.from(activityRowsMap.values());
+    
+    if (allActivityRows.length === 0) {
+      return { savedCount: 0, updatedCount: 0, totalProcessed: 0 };
+    }
+    
+    // Save/update members from collected activity rows
+    // Process in chunks to avoid memory issues with large datasets
+    const chunkSize = 1000;
+    let totalSaved = 0;
+    
+    for (let i = 0; i < allActivityRows.length; i += chunkSize) {
+      const chunk = allActivityRows.slice(i, i + chunkSize);
+      const savedCount = await saveMembersFromActivity(chunk);
+      totalSaved += savedCount;
+    }
+    
+    // Calculate updates (total processed minus newly saved)
+    const totalUpdated = allActivityRows.length - totalSaved;
+    
+    return {
+      savedCount: totalSaved,
+      updatedCount: totalUpdated,
+      totalProcessed: allActivityRows.length
+    };
+  } catch (error) {
+    console.error('Error syncing members from batches:', error);
+    throw error;
   }
 }
 
