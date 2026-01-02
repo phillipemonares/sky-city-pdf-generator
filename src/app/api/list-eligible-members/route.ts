@@ -21,26 +21,26 @@ export async function GET(request: NextRequest) {
     const connection = await pool.getConnection();
     
     try {
-      // Get today's date range
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      // Get accounts that already received emails today
-      const [sentTodayRows] = await connection.execute<mysql.RowDataPacket[]>(
-        `SELECT DISTINCT recipient_account 
+      // Get account+batch combinations that already received emails
+      // This checks all time, not just today, to prevent duplicate sends for the same batch
+      const [sentRows] = await connection.execute<mysql.RowDataPacket[]>(
+        `SELECT DISTINCT recipient_account, batch_id 
          FROM email_tracking 
          WHERE email_type = ? 
            AND status = 'sent' 
-           AND sent_at >= ? 
-           AND sent_at < ?`,
-        [emailType, today, tomorrow]
+           AND batch_id IS NOT NULL`,
+        [emailType]
       );
       
-      const alreadySentAccounts = new Set(
-        sentTodayRows.map(row => normalizeAccount(row.recipient_account))
-      );
+      // Create a set of account+batch combinations that already have emails sent
+      const alreadySentAccountBatch = new Set<string>();
+      sentRows.forEach(row => {
+        const normalizedAccount = normalizeAccount(row.recipient_account);
+        const batchId = row.batch_id;
+        if (normalizedAccount && batchId) {
+          alreadySentAccountBatch.add(`${normalizedAccount}:${batchId}`);
+        }
+      });
 
       // Build query to get eligible members
       let accountQuery: string;
@@ -119,7 +119,7 @@ export async function GET(request: NextRequest) {
       // Fetch all eligible account numbers
       const [accountRows] = await connection.execute<mysql.RowDataPacket[]>(accountQuery, values);
       
-      // Decrypt and normalize account numbers, then filter out those already sent today
+      // Decrypt and normalize account numbers, then filter out those already sent for their batch
       const eligibleMembers: any[] = [];
       
       for (const row of accountRows) {
@@ -127,8 +127,15 @@ export async function GET(request: NextRequest) {
           const decryptedAccount = decrypt(row.account_number);
           const normalizedAccount = normalizeAccount(decryptedAccount);
           
-          // Skip if already sent today
-          if (alreadySentAccounts.has(normalizedAccount)) {
+          // Get batch_id for this row
+          const batchId = emailType === 'quarterly' 
+            ? row.latest_batch_id 
+            : emailType === 'play' 
+            ? row.latest_play_batch_id 
+            : row.latest_no_play_batch_id;
+          
+          // Skip if already sent for this batch
+          if (batchId && alreadySentAccountBatch.has(`${normalizedAccount}:${batchId}`)) {
             continue;
           }
 

@@ -592,13 +592,46 @@ export default function MembersPage() {
           throw new Error('Failed to fetch eligible members');
         }
 
-        const eligibleMembersList = eligibleData.members || [];
+        let eligibleMembersList = eligibleData.members || [];
+        
+        // Check which members already received emails for their batch
+        if (eligibleMembersList.length > 0) {
+          const accountsToCheck = eligibleMembersList.map((m: any) => m.account_number);
+          const batchIdsToCheck = eligibleMembersList.map((m: any) => m.latest_batch_id);
+          try {
+            const checkResponse = await fetch('/api/check-emails-sent-for-batch', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                accounts: accountsToCheck,
+                batchIds: batchIdsToCheck,
+                emailType: 'quarterly',
+              }),
+            });
+
+            if (checkResponse.ok) {
+              const checkData = await checkResponse.json();
+              if (checkData.success && checkData.alreadySentMap) {
+                // Filter out members who already received emails for their batch
+                eligibleMembersList = eligibleMembersList.filter((m: any) => {
+                  return !checkData.alreadySentMap[m.account_number];
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Error checking emails sent for batch:', error);
+            // Continue with all members if check fails
+          }
+        }
+        
         const eligibleCount = eligibleMembersList.length;
         
         if (eligibleCount === 0) {
           setAlertDialog({
             isOpen: true,
-            message: 'No eligible members to send emails to.',
+            message: 'No eligible members to send emails to (all have already received emails for their batch).',
             type: 'warning',
           });
           setSendingAll(false);
@@ -746,17 +779,21 @@ export default function MembersPage() {
             return isEmailEnabled && hasBatchId && hasEmailAddress;
           });
 
-          // Check which members already received emails today
+          // Check which members already received emails for their batch
           if (eligiblePageMembers.length > 0) {
             const accountsToCheck = eligiblePageMembers.map((m: any) => m.account_number);
+            const batchIdsToCheck = eligiblePageMembers.map((m: any) => 
+              activeTab === 'play' ? m.latest_play_batch_id : m.latest_no_play_batch_id
+            );
             try {
-              const checkResponse = await fetch('/api/check-emails-sent-today', {
+              const checkResponse = await fetch('/api/check-emails-sent-for-batch', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
                   accounts: accountsToCheck,
+                  batchIds: batchIdsToCheck,
                   emailType: activeTab === 'play' ? 'play' : 'no-play',
                 }),
               });
@@ -764,14 +801,14 @@ export default function MembersPage() {
               if (checkResponse.ok) {
                 const checkData = await checkResponse.json();
                 if (checkData.success && checkData.alreadySentMap) {
-                  // Filter out members who already received emails today
+                  // Filter out members who already received emails for their batch
                   eligiblePageMembers = eligiblePageMembers.filter((m: any) => {
                     return !checkData.alreadySentMap[m.account_number];
                   });
                 }
               }
             } catch (error) {
-              console.error('Error checking emails sent today:', error);
+              console.error('Error checking emails sent for batch:', error);
               // Continue with all members if check fails
             }
           }

@@ -368,6 +368,37 @@ export async function checkEmailSentToday(
 }
 
 /**
+ * Check if an email was already sent for a given account, batch_id, and email type
+ * This checks all time, not just today
+ */
+export async function checkEmailSentForBatch(
+  account: string,
+  batchId: string,
+  emailType: 'quarterly' | 'no-play' | 'play' | 'pre-commitment' | 'other'
+): Promise<boolean> {
+  const connection = await pool.getConnection();
+  
+  try {
+    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) as count 
+       FROM email_tracking 
+       WHERE recipient_account = ? 
+         AND batch_id = ? 
+         AND email_type = ? 
+         AND status = 'sent'`,
+      [account, batchId, emailType]
+    );
+    
+    return (rows[0]?.count || 0) > 0;
+  } catch (error) {
+    console.error('Error checking if email sent for batch:', error);
+    return false;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
  * Get email tracking records with optional filters
  */
 export async function getEmailTrackingRecords(filters?: {
