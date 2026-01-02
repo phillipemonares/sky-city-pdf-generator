@@ -332,6 +332,42 @@ export async function emailExistsInTracking(email: string): Promise<boolean> {
 }
 
 /**
+ * Check if an email was already sent today for a given account and email type
+ */
+export async function checkEmailSentToday(
+  account: string,
+  emailType: 'quarterly' | 'no-play' | 'play' | 'pre-commitment' | 'other'
+): Promise<boolean> {
+  const connection = await pool.getConnection();
+  
+  try {
+    // Get today's date range (start of day to end of day)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const [rows] = await connection.execute<mysql.RowDataPacket[]>(
+      `SELECT COUNT(*) as count 
+       FROM email_tracking 
+       WHERE recipient_account = ? 
+         AND email_type = ? 
+         AND status = 'sent' 
+         AND sent_at >= ? 
+         AND sent_at < ?`,
+      [account, emailType, today, tomorrow]
+    );
+    
+    return (rows[0]?.count || 0) > 0;
+  } catch (error) {
+    console.error('Error checking if email sent today:', error);
+    return false;
+  } finally {
+    connection.release();
+  }
+}
+
+/**
  * Get email tracking records with optional filters
  */
 export async function getEmailTrackingRecords(filters?: {

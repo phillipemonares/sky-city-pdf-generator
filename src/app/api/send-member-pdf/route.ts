@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAccountFromBatch, getBatchById, getMemberByAccount, getAccountFromPreviousBatches } from '@/lib/db';
 import { createEmailTrackingRecord, updateEmailTrackingStatus } from '@/lib/db/email';
-import { generatePreviewHTML } from '@/lib/annotated-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
 import { decryptJson } from '@/lib/encryption';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import puppeteer from 'puppeteer';
 import mysql from 'mysql2/promise';
 import sgMail from '@sendgrid/mail';
 
@@ -306,43 +302,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Convert logo to base64
-    const logoPath = join(process.cwd(), 'public', 'skycity-logo.png');
-    const logoBuffer = readFileSync(logoPath);
-    const logoBase64 = logoBuffer.toString('base64');
-    const logoDataUrl = `data:image/png;base64,${logoBase64}`;
-
-    // Convert play-header to base64 for pre-commitment section
-    const playHeaderPath = join(process.cwd(), 'public', 'no-play-header.png');
-    const playHeaderBuffer = readFileSync(playHeaderPath);
-    const playHeaderBase64 = playHeaderBuffer.toString('base64');
-    const playHeaderDataUrl = `data:image/png;base64,${playHeaderBase64}`;
-
-    // Generate HTML using preview function
-    const html = generatePreviewHTML(accountData, quarterlyData, logoDataUrl, playHeaderDataUrl);
-
-    // Generate PDF
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-
+    // Fetch PDF from the member-pdf API endpoint (same as preview URL)
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.VERCEL_URL 
+      ? `https://${process.env.VERCEL_URL}` 
+      : 'http://localhost:3000';
+    const pdfUrl = `${baseUrl}/api/member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
+    
+    let pdfBuffer: Buffer;
     try {
-      const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'networkidle0' });
-
-      const pdfBuffer = await page.pdf({
-        format: 'A4',
-        printBackground: true,
-        margin: {
-          top: '0mm',
-          right: '0mm',
-          bottom: '0mm',
-          left: '0mm',
-        },
-      });
-
-      await browser.close();
+      const pdfResponse = await fetch(pdfUrl);
+      if (!pdfResponse.ok) {
+        throw new Error(`Failed to fetch PDF: ${pdfResponse.statusText}`);
+      }
+      const arrayBuffer = await pdfResponse.arrayBuffer();
+      pdfBuffer = Buffer.from(arrayBuffer);
+    } catch (error) {
+      console.error('Error fetching PDF from URL:', error);
+      throw new Error(`Failed to fetch PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
 
       // Prepare email
       const playerName = [
@@ -369,17 +346,29 @@ export async function POST(request: NextRequest) {
         subject: subject,
       });
 
+      // Logo URL (same as play/no-play)
+      const logoUrl = 'https://i.imgur.com/MilwIKt.png';
+
       const msg = {
         to: member.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
-        text: `Dear ${firstName},\n\nPlease find attached your quarterly statement for ${quarterLabel}.\n\nThank you for being a valued member of SkyCity.\n\nBest regards,\nSkyCity Team`,
+        text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Quarterly Statement for ${quarterLabel} is now available for viewing and is attached to this email.\n\nIf you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nPlease feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.\n\nKind Regards,\nSkyCity Adelaide`,
         html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #1a1a1a;">Dear ${firstName},</h2>
-            <p>Please find attached your quarterly statement for <strong>${quarterLabel}</strong>.</p>
-            <p>Thank you for being a valued member of SkyCity.</p>
-            <p>Best regards,<br>SkyCity Team</p>
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0; padding: 20px;">
+            <div style="text-align: left; margin-bottom: 20px;">
+              <img src="${logoUrl}" alt="SkyCity Adelaide" style="max-width: 200px; height: auto;" />
+            </div>
+            <div style="text-align: right; margin-bottom: 20px;">
+              <p style="margin: 0; color: #1a1a1a; font-size: 14px;">Account: ${normalizedAccount}</p>
+            </div>
+            <div style="color: #1a1a1a; line-height: 1.6;">
+              <p style="margin: 0 0 20px 0;">Dear ${firstName},</p>
+              <p style="margin: 0 0 20px 0;">Your Quarterly Statement for ${quarterLabel} is now available for viewing and is attached to this email.</p>
+              <p style="margin: 0 0 20px 0;">If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.</p>
+              <p style="margin: 0 0 20px 0;">Please feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.</p>
+              <p style="margin: 0;">Kind Regards,<br>SkyCity Adelaide</p>
+            </div>
           </div>
         `,
         attachments: [
@@ -457,11 +446,6 @@ export async function POST(request: NextRequest) {
         message: `PDF sent successfully to ${member.email}`,
         email: member.email
       });
-
-    } catch (error) {
-      await browser.close();
-      throw error;
-    }
 
   } catch (error) {
     console.error('Error sending member PDF:', error);
