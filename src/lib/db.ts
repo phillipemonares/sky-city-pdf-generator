@@ -738,7 +738,8 @@ export interface PlayMemberWithBatch {
 export async function getNoPlayMembersPaginated(
   page: number = 1,
   pageSize: number = 50,
-  search: string = ''
+  search: string = '',
+  filters?: { is_email?: number | null }
 ): Promise<{ members: NoPlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
@@ -883,7 +884,8 @@ export async function getNoPlayMembersPaginated(
 export async function getPlayMembersPaginated(
   page: number = 1,
   pageSize: number = 50,
-  search: string = ''
+  search: string = '',
+  filters?: { is_email?: number | null }
 ): Promise<{ members: PlayMemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
@@ -1003,6 +1005,13 @@ export async function getPlayMembersPaginated(
       );
     }
     
+    // Apply filters
+    if (filters) {
+      if (filters.is_email !== null && filters.is_email !== undefined) {
+        filteredMembers = filteredMembers.filter(m => m.is_email === filters.is_email);
+      }
+    }
+    
     // Calculate pagination
     const total = filteredMembers.length;
     const totalPages = Math.ceil(total / validPageSize);
@@ -1103,14 +1112,34 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
       const state = encryptionEnabled && row.state ? encrypt(row.state) : (row.state || '');
       const postCode = encryptionEnabled && row.postCode ? encrypt(row.postCode) : (row.postCode || '');
       
+      // Parse emailTick and postalTick from activity statement
+      // Convert to 1 if truthy (1, '1', 'true', 'yes', 'Y', 'y', 'x', 'X', etc.), otherwise 0
+      const emailTickValue = (row.emailTick || '').toString().trim().toLowerCase();
+      const isEmail = emailTickValue === '1' || 
+                     emailTickValue === 'true' || 
+                     emailTickValue === 'yes' || 
+                     emailTickValue === 'y' || 
+                     emailTickValue === 'x' ||
+                     emailTickValue === '✓' ||
+                     emailTickValue === 'checked' ? 1 : 0;
+      
+      const postalTickValue = (row.postalTick || '').toString().trim().toLowerCase();
+      const isPostal = postalTickValue === '1' || 
+                      postalTickValue === 'true' || 
+                      postalTickValue === 'yes' || 
+                      postalTickValue === 'y' || 
+                      postalTickValue === 'x' ||
+                      postalTickValue === '✓' ||
+                      postalTickValue === 'checked' ? 1 : 0;
+      
       if (existing.length > 0) {
         // Update existing member - use the account number that was found in the database
+        // Update is_email and is_postal from activity statement if provided
         await connection.execute(
           `UPDATE members 
            SET title = ?, first_name = ?, last_name = ?, email = ?, 
                address = ?, suburb = ?, state = ?, post_code = ?, 
-               country = ?, player_type = ?, is_email = COALESCE(is_email, 0), 
-               is_postal = COALESCE(is_postal, 0), updated_at = NOW()
+               country = ?, player_type = ?, is_email = ?, is_postal = ?, updated_at = NOW()
            WHERE account_number = ?`,
           [
             title,
@@ -1123,35 +1152,79 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
             postCode,
             row.country || '',
             row.playerType || '',
+            isEmail,
+            isPostal,
             accountForUpdate
           ]
         );
       } else {
         // Insert new member - use encrypted account number if encryption is enabled
-        const memberId = randomUUID();
-        await connection.execute(
-          `INSERT INTO members 
-           (id, account_number, title, first_name, last_name, email, 
-            address, suburb, state, post_code, country, player_type, is_email, is_postal)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            memberId,
-            accountForLookup, // Use encrypted account if encryption is enabled
-            title,
-            firstName,
-            lastName,
-            email,
-            address,
-            suburb,
-            state,
-            postCode,
-            row.country || '',
-            row.playerType || '',
-            0, // is_email default to 0 for activity statements
-            0  // is_postal default to 0 for activity statements
-          ]
-        );
-        savedCount++;
+        try {
+          const memberId = randomUUID();
+          await connection.execute(
+            `INSERT INTO members 
+             (id, account_number, title, first_name, last_name, email, 
+              address, suburb, state, post_code, country, player_type, is_email, is_postal)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              memberId,
+              accountForLookup, // Use encrypted account if encryption is enabled
+              title,
+              firstName,
+              lastName,
+              email,
+              address,
+              suburb,
+              state,
+              postCode,
+              row.country || '',
+              row.playerType || '',
+              isEmail, // Use emailTick from activity statement
+              isPostal  // Use postalTick from activity statement
+            ]
+          );
+          savedCount++;
+        } catch (insertError: any) {
+          // Handle duplicate key error (account_number UNIQUE constraint)
+          // This can happen if:
+          // 1. Account was inserted between our check and insert (race condition)
+          // 2. Account exists in both encrypted and unencrypted form
+          if (insertError.code === 'ER_DUP_ENTRY' || insertError.errno === 1062) {
+            // Account already exists, try to update it instead
+            console.warn(`[saveMembersFromActivity] Duplicate key detected for account ${normalizedAccount}, attempting update instead`);
+            try {
+              await connection.execute(
+                `UPDATE members 
+                 SET title = ?, first_name = ?, last_name = ?, email = ?, 
+                     address = ?, suburb = ?, state = ?, post_code = ?, 
+                     country = ?, player_type = ?, is_email = ?, is_postal = ?, updated_at = NOW()
+                 WHERE account_number = ?`,
+                [
+                  title,
+                  firstName,
+                  lastName,
+                  email,
+                  address,
+                  suburb,
+                  state,
+                  postCode,
+                  row.country || '',
+                  row.playerType || '',
+                  isEmail,
+                  isPostal,
+                  accountForLookup
+                ]
+              );
+              // Don't increment savedCount since this was an update, not a new insert
+            } catch (updateError) {
+              console.error(`[saveMembersFromActivity] Error updating duplicate account ${normalizedAccount}:`, updateError);
+              // Continue with next account
+            }
+          } else {
+            // Re-throw if it's not a duplicate key error
+            throw insertError;
+          }
+        }
       }
     }
     
@@ -1169,7 +1242,9 @@ export async function saveMembersFromActivity(activityRows: ActivityStatementRow
 /**
  * Sync members from all existing quarterly batches
  * Extracts activity statement data from all batches and saves/updates members
+ * Processes batches incrementally to avoid memory issues with large datasets (25k+ members)
  * Processes batches in order (newest first) so newer data overwrites older data
+ * Ensures no duplicate account numbers by tracking processed accounts across all chunks
  * Returns the count of newly saved members and updated members
  */
 export async function syncMembersFromBatches(): Promise<{ savedCount: number; updatedCount: number; totalProcessed: number }> {
@@ -1181,42 +1256,86 @@ export async function syncMembersFromBatches(): Promise<{ savedCount: number; up
       return { savedCount: 0, updatedCount: 0, totalProcessed: 0 };
     }
     
-    // Collect all activity statement rows from all batches
+    console.log(`[syncMembersFromBatches] Starting sync for ${batches.length} batches`);
+    
+    const encryptionEnabled = isEncryptionEnabled();
+    
+    // Track processed accounts across ALL chunks to prevent duplicates
+    // Use Set to track normalized account numbers we've already processed
+    // This ensures we don't process the same account multiple times even across chunks
+    const processedAccounts = new Set<string>();
+    
+    // Process batches incrementally to avoid loading all 25k+ records into memory
     // Use Map to track by account number, so newer batches overwrite older ones
     const activityRowsMap = new Map<string, ActivityStatementRow>();
+    const processChunkSize = 5000; // Process and save in chunks of 5000 to avoid memory issues
+    let totalSaved = 0;
+    let totalProcessed = 0;
+    let batchCount = 0;
     
     // Process batches in order (newest first) so newer data overwrites older data
     for (const batch of batches) {
+      batchCount++;
       try {
-        const [rows] = await pool.execute<mysql.RowDataPacket[]>(
-          `SELECT account_number, data
-           FROM quarterly_user_statements
-           WHERE batch_id = ?`,
-          [batch.id]
-        );
+        console.log(`[syncMembersFromBatches] Processing batch ${batchCount}/${batches.length} (${batch.id})`);
         
-        for (const row of rows) {
-          try {
-            // Decrypt the user data
-            const userData = decryptJson<{
-              activity_statement?: ActivityStatementRow;
-              pre_commitment?: PreCommitmentPlayer;
-              cashless_statement?: any;
-            }>(row.data);
-            
-            // Decrypt account number
-            const account = decrypt(row.account_number || '');
-            const normalizedAccount = normalizeAccount(account);
-            
-            // Only process if we have activity statement data and valid account
-            // Map.set will overwrite if key exists, so newer batches overwrite older ones
-            if (userData.activity_statement && normalizedAccount) {
-              activityRowsMap.set(normalizedAccount, userData.activity_statement);
-            }
-          } catch (error) {
-            console.error(`Error processing account in batch ${batch.id}:`, error);
-            // Continue with next account
+        // Process batch in chunks to avoid loading all rows at once
+        const batchChunkSize = 5000;
+        let offset = 0;
+        let hasMore = true;
+        
+        while (hasMore) {
+          const [rows] = await pool.execute<mysql.RowDataPacket[]>(
+            `SELECT account_number, data
+             FROM quarterly_user_statements
+             WHERE batch_id = ?
+             LIMIT ? OFFSET ?`,
+            [batch.id, batchChunkSize, offset]
+          );
+          
+          if (rows.length === 0) {
+            hasMore = false;
+            break;
           }
+          
+          for (const row of rows) {
+            try {
+              // Decrypt the user data
+              const userData = decryptJson<{
+                activity_statement?: ActivityStatementRow;
+                pre_commitment?: PreCommitmentPlayer;
+                cashless_statement?: any;
+              }>(row.data);
+              
+              // Decrypt account number
+              const account = decrypt(row.account_number || '');
+              const normalizedAccount = normalizeAccount(account);
+              
+              // Only process if we have activity statement data and valid account
+              // Skip if we've already processed this account (prevents duplicates across chunks)
+              if (userData.activity_statement && normalizedAccount && !processedAccounts.has(normalizedAccount)) {
+                // Map.set will overwrite if key exists, so newer batches overwrite older ones
+                activityRowsMap.set(normalizedAccount, userData.activity_statement);
+                processedAccounts.add(normalizedAccount); // Mark as processed
+                totalProcessed++;
+              }
+            } catch (error) {
+              console.error(`Error processing account in batch ${batch.id}:`, error);
+              // Continue with next account
+            }
+          }
+          
+          // If we've collected enough rows, save them and clear the map (but keep processedAccounts Set)
+          if (activityRowsMap.size >= processChunkSize) {
+            const activityRows = Array.from(activityRowsMap.values());
+            const savedCount = await saveMembersFromActivity(activityRows);
+            totalSaved += savedCount;
+            activityRowsMap.clear(); // Clear to free memory, but processedAccounts Set remains
+            console.log(`[syncMembersFromBatches] Saved chunk: ${savedCount} new, ${activityRows.length - savedCount} updated (Total: ${totalSaved} new, ${totalProcessed} processed, ${processedAccounts.size} unique accounts)`);
+          }
+          
+          offset += rows.length;
+          hasMore = rows.length === batchChunkSize;
         }
       } catch (error) {
         console.error(`Error processing batch ${batch.id}:`, error);
@@ -1224,31 +1343,23 @@ export async function syncMembersFromBatches(): Promise<{ savedCount: number; up
       }
     }
     
-    // Convert map to array
-    const allActivityRows = Array.from(activityRowsMap.values());
-    
-    if (allActivityRows.length === 0) {
-      return { savedCount: 0, updatedCount: 0, totalProcessed: 0 };
-    }
-    
-    // Save/update members from collected activity rows
-    // Process in chunks to avoid memory issues with large datasets
-    const chunkSize = 1000;
-    let totalSaved = 0;
-    
-    for (let i = 0; i < allActivityRows.length; i += chunkSize) {
-      const chunk = allActivityRows.slice(i, i + chunkSize);
-      const savedCount = await saveMembersFromActivity(chunk);
+    // Process any remaining rows in the map
+    if (activityRowsMap.size > 0) {
+      const activityRows = Array.from(activityRowsMap.values());
+      const savedCount = await saveMembersFromActivity(activityRows);
       totalSaved += savedCount;
+      console.log(`[syncMembersFromBatches] Saved final chunk: ${savedCount} new, ${activityRows.length - savedCount} updated`);
     }
     
     // Calculate updates (total processed minus newly saved)
-    const totalUpdated = allActivityRows.length - totalSaved;
+    const totalUpdated = totalProcessed - totalSaved;
+    
+    console.log(`[syncMembersFromBatches] Sync complete: ${totalSaved} new, ${totalUpdated} updated, ${totalProcessed} total processed, ${processedAccounts.size} unique accounts`);
     
     return {
       savedCount: totalSaved,
       updatedCount: totalUpdated,
-      totalProcessed: allActivityRows.length
+      totalProcessed: totalProcessed
     };
   } catch (error) {
     console.error('Error syncing members from batches:', error);
@@ -1468,7 +1579,8 @@ export interface MemberWithBatch extends Member {
 export async function getMembersPaginated(
   page: number = 1,
   pageSize: number = 50,
-  search: string = ''
+  search: string = '',
+  filters?: { is_email?: number | null; is_postal?: number | null }
 ): Promise<{ members: MemberWithBatch[]; total: number; totalPages: number }> {
   try {
     // Ensure page and pageSize are integers
@@ -1609,6 +1721,16 @@ export async function getMembersPaginated(
         m.state?.toLowerCase().includes(searchTerm) ||
         m.post_code?.toLowerCase().includes(searchTerm)
       );
+    }
+    
+    // Apply filters
+    if (filters) {
+      if (filters.is_email !== null && filters.is_email !== undefined) {
+        filteredMembers = filteredMembers.filter(m => m.is_email === filters.is_email);
+      }
+      if (filters.is_postal !== null && filters.is_postal !== undefined) {
+        filteredMembers = filteredMembers.filter(m => m.is_postal === filters.is_postal);
+      }
     }
     
     // Sort by last name ASC, then first name ASC as secondary sort

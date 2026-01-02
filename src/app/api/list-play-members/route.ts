@@ -7,12 +7,17 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1', 10);
     const pageSize = parseInt(searchParams.get('pageSize') || '50', 10);
     const search = searchParams.get('search') || '';
+    const isEmail = searchParams.get('is_email');
     
     // Validate pagination parameters
     const validPage = Math.max(1, page);
     const validPageSize = Math.min(Math.max(1, pageSize), 100); // Max 100 per page
     
-    const result = await getPlayMembersPaginated(validPage, validPageSize, search);
+    const filters = {
+      is_email: isEmail !== null ? (isEmail === '1' ? 1 : isEmail === '0' ? 0 : null) : null,
+    };
+    
+    const result = await getPlayMembersPaginated(validPage, validPageSize, search, filters);
     
     return NextResponse.json({
       success: true,

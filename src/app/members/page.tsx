@@ -7,6 +7,7 @@ import SendEmailModal from '@/components/SendEmailModal';
 import ExportResultsDialog from '@/components/ExportResultsDialog';
 import SuccessDialog from '@/components/SuccessDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import AdvancedFilterModal from '@/components/AdvancedFilterModal';
 import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
 import JSZip from 'jszip';
 
@@ -28,6 +29,11 @@ export default function MembersPage() {
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeSearch, setActiveSearch] = useState<string>('');
+  const [filters, setFilters] = useState<{ is_email: string | null; is_postal: string | null }>({
+    is_email: null,
+    is_postal: null,
+  });
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState<boolean>(false);
   const [exportResults, setExportResults] = useState<{
     isOpen: boolean;
     successCount: number;
@@ -60,11 +66,13 @@ export default function MembersPage() {
     message: string;
   } | null>(null);
 
-  const loadMembers = useCallback(async (page: number, size: number, search: string = '') => {
+  const loadMembers = useCallback(async (page: number, size: number, search: string = '', filterParams?: { is_email: string | null; is_postal: string | null }) => {
     try {
       setLoadingMembers(true);
       const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}${searchParam}`);
+      const isEmailParam = filterParams?.is_email !== null && filterParams?.is_email !== undefined ? `&is_email=${encodeURIComponent(filterParams.is_email)}` : '';
+      const isPostalParam = filterParams?.is_postal !== null && filterParams?.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filterParams.is_postal)}` : '';
+      const response = await fetch(`/api/list-members?page=${page}&pageSize=${size}${searchParam}${isEmailParam}${isPostalParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -81,11 +89,12 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
+  const loadPlayMembers = useCallback(async (page: number, size: number, search: string = '', filterParams?: { is_email: string | null; is_postal: string | null }) => {
     try {
       setLoadingMembers(true);
       const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}${searchParam}`);
+      const isEmailParam = filterParams?.is_email !== null && filterParams?.is_email !== undefined ? `&is_email=${encodeURIComponent(filterParams.is_email)}` : '';
+      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}${searchParam}${isEmailParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -102,11 +111,12 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadNoPlayMembers = useCallback(async (page: number, size: number, search: string = '') => {
+  const loadNoPlayMembers = useCallback(async (page: number, size: number, search: string = '', filterParams?: { is_email: string | null; is_postal: string | null }) => {
     try {
       setLoadingMembers(true);
       const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}${searchParam}`);
+      const isEmailParam = filterParams?.is_email !== null && filterParams?.is_email !== undefined ? `&is_email=${encodeURIComponent(filterParams.is_email)}` : '';
+      const response = await fetch(`/api/list-no-play-members?page=${page}&pageSize=${size}${searchParam}${isEmailParam}`);
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -140,6 +150,18 @@ export default function MembersPage() {
   const handleClearSearch = useCallback(() => {
     setSearchQuery('');
     setActiveSearch('');
+    setCurrentPage(1);
+  }, []);
+
+  // Handle filter apply
+  const handleApplyFilters = useCallback((newFilters: { is_email: string | null; is_postal: string | null }) => {
+    setFilters(newFilters);
+    setCurrentPage(1);
+  }, []);
+
+  // Handle clear filters
+  const handleClearFilters = useCallback(() => {
+    setFilters({ is_email: null, is_postal: null });
     setCurrentPage(1);
   }, []);
 
@@ -208,7 +230,7 @@ export default function MembersPage() {
       if (data.success) {
         // Clear selection and reload members
         setSelectedMembers(new Set());
-        await loadMembers(currentPage, pageSize, activeSearch);
+        await loadMembers(currentPage, pageSize, activeSearch, filters);
         setDeleteSuccessDialog({
           isOpen: true,
           message: `Successfully deleted ${data.deletedCount} member${data.deletedCount !== 1 ? 's' : ''}`,
@@ -558,11 +580,11 @@ export default function MembersPage() {
 
       // Refresh the current tab's data
       if (activeTab === 'quarterly') {
-        await loadMembers(currentPage, pageSize, activeSearch);
+        await loadMembers(currentPage, pageSize, activeSearch, filters);
       } else if (activeTab === 'play') {
-        await loadPlayMembers(currentPage, pageSize, activeSearch);
+        await loadPlayMembers(currentPage, pageSize, activeSearch, filters);
       } else {
-        await loadNoPlayMembers(currentPage, pageSize, activeSearch);
+        await loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
       }
     } catch (error) {
       console.error('Error sending all emails:', error);
@@ -591,10 +613,13 @@ export default function MembersPage() {
       }
 
       const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
+      const isEmailParam = filters.is_email !== null && filters.is_email !== undefined ? `&is_email=${encodeURIComponent(filters.is_email)}` : '';
+      const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
+      const filterParams = `${isEmailParam}${isPostalParam}`;
       const pageSize = 100; // Use max page size to minimize requests
       
       // First, get the first page to know total pages
-      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}`);
+      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${filterParams}`);
       if (!firstPageResponse.ok) {
         throw new Error('Failed to fetch members');
       }
@@ -612,7 +637,7 @@ export default function MembersPage() {
         const remainingPages = [];
         for (let page = 2; page <= totalPages; page++) {
           remainingPages.push(
-            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}`)
+            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}${filterParams}`)
               .then(res => res.json())
               .then(data => {
                 setSendAllProgress({ current: page, total: totalPages });
@@ -702,19 +727,19 @@ export default function MembersPage() {
       setSendingAll(false);
       setSendAllProgress(null);
     }
-  }, [activeTab, activeSearch]);
+  }, [activeTab, activeSearch, filters]);
 
-  // Load members on component mount and when page/tab/search changes
+  // Load members on component mount and when page/tab/search/filters change
   useEffect(() => {
     if (activeTab === 'quarterly') {
-      loadMembers(currentPage, pageSize, activeSearch);
+      loadMembers(currentPage, pageSize, activeSearch, filters);
     } else if (activeTab === 'play') {
-      loadPlayMembers(currentPage, pageSize, activeSearch);
+      loadPlayMembers(currentPage, pageSize, activeSearch, filters);
     } else {
-      loadNoPlayMembers(currentPage, pageSize, activeSearch);
+      loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, activeTab, activeSearch]);
+  }, [currentPage, pageSize, activeTab, activeSearch, filters]);
 
   // Clear selection when page changes
   useEffect(() => {
@@ -740,6 +765,7 @@ export default function MembersPage() {
                   setSelectedMembers(new Set());
                   setSearchQuery('');
                   setActiveSearch('');
+                  setFilters({ is_email: null, is_postal: null });
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'quarterly'
@@ -756,6 +782,7 @@ export default function MembersPage() {
                   setSelectedMembers(new Set());
                   setSearchQuery('');
                   setActiveSearch('');
+                  setFilters({ is_email: null, is_postal: null });
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'play'
@@ -772,6 +799,7 @@ export default function MembersPage() {
                   setSelectedMembers(new Set());
                   setSearchQuery('');
                   setActiveSearch('');
+                  setFilters({ is_email: null, is_postal: null });
                 }}
                 className={`py-4 px-1 border-b-2 font-medium text-sm ${
                   activeTab === 'no-play'
@@ -816,7 +844,7 @@ export default function MembersPage() {
                             message: data.message || 'Members synced successfully!'
                           });
                           // Reload members after sync
-                          loadMembers(currentPage, pageSize, activeSearch);
+                          loadMembers(currentPage, pageSize, activeSearch, filters);
                         } else {
                           setSyncResult({
                             isOpen: true,
@@ -925,20 +953,31 @@ export default function MembersPage() {
                   <option value="100">100 per page</option>
                 </select>
                 <button
-                  onClick={() => {
-                    if (activeTab === 'quarterly') {
-                      loadMembers(currentPage, pageSize, activeSearch);
-                    } else if (activeTab === 'play') {
-                      loadPlayMembers(currentPage, pageSize, activeSearch);
-                    } else {
-                      loadNoPlayMembers(currentPage, pageSize, activeSearch);
-                    }
-                  }}
+                  onClick={() => setIsFilterModalOpen(true)}
                   disabled={loadingMembers}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium disabled:bg-gray-400"
+                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium disabled:bg-gray-400 flex items-center gap-2"
                 >
-                  {loadingMembers ? 'Refreshing...' : 'Refresh'}
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                  </svg>
+                  Advanced Filter
+                  {(filters.is_email !== null || filters.is_postal !== null) && (
+                    <span className="ml-1 px-1.5 py-0.5 bg-blue-500 text-white text-xs rounded-full">
+                      {(filters.is_email !== null ? 1 : 0) + (filters.is_postal !== null ? 1 : 0)}
+                    </span>
+                  )}
                 </button>
+                {(filters.is_email !== null || filters.is_postal !== null) && (
+                  <button
+                    onClick={handleClearFilters}
+                    className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+                    title="Clear filters"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1366,11 +1405,11 @@ export default function MembersPage() {
           onSave={() => {
             // Refresh the current tab's data
             if (activeTab === 'quarterly') {
-              loadMembers(currentPage, pageSize);
+              loadMembers(currentPage, pageSize, activeSearch, filters);
             } else if (activeTab === 'play') {
-              loadPlayMembers(currentPage, pageSize);
+              loadPlayMembers(currentPage, pageSize, activeSearch, filters);
             } else {
-              loadNoPlayMembers(currentPage, pageSize);
+              loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
             }
           }}
         />
@@ -1389,11 +1428,11 @@ export default function MembersPage() {
           onSuccess={() => {
             // Optionally refresh data after successful email send
             if (activeTab === 'quarterly') {
-              loadMembers(currentPage, pageSize, activeSearch);
+              loadMembers(currentPage, pageSize, activeSearch, filters);
             } else if (activeTab === 'play') {
-              loadPlayMembers(currentPage, pageSize, activeSearch);
+              loadPlayMembers(currentPage, pageSize, activeSearch, filters);
             } else {
-              loadNoPlayMembers(currentPage, pageSize, activeSearch);
+              loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
             }
           }}
         />
@@ -1471,6 +1510,15 @@ export default function MembersPage() {
           title="Sync Members"
         />
       )}
+
+      {/* Advanced Filter Modal */}
+      <AdvancedFilterModal
+        isOpen={isFilterModalOpen}
+        onClose={() => setIsFilterModalOpen(false)}
+        onApply={handleApplyFilters}
+        activeTab={activeTab}
+        currentFilters={filters}
+      />
     </div>
   );
 }
