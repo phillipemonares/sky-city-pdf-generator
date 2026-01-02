@@ -183,6 +183,9 @@ export interface PreCommitmentPlayer {
   sessionSummaries?: PreCommitmentSessionSummary[];
   totalAmountBet?: string;
   netWinLoss?: string;
+  // Member Contact fields (independent from quarterly statements)
+  isEmail?: number;
+  isPostal?: number;
 }
 
 export interface PreCommitmentCSVRow {

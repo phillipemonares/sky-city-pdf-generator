@@ -131,7 +131,7 @@ export default function EditMemberModal({ isOpen, onClose, account, batchId, onS
           onSave();
         }
         onClose();
-        alert('Member data saved successfully');
+        // Success is handled by onSave callback
       } else {
         setError(data.error || 'Failed to save member data');
       }
@@ -580,6 +580,8 @@ export default function EditMemberModal({ isOpen, onClose, account, batchId, onS
     </div>
   );
 }
+
+
 
 
 

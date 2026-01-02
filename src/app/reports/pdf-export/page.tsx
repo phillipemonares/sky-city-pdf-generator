@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Navigation from '@/components/Navigation';
+import AlertDialog from '@/components/AlertDialog';
 
 interface ExportJob {
   id: string;
@@ -57,7 +58,11 @@ export default function PDFExportPage() {
     try {
       const response = await fetch(`/api/export-pdfs-bulk/${exportId}/download`);
       if (!response.ok) {
-        alert('Failed to download export. It may not be ready yet.');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Failed to download export. It may not be ready yet.',
+          type: 'warning',
+        });
         return;
       }
 
@@ -72,7 +77,11 @@ export default function PDFExportPage() {
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading export:', error);
-      alert('Failed to download export. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to download export. Please try again.',
+        type: 'error',
+      });
     }
   };
 
@@ -197,9 +206,23 @@ export default function PDFExportPage() {
           )}
         </div>
       </div>
+
+      {/* Alert Dialog */}
+      {alertDialog && (
+        <AlertDialog
+          isOpen={alertDialog.isOpen}
+          onClose={() => setAlertDialog(null)}
+          message={alertDialog.message}
+          title={alertDialog.title}
+          type={alertDialog.type}
+        />
+      )}
     </div>
   );
 }
+
+
+
 
 
 

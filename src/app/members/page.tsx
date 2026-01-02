@@ -7,6 +7,7 @@ import SendEmailModal from '@/components/SendEmailModal';
 import ExportResultsDialog from '@/components/ExportResultsDialog';
 import SuccessDialog from '@/components/SuccessDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import AlertDialog from '@/components/AlertDialog';
 import AdvancedFilterModal from '@/components/AdvancedFilterModal';
 import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
 import JSZip from 'jszip';
@@ -60,10 +61,21 @@ export default function MembersPage() {
     isOpen: boolean;
     eligibleCount: number;
   } | null>(null);
+  const [exportConfirmDialog, setExportConfirmDialog] = useState<{
+    isOpen: boolean;
+    count: number;
+    onConfirm: () => void;
+  } | null>(null);
   const [syncing, setSyncing] = useState<boolean>(false);
   const [syncResult, setSyncResult] = useState<{
     isOpen: boolean;
     message: string;
+  } | null>(null);
+  const [alertDialog, setAlertDialog] = useState<{
+    isOpen: boolean;
+    message: string;
+    title?: string;
+    type?: 'info' | 'error' | 'warning';
   } | null>(null);
 
   const loadMembers = useCallback(async (page: number, size: number, search: string = '', filterParams?: { is_email: string | null; is_postal: string | null }) => {
@@ -192,13 +204,21 @@ export default function MembersPage() {
 
   const handleDeleteSelected = useCallback(() => {
     if (selectedMembers.size === 0) {
-      alert('Please select at least one member to delete');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please select at least one member to delete',
+        type: 'warning',
+      });
       return;
     }
 
     // Only allow deletion for quarterly members (pre-commitment members are not in the members table)
     if (activeTab === 'play' || activeTab === 'no-play') {
-      alert('Deletion is not available for pre-commitment members. These are managed through batches.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Deletion is not available for pre-commitment members. These are managed through batches.',
+        type: 'info',
+      });
       return;
     }
 
@@ -236,11 +256,19 @@ export default function MembersPage() {
           message: `Successfully deleted ${data.deletedCount} member${data.deletedCount !== 1 ? 's' : ''}`,
         });
       } else {
-        alert(`Error: ${data.error || 'Failed to delete members'}`);
+        setAlertDialog({
+          isOpen: true,
+          message: `Error: ${data.error || 'Failed to delete members'}`,
+          type: 'error',
+        });
       }
     } catch (error) {
       console.error('Error deleting members:', error);
-      alert('Failed to delete members. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to delete members. Please try again.',
+        type: 'error',
+      });
     } finally {
       setDeleting(false);
     }
@@ -250,7 +278,11 @@ export default function MembersPage() {
     const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
     
     if (currentMembers.length === 0) {
-      alert('No members to export');
+      setAlertDialog({
+        isOpen: true,
+        message: 'No members to export',
+        type: 'warning',
+      });
       return;
     }
 
@@ -263,12 +295,16 @@ export default function MembersPage() {
       
       // Warn user for very large exports
       if (totalCount > 1000) {
-        const confirmed = confirm(
-          `You are about to export ${totalCount.toLocaleString()} PDFs. This may take a very long time and could cause your browser to become unresponsive.\n\n` +
-          `For exports over 1,000 PDFs, we recommend exporting in smaller batches or contact support for a server-side bulk export solution.\n\n` +
-          `Do you want to continue?`
-        );
-        if (!confirmed) return;
+        setExportConfirmDialog({
+          isOpen: true,
+          count: totalCount,
+          onConfirm: async () => {
+            setExportConfirmDialog(null);
+            await performExport(membersToExport, activeTab);
+          },
+        });
+        // Wait for confirmation before continuing
+        return;
       }
 
       if (activeTab === 'quarterly') {
@@ -299,7 +335,11 @@ export default function MembersPage() {
     } else {
       // Export selected members only - return early if none selected
       if (selectedMembers.size === 0) {
-        alert('Please select at least one member to export');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Please select at least one member to export',
+          type: 'warning',
+        });
         return;
       }
       
@@ -332,18 +372,32 @@ export default function MembersPage() {
     }
 
     if (membersToExport.length === 0) {
-      alert('No members with PDFs available to export');
+      setAlertDialog({
+        isOpen: true,
+        message: 'No members with PDFs available to export',
+        type: 'warning',
+      });
       return;
     }
 
-    // Warn for large exports
+    // Warn for large exports - handled via ConfirmDialog in the component
     if (membersToExport.length > 500) {
-      const confirmed = confirm(
-        `You are about to export ${membersToExport.length} PDFs. This may take several minutes and could cause your browser to become unresponsive.\n\n` +
-        `Do you want to continue?`
-      );
-      if (!confirmed) return;
+      // This will be handled by the export confirmation dialog
+      setExportConfirmDialog({
+        isOpen: true,
+        count: membersToExport.length,
+        onConfirm: () => {
+          setExportConfirmDialog(null);
+          performExport(membersToExport, activeTab);
+        },
+      });
+      return;
     }
+
+    await performExport(membersToExport, activeTab);
+  }, [selectedMembers, members, playMembers, noPlayMembers, activeTab]);
+
+  const performExport = useCallback(async (membersToExport: Array<{ account: string; batchId: string; name: string }>, currentTab: 'quarterly' | 'play' | 'no-play') => {
 
     try {
       setExporting(true);
@@ -352,9 +406,9 @@ export default function MembersPage() {
 
       // Determine the API endpoint based on tab
       const getPdfUrl = (account: string, batchId: string) => {
-        if (activeTab === 'quarterly') {
+        if (currentTab === 'quarterly') {
           return `/api/member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
-        } else if (activeTab === 'play') {
+        } else if (currentTab === 'play') {
           return `/api/play-member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
         } else {
           return `/api/no-play-member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
@@ -439,7 +493,11 @@ export default function MembersPage() {
       setExportProgress({ current: membersToExport.length, total: membersToExport.length });
 
       if (successCount === 0) {
-        alert('Failed to export any PDFs. Please try again.');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Failed to export any PDFs. Please try again.',
+          type: 'error',
+        });
         return;
       }
 
@@ -455,7 +513,7 @@ export default function MembersPage() {
       // Download zip file
       const link = document.createElement('a');
       const url = URL.createObjectURL(zipBlob);
-      const tabName = activeTab === 'quarterly' ? 'quarterly' : activeTab === 'play' ? 'play' : 'no-play';
+      const tabName = currentTab === 'quarterly' ? 'quarterly' : currentTab === 'play' ? 'play' : 'no-play';
       const dateStr = new Date().toISOString().split('T')[0];
       link.setAttribute('href', url);
       link.setAttribute('download', `${tabName}_members_pdfs_${dateStr}.zip`);
@@ -478,7 +536,11 @@ export default function MembersPage() {
       });
     } catch (error) {
       console.error('Error exporting PDFs:', error);
-      alert('Failed to export PDFs. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to export PDFs. Please try again.',
+        type: 'error',
+      });
     } finally {
       setExporting(false);
       setExportProgress(null);
@@ -588,38 +650,162 @@ export default function MembersPage() {
       }
     } catch (error) {
       console.error('Error sending all emails:', error);
-      alert('Failed to send emails. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to send emails. Please try again.',
+        type: 'error',
+      });
     } finally {
       setSendingAll(false);
       setSendAllProgress(null);
       eligibleMembersRef.current = [];
     }
-  }, [activeTab, currentPage, pageSize, activeSearch, loadMembers, loadPlayMembers, loadNoPlayMembers]);
+  }, [activeTab, currentPage, pageSize, activeSearch, loadMembers, loadPlayMembers, loadNoPlayMembers, filters]);
 
   // Send all emails for members with is_email = true/yes
   const sendAllEmails = useCallback(async () => {
+    // For quarterly tab, use the existing logic with confirmation dialog
+    if (activeTab === 'quarterly') {
+      try {
+        setSendingAll(true);
+        setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
+
+        const apiEndpoint = '/api/list-members';
+        const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
+        // Don't apply is_email filter when counting for "Send All" - we'll filter client-side
+        // Only apply is_postal filter if set
+        const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
+        const filterParams = `${isPostalParam}`;
+        const pageSize = 100; // Use max page size to minimize requests
+        
+        // First, get the first page to know total pages
+        const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${filterParams}`);
+        if (!firstPageResponse.ok) {
+          throw new Error('Failed to fetch members');
+        }
+        const firstPageData = await firstPageResponse.json();
+        if (!firstPageData.success) {
+          throw new Error('Failed to fetch members');
+        }
+
+        // Calculate total pages based on total count
+        const totalMembers = firstPageData.total || 0;
+        const calculatedTotalPages = Math.ceil(totalMembers / pageSize);
+        const totalPages = Math.max(calculatedTotalPages, firstPageData.totalPages || 1);
+        
+        let allMembers = [...(firstPageData.members || [])];
+
+        // Fetch remaining pages if needed
+        if (totalPages > 1) {
+          setSendAllProgress({ current: 1, total: totalPages });
+          const remainingPages = [];
+          for (let page = 2; page <= totalPages; page++) {
+            remainingPages.push(
+              fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}${filterParams}`)
+                .then(res => res.json())
+                .then(data => {
+                  setSendAllProgress({ current: page, total: totalPages });
+                  return data.members || [];
+                })
+                .catch(error => {
+                  console.error(`Error fetching page ${page}:`, error);
+                  return [];
+                })
+            );
+          }
+          const remainingMembers = await Promise.all(remainingPages);
+          allMembers = allMembers.concat(...remainingMembers);
+        }
+
+        // Filter members where is_email is true (1) and have batch ID and email
+        let eligibleMembers = allMembers.filter(m => {
+          const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
+                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
+                                (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
+          const hasBatchId = !!m.latest_batch_id;
+          const hasEmailAddress = m.email && m.email.trim() !== '';
+          return isEmailEnabled && hasBatchId && hasEmailAddress;
+        });
+
+        // For quarterly tab, verify preview exists before sending
+        setSendAllProgress({ current: 0, total: eligibleMembers.length });
+        const membersWithPreview: typeof eligibleMembers = [];
+        
+        for (let i = 0; i < eligibleMembers.length; i++) {
+          const member = eligibleMembers[i];
+          const previewUrl = `/content/files/${member.account_number}/${member.latest_batch_id}/`;
+          
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            
+            const previewResponse = await fetch(previewUrl, { 
+              method: 'GET',
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (previewResponse.ok) {
+              membersWithPreview.push(member);
+            }
+          } catch (error) {
+            // Skip members without preview
+          }
+          
+          setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
+        }
+        
+        eligibleMembers = membersWithPreview;
+
+        if (eligibleMembers.length === 0) {
+          setAlertDialog({
+            isOpen: true,
+            message: 'No members with email enabled and valid preview found to send emails to.',
+            type: 'warning',
+          });
+          setSendingAll(false);
+          setSendAllProgress(null);
+          return;
+        }
+
+        // Store eligible members and show confirmation dialog
+        eligibleMembersRef.current = eligibleMembers;
+        setSendAllConfirmDialog({
+          isOpen: true,
+          eligibleCount: eligibleMembers.length,
+        });
+        
+        setSendAllProgress(null);
+      } catch (error) {
+        console.error('Error preparing to send all emails:', error);
+        setAlertDialog({
+          isOpen: true,
+          message: 'Failed to prepare email sending. Please try again.',
+          type: 'error',
+        });
+        setSendingAll(false);
+        setSendAllProgress(null);
+      }
+      return;
+    }
+
+    // For play and no-play tabs, use the original working logic (exactly as commit 2a91f7c)
+    if (activeTab !== 'play' && activeTab !== 'no-play') {
+      return;
+    }
+
     try {
       setSendingAll(true);
       setSendAllProgress({ current: 0, total: 1 }); // Start with fetching progress
 
       // Fetch all eligible members across all pages
-      let apiEndpoint: string;
-      if (activeTab === 'quarterly') {
-        apiEndpoint = '/api/list-members';
-      } else if (activeTab === 'play') {
-        apiEndpoint = '/api/list-play-members';
-      } else {
-        apiEndpoint = '/api/list-no-play-members';
-      }
-
+      const apiEndpoint = activeTab === 'play' ? '/api/list-play-members' : '/api/list-no-play-members';
       const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
-      const isEmailParam = filters.is_email !== null && filters.is_email !== undefined ? `&is_email=${encodeURIComponent(filters.is_email)}` : '';
-      const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
-      const filterParams = `${isEmailParam}${isPostalParam}`;
       const pageSize = 100; // Use max page size to minimize requests
       
       // First, get the first page to know total pages
-      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${filterParams}`);
+      const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}`);
       if (!firstPageResponse.ok) {
         throw new Error('Failed to fetch members');
       }
@@ -637,7 +823,7 @@ export default function MembersPage() {
         const remainingPages = [];
         for (let page = 2; page <= totalPages; page++) {
           remainingPages.push(
-            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}${filterParams}`)
+            fetch(`${apiEndpoint}?page=${page}&pageSize=${pageSize}${searchParam}`)
               .then(res => res.json())
               .then(data => {
                 setSendAllProgress({ current: page, total: totalPages });
@@ -650,63 +836,22 @@ export default function MembersPage() {
       }
 
       // Filter members where is_email is true (1) and have batch ID and email
-      let eligibleMembers = allMembers.filter(m => {
+      const eligibleMembers = allMembers.filter(m => {
         // Check if is_email is truthy (1, true, "yes", "true", etc.)
         const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
                               (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
                               (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
-        const hasBatchId = activeTab === 'quarterly' 
-          ? !!m.latest_batch_id 
-          : activeTab === 'play' 
-          ? !!m.latest_play_batch_id 
-          : !!m.latest_no_play_batch_id;
+        const hasBatchId = activeTab === 'play' ? !!m.latest_play_batch_id : !!m.latest_no_play_batch_id;
         const hasEmailAddress = m.email && m.email.trim() !== '';
         return isEmailEnabled && hasBatchId && hasEmailAddress;
       });
 
-      // For quarterly tab, verify preview exists before sending
-      if (activeTab === 'quarterly') {
-        setSendAllProgress({ current: 0, total: eligibleMembers.length });
-        const membersWithPreview: typeof eligibleMembers = [];
-        
-        for (let i = 0; i < eligibleMembers.length; i++) {
-          const member = eligibleMembers[i];
-          const previewUrl = `/content/files/${member.account_number}/${member.latest_batch_id}/`;
-          
-          try {
-            // Check if preview exists by fetching it with a timeout
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-            
-            const previewResponse = await fetch(previewUrl, { 
-              method: 'GET',
-              signal: controller.signal
-            });
-            
-            clearTimeout(timeoutId);
-            
-            if (previewResponse.ok) {
-              membersWithPreview.push(member);
-            } else {
-              console.log(`Skipping ${member.account_number}: preview not available (status: ${previewResponse.status})`);
-            }
-          } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-              console.log(`Skipping ${member.account_number}: preview check timed out`);
-            } else {
-              console.log(`Skipping ${member.account_number}: preview check failed`, error);
-            }
-          }
-          
-          // Update progress during preview check
-          setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
-        }
-        
-        eligibleMembers = membersWithPreview;
-      }
-
       if (eligibleMembers.length === 0) {
-        alert('No members with email enabled and valid preview found to send emails to.');
+        setAlertDialog({
+          isOpen: true,
+          message: 'No members with email enabled found to send emails to.',
+          type: 'warning',
+        });
         setSendingAll(false);
         setSendAllProgress(null);
         return;
@@ -718,16 +863,83 @@ export default function MembersPage() {
         isOpen: true,
         eligibleCount: eligibleMembers.length,
       });
-      
-      // Reset progress while waiting for confirmation
       setSendAllProgress(null);
+      return;
+
+      // Now send emails directly (like the working version)
+      setSendAllProgress({ current: 0, total: eligibleMembers.length });
+
+      const sendApiEndpoint = activeTab === 'play' ? '/api/send-play-member-pdf' : '/api/send-no-play-member-pdf';
+      let successCount = 0;
+      let failedCount = 0;
+      const failedAccounts: string[] = [];
+
+      // Send emails sequentially to avoid overwhelming the server
+      for (let i = 0; i < eligibleMembers.length; i++) {
+        const member = eligibleMembers[i];
+        const batchId = activeTab === 'play' ? member.latest_play_batch_id : member.latest_no_play_batch_id;
+
+        try {
+          const response = await fetch(sendApiEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              account: member.account_number,
+              batchId: batchId,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            successCount++;
+          } else {
+            failedCount++;
+            failedAccounts.push(member.account_number);
+          }
+        } catch (error) {
+          failedCount++;
+          failedAccounts.push(member.account_number);
+          console.error(`Error sending email to ${member.account_number}:`, error);
+        }
+
+        // Update progress
+        setSendAllProgress({ current: i + 1, total: eligibleMembers.length });
+
+        // Small delay between emails to avoid rate limiting
+        if (i < eligibleMembers.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      // Show results
+      setSendAllResults({
+        isOpen: true,
+        successCount,
+        failedCount,
+        failedAccounts: failedAccounts.slice(0, 10), // Show first 10 failed accounts
+      });
+
+      // Refresh the current tab's data (without filters parameter like working version)
+      if (activeTab === 'play') {
+        await loadPlayMembers(currentPage, pageSize, activeSearch);
+      } else {
+        await loadNoPlayMembers(currentPage, pageSize, activeSearch);
+      }
     } catch (error) {
-      console.error('Error preparing to send all emails:', error);
-      alert('Failed to prepare email sending. Please try again.');
+      console.error('Error sending all emails:', error);
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to send emails. Please try again.',
+        type: 'error',
+      });
+    } finally {
       setSendingAll(false);
       setSendAllProgress(null);
     }
-  }, [activeTab, activeSearch, filters]);
+  }, [activeTab, playMembers, noPlayMembers, currentPage, pageSize, activeSearch, loadPlayMembers, loadNoPlayMembers]);
 
   // Load members on component mount and when page/tab/search/filters change
   useEffect(() => {
@@ -1519,6 +1731,31 @@ export default function MembersPage() {
         activeTab={activeTab}
         currentFilters={filters}
       />
+
+      {/* Alert Dialog */}
+      {alertDialog && (
+        <AlertDialog
+          isOpen={alertDialog.isOpen}
+          onClose={() => setAlertDialog(null)}
+          message={alertDialog.message}
+          title={alertDialog.title}
+          type={alertDialog.type}
+        />
+      )}
+
+      {/* Export Confirmation Dialog */}
+      {exportConfirmDialog && (
+        <ConfirmDialog
+          isOpen={exportConfirmDialog.isOpen}
+          onClose={() => setExportConfirmDialog(null)}
+          onConfirm={exportConfirmDialog.onConfirm}
+          message={`You are about to export ${exportConfirmDialog.count.toLocaleString()} PDF${exportConfirmDialog.count !== 1 ? 's' : ''}. This may take a very long time and could cause your browser to become unresponsive.\n\nFor exports over 1,000 PDFs, we recommend exporting in smaller batches or contact support for a server-side bulk export solution.\n\nDo you want to continue?`}
+          title="Confirm Large Export"
+          confirmText="Continue"
+          cancelText="Cancel"
+          confirmButtonClass="bg-blue-600 hover:bg-blue-700"
+        />
+      )}
     </div>
   );
 }

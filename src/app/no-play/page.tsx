@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navigation from '@/components/Navigation';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import AlertDialog from '@/components/AlertDialog';
 import { parseExcelFile, parseExcelFileWithMemberContacts, parseCSVFile, validatePreCommitmentFile } from '@/lib/pc-parser';
 import { PreCommitmentPlayer } from '@/types/player-data';
 
@@ -64,6 +65,12 @@ export default function NoPlayPage() {
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
     isOpen: boolean;
     batchId: string;
+  } | null>(null);
+  const [alertDialog, setAlertDialog] = useState<{
+    isOpen: boolean;
+    message: string;
+    title?: string;
+    type?: 'info' | 'error' | 'warning';
   } | null>(null);
 
   // Filter players by Play/No-Play status
@@ -126,13 +133,21 @@ export default function NoPlayPage() {
     const file = acceptedFiles[0];
     
     if (!file) {
-      alert('Please upload a file');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please upload a file',
+        type: 'warning',
+      });
       return;
     }
 
     const validation = validatePreCommitmentFile(file);
     if (!validation.isValid) {
-      alert(`File validation failed: ${validation.errors.join(', ')}`);
+      setAlertDialog({
+        isOpen: true,
+        message: `File validation failed: ${validation.errors.join(', ')}`,
+        type: 'error',
+      });
       return;
     }
 
@@ -370,12 +385,20 @@ export default function NoPlayPage() {
 
   const saveBatch = async () => {
     if (!uploadedFile || uploadedFile.players.length === 0) {
-      alert('No players to save');
+      setAlertDialog({
+        isOpen: true,
+        message: 'No players to save',
+        type: 'warning',
+      });
       return;
     }
 
     if (loadedBatchId) {
-      alert('This batch is already saved. Loading a batch from history prevents duplicate saves. Upload new files to create a new batch.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'This batch is already saved. Loading a batch from history prevents duplicate saves. Upload new files to create a new batch.',
+        type: 'info',
+      });
       return;
     }
 
@@ -494,7 +517,11 @@ export default function NoPlayPage() {
         previewWindow.focus();
       } else {
         // Fallback if popup is blocked
-        alert('Popup blocked. Please allow popups for this site to preview PDFs.');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Popup blocked. Please allow popups for this site to preview PDFs.',
+          type: 'warning',
+        });
       }
 
       setGenerationStatus('Preview generated successfully!');
@@ -548,7 +575,11 @@ export default function NoPlayPage() {
     const member = memberInfoMap.get(player.playerInfo.playerAccount);
     
     if (!member || !member.email) {
-      alert('No email address found for this account. Cannot send PDF.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'No email address found for this account. Cannot send PDF.',
+        type: 'warning',
+      });
       return;
     }
 
@@ -589,7 +620,11 @@ export default function NoPlayPage() {
 
   const generateAllPDFs = async () => {
     if (!filteredPlayers || filteredPlayers.length === 0) {
-      alert(`No ${playStatusTab === 'play' ? 'Play' : 'No-Play'} players to generate PDFs for`);
+      setAlertDialog({
+        isOpen: true,
+        message: `No ${playStatusTab === 'play' ? 'Play' : 'No-Play'} players to generate PDFs for`,
+        type: 'warning',
+      });
       return;
     }
 
@@ -691,7 +726,11 @@ export default function NoPlayPage() {
       document.body.removeChild(link);
     } catch (error) {
       console.error('Error downloading template:', error);
-      alert('Failed to download template. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to download template. Please try again.',
+        type: 'error',
+      });
     }
   };
 
@@ -1130,6 +1169,17 @@ export default function NoPlayPage() {
           title="Delete Pre-Commitment Batch"
           confirmText="Delete Batch"
           cancelText="Cancel"
+        />
+      )}
+
+      {/* Alert Dialog */}
+      {alertDialog && (
+        <AlertDialog
+          isOpen={alertDialog.isOpen}
+          onClose={() => setAlertDialog(null)}
+          message={alertDialog.message}
+          title={alertDialog.title}
+          type={alertDialog.type}
         />
       )}
 

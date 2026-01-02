@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Navigation from '@/components/Navigation';
+import AlertDialog from '@/components/AlertDialog';
 
 interface User {
   id: string;
@@ -208,7 +209,11 @@ export default function UsersPage() {
       // Refresh users list
       await fetchUsers();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'An error occurred');
+      setAlertDialog({
+        isOpen: true,
+        message: err instanceof Error ? err.message : 'An error occurred',
+        type: 'error',
+      });
     }
   };
 

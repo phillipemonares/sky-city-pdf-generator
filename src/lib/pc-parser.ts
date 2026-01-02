@@ -289,6 +289,13 @@ export function parseExcelFile(
         const rows = primaryRows.slice(1) as string[][];
         const sessionMap = buildSessionMap(sessionHeader, sessionRows);
         const emailMap = buildMemberContactMap(memberContactHeader, memberContactRows);
+        
+        // Build member contact map for isEmail/isPostal
+        const memberContacts = buildMemberContactData(memberContactHeader, memberContactRows);
+        const memberContactMap = new Map<string, MemberContactData>();
+        memberContacts.forEach(contact => {
+          memberContactMap.set(contact.accountNumber, contact);
+        });
 
         const csvRows: PreCommitmentCSVRow[] = rows.map(row => {
           const csvRow: Record<string, string> = {};
@@ -298,7 +305,7 @@ export function parseExcelFile(
           return csvRow as PreCommitmentCSVRow;
         });
 
-        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options, emailMap);
+        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options, emailMap, memberContactMap);
         resolve(players);
       } catch (error) {
         console.error('Error parsing Excel file:', error);
@@ -375,6 +382,12 @@ export function parseExcelFileWithMemberContacts(
         const sessionMap = buildSessionMap(sessionHeader, sessionRows);
         const emailMap = buildMemberContactMap(memberContactHeader, memberContactRows);
         const memberContacts = buildMemberContactData(memberContactHeader, memberContactRows);
+        
+        // Build member contact map for isEmail/isPostal
+        const memberContactMap = new Map<string, MemberContactData>();
+        memberContacts.forEach(contact => {
+          memberContactMap.set(contact.accountNumber, contact);
+        });
 
         const csvRows: PreCommitmentCSVRow[] = rows.map(row => {
           const csvRow: Record<string, string> = {};
@@ -384,7 +397,7 @@ export function parseExcelFileWithMemberContacts(
           return csvRow as PreCommitmentCSVRow;
         });
 
-        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options, emailMap);
+        const players = transformToPreCommitmentPlayers(csvRows, sessionMap, options, emailMap, memberContactMap);
         resolve({ players, memberContacts });
       } catch (error) {
         console.error('Error parsing Excel file:', error);
@@ -456,7 +469,8 @@ function transformToPreCommitmentPlayers(
   csvRows: PreCommitmentCSVRow[],
   sessionMap: Map<string, PreCommitmentSessionSummary[]> = new Map(),
   options: TransformOptions = DEFAULT_OPTIONS,
-  emailMap: Map<string, string> = new Map()
+  emailMap: Map<string, string> = new Map(),
+  memberContactMap: Map<string, MemberContactData> = new Map()
 ): PreCommitmentPlayer[] {
   const effectiveOptions: TransformOptions = {
     ...DEFAULT_OPTIONS,
@@ -541,6 +555,11 @@ function transformToPreCommitmentPlayers(
     
     // Get email from Member Contact sheet if available
     const email = emailMap.get(acct) || '';
+    
+    // Get isEmail and isPostal from Member Contact data (independent from quarterly statements)
+    const memberContact = memberContactMap.get(acct);
+    const isEmail = memberContact?.isEmail ?? 0;
+    const isPostal = memberContact?.isPostal ?? 0;
 
     const playerInfo: PlayerInfo = {
       playerAccount: acct,
@@ -595,6 +614,8 @@ function transformToPreCommitmentPlayers(
       sessionSummaries: sessions.length ? [...sessions] : undefined,
       totalAmountBet: (n['total amount bet'] ?? '').toString(),
       netWinLoss: (n['net win/loss'] ?? '').toString(),
+      isEmail,
+      isPostal,
     } as PreCommitmentPlayer;
   });
 }

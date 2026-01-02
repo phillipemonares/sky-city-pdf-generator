@@ -709,7 +709,10 @@ export interface NoPlayMemberWithBatch {
   address1: string;
   address2: string;
   suburb: string;
+  state: string | null;
+  post_code: string | null;
   is_email: number;
+  is_postal: number;
 }
 
 /**
@@ -728,7 +731,10 @@ export interface PlayMemberWithBatch {
   address1: string;
   address2: string;
   suburb: string;
+  state: string | null;
+  post_code: string | null;
   is_email: number;
+  is_postal: number;
 }
 
 /**
@@ -749,6 +755,7 @@ export async function getNoPlayMembersPaginated(
     const searchTerm = search.trim().toLowerCase();
     
     // Get all no-play members with their latest batch info (before filtering)
+    // Note: is_email comes from no_play_players table for play/no-play precommitment
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         latest_no_play.account_number,
@@ -757,7 +764,7 @@ export async function getNoPlayMembersPaginated(
         latest_no_play.statement_period,
         latest_no_play.statement_date,
         latest_no_play.player_data,
-        COALESCE(m.is_email, 0) as is_email
+        COALESCE(latest_no_play.is_email, 0) as is_email
        FROM (
          SELECT 
            npp.account_number,
@@ -766,12 +773,12 @@ export async function getNoPlayMembersPaginated(
            npp.statement_period,
            npp.statement_date,
            npp.player_data,
+           npp.is_email,
            ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
          FROM no_play_players npp
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'No Play'
        ) as latest_no_play
-       LEFT JOIN members m ON latest_no_play.account_number = m.account_number
        WHERE latest_no_play.rn = 1
        ORDER BY latest_no_play.account_number ASC`
     );
@@ -797,6 +804,9 @@ export async function getNoPlayMembersPaginated(
       // Decrypt account_number
       const decryptedAccount = decrypt(row.account_number);
       
+      // Get is_email from members table for play/no-play precommitment
+      const isEmail = row.is_email ?? 0;
+      
       return {
         account_number: decryptedAccount,
         latest_no_play_batch_id: row.latest_no_play_batch_id,
@@ -809,7 +819,10 @@ export async function getNoPlayMembersPaginated(
         address1: playerInfo.address1 || '',
         address2: playerInfo.address2 || '',
         suburb: playerInfo.suburb || '',
-        is_email: row.is_email ?? 0,
+        state: null, // Not used for play/no-play precommitment
+        post_code: null, // Not used for play/no-play precommitment
+        is_email: isEmail,
+        is_postal: 0, // Not used for play/no-play precommitment
       };
     });
     
@@ -859,6 +872,13 @@ export async function getNoPlayMembersPaginated(
       );
     }
     
+    // Apply filters
+    if (filters) {
+      if (filters.is_email !== null && filters.is_email !== undefined) {
+        filteredMembers = filteredMembers.filter(m => m.is_email === filters.is_email);
+      }
+    }
+    
     // Calculate pagination
     const total = filteredMembers.length;
     const totalPages = Math.ceil(total / validPageSize);
@@ -895,6 +915,7 @@ export async function getPlayMembersPaginated(
     const searchTerm = search.trim().toLowerCase();
     
     // Get all play members with their latest batch info (before filtering)
+    // Note: is_email comes from no_play_players table for play/no-play precommitment
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         latest_play.account_number,
@@ -903,7 +924,7 @@ export async function getPlayMembersPaginated(
         latest_play.statement_period,
         latest_play.statement_date,
         latest_play.player_data,
-        COALESCE(m.is_email, 0) as is_email
+        COALESCE(latest_play.is_email, 0) as is_email
        FROM (
          SELECT 
            npp.account_number,
@@ -912,12 +933,12 @@ export async function getPlayMembersPaginated(
            npp.statement_period,
            npp.statement_date,
            npp.player_data,
+           npp.is_email,
            ROW_NUMBER() OVER (PARTITION BY npp.account_number ORDER BY npb.generation_date DESC) as rn
          FROM no_play_players npp
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.no_play_status = 'Play'
        ) as latest_play
-       LEFT JOIN members m ON latest_play.account_number = m.account_number
        WHERE latest_play.rn = 1
        ORDER BY latest_play.account_number ASC`
     );
@@ -943,6 +964,9 @@ export async function getPlayMembersPaginated(
       // Decrypt account_number
       const decryptedAccount = decrypt(row.account_number);
       
+      // Get is_email from no_play_players table for play/no-play precommitment
+      const isEmail = row.is_email ?? 0;
+      
       return {
         account_number: decryptedAccount,
         latest_play_batch_id: row.latest_play_batch_id,
@@ -955,7 +979,10 @@ export async function getPlayMembersPaginated(
         address1: playerInfo.address1 || '',
         address2: playerInfo.address2 || '',
         suburb: playerInfo.suburb || '',
-        is_email: row.is_email ?? 0,
+        state: null, // Not used for play/no-play precommitment
+        post_code: null, // Not used for play/no-play precommitment
+        is_email: isEmail,
+        is_postal: 0, // Not used for play/no-play precommitment
       };
     });
     

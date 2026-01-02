@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import Navigation from '@/components/Navigation';
 import ConfirmDialog from '@/components/ConfirmDialog';
+import AlertDialog from '@/components/AlertDialog';
 import {
   parseCSVFile as parseMonthlyCSVFile,
   transformCSVToPlayerData,
@@ -102,6 +103,12 @@ export default function UploadInterface() {
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{
     isOpen: boolean;
     batchId: string;
+  } | null>(null);
+  const [alertDialog, setAlertDialog] = useState<{
+    isOpen: boolean;
+    message: string;
+    title?: string;
+    type?: 'info' | 'error' | 'warning';
   } | null>(null);
 
   // Use allAnnotatedPlayers if we have them (from loaded batch), otherwise build from uploads
@@ -250,15 +257,27 @@ export default function UploadInterface() {
     // If still no quarter/year, show error
     if (!quarter || !year) {
       if (loadedBatchId) {
-        alert('Unable to determine quarter and year from the loaded batch. Please try reloading the batch.');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Unable to determine quarter and year from the loaded batch. Please try reloading the batch.',
+          type: 'error',
+        });
       } else {
-        alert('Please load a batch or upload activity statement first to determine quarter and year');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Please load a batch or upload activity statement first to determine quarter and year',
+          type: 'warning',
+        });
       }
       return;
     }
 
     if (!startDate || !endDate) {
-      alert('Please enter both start and end dates');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please enter both start and end dates',
+        type: 'warning',
+      });
       return;
     }
 
@@ -291,11 +310,19 @@ export default function UploadInterface() {
           : 'Statement period saved successfully!';
         console.log(message);
       } else {
-        alert(`Failed to save statement period: ${data.error || 'Unknown error'}`);
+        setAlertDialog({
+          isOpen: true,
+          message: `Failed to save statement period: ${data.error || 'Unknown error'}`,
+          type: 'error',
+        });
       }
     } catch (error) {
       console.error('Error saving statement period:', error);
-      alert('Failed to save statement period. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to save statement period. Please try again.',
+        type: 'error',
+      });
     } finally {
       setSavingStatementPeriod(false);
     }
@@ -476,19 +503,31 @@ export default function UploadInterface() {
   const saveBatch = async () => {
     // Prevent saving if a batch is already loaded (to avoid duplicates)
     if (loadedBatchId) {
-      alert('This batch is already saved. Loading a batch from history prevents duplicate saves. Upload new files to create a new batch.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'This batch is already saved. Loading a batch from history prevents duplicate saves. Upload new files to create a new batch.',
+        type: 'info',
+      });
       return;
     }
 
     if (!activityUpload || activityUpload.rows.length === 0) {
-      alert('Upload an activity statement before saving');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Upload an activity statement before saving',
+        type: 'warning',
+      });
       return;
     }
 
     // Pre-commitment and cashless are optional - proceed without confirmation
 
     if (annotatedPlayers.length === 0) {
-      alert('No matched accounts to save');
+      setAlertDialog({
+        isOpen: true,
+        message: 'No matched accounts to save',
+        type: 'warning',
+      });
       return;
     }
 
@@ -688,7 +727,11 @@ export default function UploadInterface() {
     );
 
     if (csvFiles.length === 0) {
-      alert('Please upload CSV files only');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Please upload CSV files only',
+          type: 'warning',
+        });
       return;
     }
 
@@ -904,13 +947,21 @@ export default function UploadInterface() {
     
     const file = acceptedFiles[0];
     if (!file) {
-      alert('Please upload the activity statement file');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please upload the activity statement file',
+        type: 'warning',
+      });
       return;
     }
 
     const validation = validateActivityFile(file);
     if (!validation.isValid) {
-      alert(`Activity file validation failed: ${validation.errors.join(', ')}`);
+      setAlertDialog({
+        isOpen: true,
+        message: `Activity file validation failed: ${validation.errors.join(', ')}`,
+        type: 'error',
+      });
       return;
     }
 
@@ -1007,13 +1058,21 @@ export default function UploadInterface() {
     
     const file = acceptedFiles[0];
     if (!file) {
-      alert('Please upload the pre-commitment workbook');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please upload the pre-commitment workbook',
+        type: 'warning',
+      });
       return;
     }
 
     const validation = validatePreCommitmentFile(file);
     if (!validation.isValid) {
-      alert(`Pre-commitment file validation failed: ${validation.errors.join(', ')}`);
+      setAlertDialog({
+        isOpen: true,
+        message: `Pre-commitment file validation failed: ${validation.errors.join(', ')}`,
+        type: 'error',
+      });
       return;
     }
 
@@ -1070,7 +1129,11 @@ export default function UploadInterface() {
 
   const previewPDF = async (account?: string) => {
     if (!activityUpload || activityUpload.rows.length === 0) {
-      alert('Upload an activity statement before generating a preview');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Upload an activity statement before generating a preview',
+        type: 'warning',
+      });
       return;
     }
 
@@ -1084,7 +1147,11 @@ export default function UploadInterface() {
     }
 
     if (!startDate || !endDate) {
-      alert('Please set both start and end dates for the statement period before generating a preview');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please set both start and end dates for the statement period before generating a preview',
+        type: 'warning',
+      });
       return;
     }
 
@@ -1264,7 +1331,11 @@ export default function UploadInterface() {
         previewWindow.focus();
       } else {
         // Fallback if popup is blocked
-        alert('Popup blocked. Please allow popups for this site to preview PDFs.');
+        setAlertDialog({
+          isOpen: true,
+          message: 'Popup blocked. Please allow popups for this site to preview PDFs.',
+          type: 'warning',
+        });
       }
 
       setGenerationStatus(`Preview generated successfully for ${accountLabel}!`);
@@ -1279,14 +1350,22 @@ export default function UploadInterface() {
 
   const generatePDFs = async (account?: string) => {
     if (!activityUpload || activityUpload.rows.length === 0) {
-      alert('Upload an activity statement before generating PDFs');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Upload an activity statement before generating PDFs',
+        type: 'warning',
+      });
       return;
     }
 
     // Pre-commitment and cashless are optional - proceed without confirmation
 
     if (!startDate || !endDate) {
-      alert('Please set both start and end dates for the statement period before generating PDFs');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Please set both start and end dates for the statement period before generating PDFs',
+        type: 'warning',
+      });
       return;
     }
 
@@ -1353,7 +1432,11 @@ export default function UploadInterface() {
       console.error('Error generating PDF:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setGenerationStatus(`Error generating ${noun} for ${accountLabel}: ${errorMessage}`);
-      alert(`Error generating PDF: ${errorMessage}`);
+      setAlertDialog({
+        isOpen: true,
+        message: `Error generating PDF: ${errorMessage}`,
+        type: 'error',
+      });
     } finally {
       setGeneratingAccount(null);
     }
@@ -1361,7 +1444,11 @@ export default function UploadInterface() {
 
   const sendPDF = async (account?: string) => {
     if (!activityUpload || activityUpload.rows.length === 0) {
-      alert('Upload an activity statement before sending PDFs');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Upload an activity statement before sending PDFs',
+        type: 'warning',
+      });
       return;
     }
 
@@ -1371,7 +1458,11 @@ export default function UploadInterface() {
     const targetPlayer = annotatedPlayers.find(p => p.account === targetAccount);
     
     if (!targetPlayer || !targetPlayer.activity?.email) {
-      alert('No email address found for this account. Cannot send PDF.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'No email address found for this account. Cannot send PDF.',
+        type: 'warning',
+      });
       return;
     }
 
@@ -1421,7 +1512,11 @@ export default function UploadInterface() {
       console.error('Error sending PDF:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setGenerationStatus(`Error sending PDF for ${accountLabel}: ${errorMessage}`);
-      alert(`Error sending PDF: ${errorMessage}`);
+      setAlertDialog({
+        isOpen: true,
+        message: `Error sending PDF: ${errorMessage}`,
+        type: 'error',
+      });
     } finally {
       setSendingAccount(null);
     }
@@ -1473,7 +1568,11 @@ export default function UploadInterface() {
       document.body.removeChild(link);
     } catch (error) {
       console.error('Error downloading template:', error);
-      alert('Failed to download template. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to download template. Please try again.',
+        type: 'error',
+      });
     }
   };
 
@@ -1496,7 +1595,11 @@ export default function UploadInterface() {
       document.body.removeChild(link);
     } catch (error) {
       console.error('Error downloading template:', error);
-      alert('Failed to download template. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to download template. Please try again.',
+        type: 'error',
+      });
     }
   };
 
@@ -1519,7 +1622,11 @@ export default function UploadInterface() {
       document.body.removeChild(link);
     } catch (error) {
       console.error('Error downloading template:', error);
-      alert('Failed to download template. Please try again.');
+      setAlertDialog({
+        isOpen: true,
+        message: 'Failed to download template. Please try again.',
+        type: 'error',
+      });
     }
   };
 
@@ -2234,6 +2341,16 @@ export default function UploadInterface() {
         />
       )}
 
+      {/* Alert Dialog */}
+      {alertDialog && (
+        <AlertDialog
+          isOpen={alertDialog.isOpen}
+          onClose={() => setAlertDialog(null)}
+          message={alertDialog.message}
+          title={alertDialog.title}
+          type={alertDialog.type}
+        />
+      )}
       </div>
     </div>
   );
