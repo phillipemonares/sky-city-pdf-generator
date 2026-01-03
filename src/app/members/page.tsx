@@ -583,7 +583,15 @@ export default function MembersPage() {
         const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
         const listParams = `emailType=quarterly${searchParam}${isPostalParam}`;
         
-        const eligibleResponse = await fetch(`/api/list-eligible-members?${listParams}`);
+        const listController = new AbortController();
+        const listTimeoutId = setTimeout(() => listController.abort(), 60000); // 60 second timeout
+        
+        const eligibleResponse = await fetch(`/api/list-eligible-members?${listParams}`, {
+          signal: listController.signal,
+        });
+        
+        clearTimeout(listTimeoutId);
+        
         if (!eligibleResponse.ok) {
           throw new Error('Failed to fetch eligible members');
         }
@@ -599,6 +607,9 @@ export default function MembersPage() {
           const accountsToCheck = eligibleMembersList.map((m: any) => m.account_number);
           const batchIdsToCheck = eligibleMembersList.map((m: any) => m.latest_batch_id);
           try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+            
             const checkResponse = await fetch('/api/check-emails-sent-for-batch', {
               method: 'POST',
               headers: {
@@ -609,7 +620,10 @@ export default function MembersPage() {
                 batchIds: batchIdsToCheck,
                 emailType: 'quarterly',
               }),
+              signal: controller.signal,
             });
+            
+            clearTimeout(timeoutId);
 
             if (checkResponse.ok) {
               const checkData = await checkResponse.json();
@@ -621,7 +635,11 @@ export default function MembersPage() {
               }
             }
           } catch (error) {
-            console.error('Error checking emails sent for batch:', error);
+            if (error instanceof Error && error.name === 'AbortError') {
+              console.error('Timeout checking emails sent for batch');
+            } else {
+              console.error('Error checking emails sent for batch:', error);
+            }
             // Continue with all members if check fails
           }
         }
@@ -649,6 +667,10 @@ export default function MembersPage() {
         const sendBatch = async (batch: any[]) => {
           const batchPromises = batch.map(async (member: any) => {
             try {
+              // Create abort controller with timeout
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout per email
+              
               const response = await fetch(sendApiEndpoint, {
                 method: 'POST',
                 headers: {
@@ -658,8 +680,10 @@ export default function MembersPage() {
                   account: member.account_number,
                   batchId: member.latest_batch_id,
                 }),
+                signal: controller.signal,
               });
 
+              clearTimeout(timeoutId);
               const data = await response.json();
 
               if (data.success) {
@@ -668,6 +692,9 @@ export default function MembersPage() {
                 return { success: false, account: member.account_number, error: data.error };
               }
             } catch (error) {
+              if (error instanceof Error && error.name === 'AbortError') {
+                return { success: false, account: member.account_number, error: 'Request timeout (120s)' };
+              }
               return { success: false, account: member.account_number, error: error instanceof Error ? error.message : 'Unknown error' };
             }
           });
@@ -786,6 +813,9 @@ export default function MembersPage() {
               activeTab === 'play' ? m.latest_play_batch_id : m.latest_no_play_batch_id
             );
             try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+              
               const checkResponse = await fetch('/api/check-emails-sent-for-batch', {
                 method: 'POST',
                 headers: {
@@ -796,7 +826,10 @@ export default function MembersPage() {
                   batchIds: batchIdsToCheck,
                   emailType: activeTab === 'play' ? 'play' : 'no-play',
                 }),
+                signal: controller.signal,
               });
+              
+              clearTimeout(timeoutId);
 
               if (checkResponse.ok) {
                 const checkData = await checkResponse.json();
@@ -823,6 +856,10 @@ export default function MembersPage() {
               const batchId = activeTab === 'play' ? member.latest_play_batch_id : member.latest_no_play_batch_id;
               
               try {
+                // Create abort controller with timeout
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout per email
+                
                 const response = await fetch(sendApiEndpoint, {
                   method: 'POST',
                   headers: {
@@ -832,8 +869,10 @@ export default function MembersPage() {
                     account: member.account_number,
                     batchId: batchId,
                   }),
+                  signal: controller.signal,
                 });
 
+                clearTimeout(timeoutId);
                 const data = await response.json();
 
                 if (data.success) {
@@ -842,6 +881,9 @@ export default function MembersPage() {
                   return { success: false, account: member.account_number, error: data.error };
                 }
               } catch (error) {
+                if (error instanceof Error && error.name === 'AbortError') {
+                  return { success: false, account: member.account_number, error: 'Request timeout (120s)' };
+                }
                 return { success: false, account: member.account_number, error: error instanceof Error ? error.message : 'Unknown error' };
               }
             });
@@ -932,6 +974,9 @@ export default function MembersPage() {
           : member.latest_no_play_batch_id;
 
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout per email
+          
           const response = await fetch(sendApiEndpoint, {
             method: 'POST',
             headers: {
@@ -941,8 +986,10 @@ export default function MembersPage() {
               account: member.account_number,
               batchId: batchId,
             }),
+            signal: controller.signal,
           });
 
+          clearTimeout(timeoutId);
           const data = await response.json();
 
           if (data.success) {
@@ -952,9 +999,13 @@ export default function MembersPage() {
             failedAccounts.push(member.account_number);
           }
         } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') {
+            console.error(`Timeout sending email to ${member.account_number} (120s)`);
+          } else {
+            console.error(`Error sending email to ${member.account_number}:`, error);
+          }
           failedCount++;
           failedAccounts.push(member.account_number);
-          console.error(`Error sending email to ${member.account_number}:`, error);
         }
 
         // Update progress
@@ -1009,7 +1060,15 @@ export default function MembersPage() {
         const isPostalParam = filters.is_postal !== null && filters.is_postal !== undefined ? `&is_postal=${encodeURIComponent(filters.is_postal)}` : '';
         const countParams = `emailType=quarterly${searchParam}${isPostalParam}`;
         
-        const countResponse = await fetch(`/api/count-eligible-members?${countParams}`);
+        const countController = new AbortController();
+        const countTimeoutId = setTimeout(() => countController.abort(), 30000); // 30 second timeout
+        
+        const countResponse = await fetch(`/api/count-eligible-members?${countParams}`, {
+          signal: countController.signal,
+        });
+        
+        clearTimeout(countTimeoutId);
+        
         if (!countResponse.ok) {
           throw new Error('Failed to fetch eligible member count');
         }
@@ -1067,7 +1126,15 @@ export default function MembersPage() {
       const emailType = activeTab === 'play' ? 'play' : 'no-play';
       const countParams = `emailType=${emailType}${searchParam}`;
       
-      const countResponse = await fetch(`/api/count-eligible-members?${countParams}`);
+      const countController = new AbortController();
+      const countTimeoutId = setTimeout(() => countController.abort(), 30000); // 30 second timeout
+      
+      const countResponse = await fetch(`/api/count-eligible-members?${countParams}`, {
+        signal: countController.signal,
+      });
+      
+      clearTimeout(countTimeoutId);
+      
       if (!countResponse.ok) {
         throw new Error('Failed to fetch eligible member count');
       }

@@ -13,6 +13,9 @@ if (process.env.SENDGRID_API_KEY) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 }
 
+// Increase timeout for email sending (PDF generation + email sending can take time)
+export const maxDuration = 120; // 2 minutes
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();

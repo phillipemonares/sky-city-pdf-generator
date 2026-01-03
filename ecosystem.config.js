@@ -25,6 +25,9 @@ module.exports = {
       // Wait before restarting
       wait_ready: true,
       listen_timeout: 10000,
+      // Graceful shutdown settings
+      kill_timeout: 5000, // Wait 5 seconds before force kill
+      shutdown_with_message: true,
     },
     {
       name: 'skycity-pdf-worker',
@@ -47,6 +50,9 @@ module.exports = {
       min_uptime: '10s',
       max_restarts: 5,
       restart_delay: 5000,
+      // Graceful shutdown settings
+      kill_timeout: 5000, // Wait 5 seconds before force kill
+      shutdown_with_message: true,
     },
   ],
 };
