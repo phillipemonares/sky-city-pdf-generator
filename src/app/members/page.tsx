@@ -274,13 +274,12 @@ export default function MembersPage() {
     }
   }, [selectedMembers, currentPage, pageSize, loadMembers, activeSearch]);
 
-  const exportPDFs = useCallback(async (exportAll: boolean = false) => {
-    const currentMembers = activeTab === 'quarterly' ? members : activeTab === 'play' ? playMembers : noPlayMembers;
-    
-    if (currentMembers.length === 0) {
+  const exportPDFs = useCallback(async () => {
+    // Export selected members only - return early if none selected
+    if (selectedMembers.size === 0) {
       setAlertDialog({
         isOpen: true,
-        message: 'No members to export',
+        message: 'Please select at least one member to export',
         type: 'warning',
       });
       return;
@@ -289,86 +288,31 @@ export default function MembersPage() {
     // Determine which members to export
     let membersToExport: Array<{ account: string; batchId: string; name: string }> = [];
     
-    if (exportAll) {
-      // For export all, we export all filtered members on the current page
-      const totalCount = currentMembers.length;
-      
-      // Warn user for very large exports
-      if (totalCount > 1000) {
-        setExportConfirmDialog({
-          isOpen: true,
-          count: totalCount,
-          onConfirm: async () => {
-            setExportConfirmDialog(null);
-            await performExport(membersToExport, activeTab);
-          },
-        });
-        // Wait for confirmation before continuing
-        return;
-      }
-
-      if (activeTab === 'quarterly') {
-        membersToExport = members
-          .filter(m => m.latest_batch_id)
-          .map(m => ({
-            account: m.account_number,
-            batchId: m.latest_batch_id!,
-            name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
-          }));
-      } else if (activeTab === 'play') {
-        membersToExport = playMembers
-          .filter(m => m.latest_play_batch_id)
-          .map(m => ({
-            account: m.account_number,
-            batchId: m.latest_play_batch_id!,
-            name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-          }));
-      } else {
-        membersToExport = noPlayMembers
-          .filter(m => m.latest_no_play_batch_id)
-          .map(m => ({
-            account: m.account_number,
-            batchId: m.latest_no_play_batch_id!,
-            name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-          }));
-      }
+    // Export selected members
+    if (activeTab === 'quarterly') {
+      membersToExport = members
+        .filter(m => selectedMembers.has(m.id) && m.latest_batch_id)
+        .map(m => ({
+          account: m.account_number,
+          batchId: m.latest_batch_id!,
+          name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
+        }));
+    } else if (activeTab === 'play') {
+      membersToExport = playMembers
+        .filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id)
+        .map(m => ({
+          account: m.account_number,
+          batchId: m.latest_play_batch_id!,
+          name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
+        }));
     } else {
-      // Export selected members only - return early if none selected
-      if (selectedMembers.size === 0) {
-        setAlertDialog({
-          isOpen: true,
-          message: 'Please select at least one member to export',
-          type: 'warning',
-        });
-        return;
-      }
-      
-      // Export selected members
-      if (activeTab === 'quarterly') {
-        membersToExport = members
-          .filter(m => selectedMembers.has(m.id) && m.latest_batch_id)
-          .map(m => ({
-            account: m.account_number,
-            batchId: m.latest_batch_id!,
-            name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
-          }));
-      } else if (activeTab === 'play') {
-        membersToExport = playMembers
-          .filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id)
-          .map(m => ({
-            account: m.account_number,
-            batchId: m.latest_play_batch_id!,
-            name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-          }));
-      } else {
-        membersToExport = noPlayMembers
-          .filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id)
-          .map(m => ({
-            account: m.account_number,
-            batchId: m.latest_no_play_batch_id!,
-            name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-          }));
-      }
+      membersToExport = noPlayMembers
+        .filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id)
+        .map(m => ({
+          account: m.account_number,
+          batchId: m.latest_no_play_batch_id!,
+          name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
+        }));
     }
 
     if (membersToExport.length === 0) {
@@ -602,47 +546,8 @@ export default function MembersPage() {
 
         let eligibleMembersList = eligibleData.members || [];
         
-        // Check which members already received emails for their batch
-        if (eligibleMembersList.length > 0) {
-          const accountsToCheck = eligibleMembersList.map((m: any) => m.account_number);
-          const batchIdsToCheck = eligibleMembersList.map((m: any) => m.latest_batch_id);
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
-            
-            const checkResponse = await fetch('/api/check-emails-sent-for-batch', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                accounts: accountsToCheck,
-                batchIds: batchIdsToCheck,
-                emailType: 'quarterly',
-              }),
-              signal: controller.signal,
-            });
-            
-            clearTimeout(timeoutId);
-
-            if (checkResponse.ok) {
-              const checkData = await checkResponse.json();
-              if (checkData.success && checkData.alreadySentMap) {
-                // Filter out members who already received emails for their batch
-                eligibleMembersList = eligibleMembersList.filter((m: any) => {
-                  return !checkData.alreadySentMap[m.account_number];
-                });
-              }
-            }
-          } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-              console.error('Timeout checking emails sent for batch');
-            } else {
-              console.error('Error checking emails sent for batch:', error);
-            }
-            // Continue with all members if check fails
-          }
-        }
+        // Note: The list-eligible-members endpoint already filters out accounts that received emails
+        // No need for additional filtering here
         
         const eligibleCount = eligibleMembersList.length;
         
@@ -806,24 +711,20 @@ export default function MembersPage() {
             return isEmailEnabled && hasBatchId && hasEmailAddress;
           });
 
-          // Check which members already received emails for their batch
+          // Check which members already received emails (by account only, not batch)
           if (eligiblePageMembers.length > 0) {
             const accountsToCheck = eligiblePageMembers.map((m: any) => m.account_number);
-            const batchIdsToCheck = eligiblePageMembers.map((m: any) => 
-              activeTab === 'play' ? m.latest_play_batch_id : m.latest_no_play_batch_id
-            );
             try {
               const controller = new AbortController();
               const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
               
-              const checkResponse = await fetch('/api/check-emails-sent-for-batch', {
+              const checkResponse = await fetch('/api/check-emails-sent-by-account', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
                   accounts: accountsToCheck,
-                  batchIds: batchIdsToCheck,
                   emailType: activeTab === 'play' ? 'play' : 'no-play',
                 }),
                 signal: controller.signal,
@@ -834,14 +735,18 @@ export default function MembersPage() {
               if (checkResponse.ok) {
                 const checkData = await checkResponse.json();
                 if (checkData.success && checkData.alreadySentMap) {
-                  // Filter out members who already received emails for their batch
+                  // Filter out members who already received emails
                   eligiblePageMembers = eligiblePageMembers.filter((m: any) => {
                     return !checkData.alreadySentMap[m.account_number];
                   });
                 }
               }
             } catch (error) {
-              console.error('Error checking emails sent for batch:', error);
+              if (error instanceof Error && error.name === 'AbortError') {
+                console.error('Timeout checking emails sent by account');
+              } else {
+                console.error('Error checking emails sent by account:', error);
+              }
               // Continue with all members if check fails
             }
           }
@@ -1344,7 +1249,7 @@ export default function MembersPage() {
                   const exportCount = getExportCount();
                   return (
                     <button
-                      onClick={() => exportPDFs(false)}
+                      onClick={() => exportPDFs()}
                       disabled={exporting || loadingMembers || selectedMembers.size === 0 || exportCount === 0}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:bg-gray-400"
                     >
@@ -1352,13 +1257,6 @@ export default function MembersPage() {
                     </button>
                   );
                 })()}
-                <button
-                  onClick={() => exportPDFs(true)}
-                  disabled={exporting || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:bg-gray-400"
-                >
-                  {exporting ? (exportProgress ? `Exporting... ${exportProgress.current}/${exportProgress.total}` : 'Exporting...') : 'Export All'}
-                </button>
                 <button
                   onClick={sendAllEmails}
                   disabled={sendingAll || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}

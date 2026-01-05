@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { pool } from '../db';
+import { normalizeAccount } from '../pdf-shared';
 
 // Email Tracking Functions
 // ============================================
@@ -379,6 +380,14 @@ export async function checkEmailSentForBatch(
   const connection = await pool.getConnection();
   
   try {
+    // Normalize account for comparison (recipient_account is stored normalized)
+    const normalizedAccount = normalizeAccount(account);
+    const batchIdStr = String(batchId || '').trim();
+    
+    if (!normalizedAccount || !batchIdStr) {
+      return false;
+    }
+    
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(
       `SELECT COUNT(*) as count 
        FROM email_tracking 
@@ -386,7 +395,7 @@ export async function checkEmailSentForBatch(
          AND batch_id = ? 
          AND email_type = ? 
          AND status = 'sent'`,
-      [account, batchId, emailType]
+      [normalizedAccount, batchIdStr, emailType]
     );
     
     return (rows[0]?.count || 0) > 0;

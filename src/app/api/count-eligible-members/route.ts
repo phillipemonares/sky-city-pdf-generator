@@ -21,26 +21,27 @@ export async function GET(request: NextRequest) {
     const connection = await pool.getConnection();
     
     try {
-      // Get account+batch combinations that already received emails
-      // This checks all time, not just today, to prevent duplicate sends for the same batch
+      // Get all accounts that already received emails
+      // This checks all time, not just today, to prevent duplicate sends
       const [sentRows] = await connection.execute<mysql.RowDataPacket[]>(
-        `SELECT DISTINCT recipient_account, batch_id 
+        `SELECT DISTINCT recipient_account 
          FROM email_tracking 
          WHERE email_type = ? 
            AND status = 'sent' 
-           AND batch_id IS NOT NULL`,
+           AND recipient_account IS NOT NULL`,
         [emailType]
       );
       
-      // Create a set of account+batch combinations that already have emails sent
-      const alreadySentAccountBatch = new Set<string>();
+      // Create a set of accounts that already have emails sent
+      const alreadySentAccounts = new Set<string>();
       sentRows.forEach(row => {
-        const normalizedAccount = normalizeAccount(row.recipient_account);
-        const batchId = row.batch_id;
-        if (normalizedAccount && batchId) {
-          alreadySentAccountBatch.add(`${normalizedAccount}:${batchId}`);
+        const account = normalizeAccount(row.recipient_account);
+        if (account) {
+          alreadySentAccounts.add(account);
         }
       });
+      
+      console.log(`[count-eligible-members] Found ${alreadySentAccounts.size} accounts that already have emails sent`);
 
       // Build query to get eligible members
       let accountQuery: string;
@@ -120,15 +121,8 @@ export async function GET(request: NextRequest) {
           const decryptedAccount = decrypt(row.account_number);
           const normalizedAccount = normalizeAccount(decryptedAccount);
           
-          // Get batch_id for this row
-          const batchId = emailType === 'quarterly' 
-            ? row.latest_batch_id 
-            : emailType === 'play' 
-            ? row.latest_play_batch_id 
-            : row.latest_no_play_batch_id;
-          
-          // Skip if already sent for this batch
-          if (batchId && alreadySentAccountBatch.has(`${normalizedAccount}:${batchId}`)) {
+          // Skip if account already received an email (regardless of batch_id)
+          if (alreadySentAccounts.has(normalizedAccount)) {
             continue;
           }
 
