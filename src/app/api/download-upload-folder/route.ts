@@ -53,7 +53,10 @@ export async function GET(request: NextRequest) {
     });
 
     // Return zip file as response
-    return new NextResponse(zipBuffer, {
+    // Convert Buffer to Uint8Array for NextResponse (Uint8Array is a valid BodyInit)
+    const uint8Array = new Uint8Array(zipBuffer);
+    
+    return new NextResponse(uint8Array, {
       status: 200,
       headers: {
         'Content-Type': 'application/zip',
