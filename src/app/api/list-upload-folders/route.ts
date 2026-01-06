@@ -93,3 +93,4 @@ async function calculateFolderSize(folderPath: string): Promise<number> {
   }
 }
 
+

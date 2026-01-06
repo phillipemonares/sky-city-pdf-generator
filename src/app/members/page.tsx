@@ -9,12 +9,11 @@ import SuccessDialog from '@/components/SuccessDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import AlertDialog from '@/components/AlertDialog';
 import AdvancedFilterModal from '@/components/AdvancedFilterModal';
-import { MemberWithBatch, NoPlayMemberWithBatch, PlayMemberWithBatch } from '@/lib/db';
+import { MemberWithBatch, NoPlayMemberWithBatch } from '@/lib/db';
 import JSZip from 'jszip';
 
 export default function MembersPage() {
   const [members, setMembers] = useState<MemberWithBatch[]>([]);
-  const [playMembers, setPlayMembers] = useState<PlayMemberWithBatch[]>([]);
   const [noPlayMembers, setNoPlayMembers] = useState<NoPlayMemberWithBatch[]>([]);
   const [loadingMembers, setLoadingMembers] = useState<boolean>(false);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -23,9 +22,9 @@ export default function MembersPage() {
   const [totalPages, setTotalPages] = useState<number>(0);
   const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'quarterly' | 'play' | 'no-play'>('quarterly');
+  const [activeTab, setActiveTab] = useState<'quarterly' | 'no-play'>('quarterly');
   const [editingMember, setEditingMember] = useState<{ account: string; batchId: string } | null>(null);
-  const [emailMember, setEmailMember] = useState<{ account: string; batchId: string; name: string; email: string; type?: 'quarterly' | 'play' | 'no-play' } | null>(null);
+  const [emailMember, setEmailMember] = useState<{ account: string; batchId: string; name: string; email: string; type?: 'quarterly' | 'no-play' } | null>(null);
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -101,27 +100,6 @@ export default function MembersPage() {
     }
   }, []);
 
-  const loadPlayMembers = useCallback(async (page: number, size: number, search: string = '', filterParams?: { is_email: string | null; is_postal: string | null }) => {
-    try {
-      setLoadingMembers(true);
-      const searchParam = search.trim() ? `&search=${encodeURIComponent(search.trim())}` : '';
-      const isEmailParam = filterParams?.is_email !== null && filterParams?.is_email !== undefined ? `&is_email=${encodeURIComponent(filterParams.is_email)}` : '';
-      const response = await fetch(`/api/list-play-members?page=${page}&pageSize=${size}${searchParam}${isEmailParam}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          setPlayMembers(data.members || []);
-          setTotalMembers(data.total || 0);
-          setTotalPages(data.totalPages || 0);
-          setCurrentPage(data.currentPage || 1);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading play members:', error);
-    } finally {
-      setLoadingMembers(false);
-    }
-  }, []);
 
   const loadNoPlayMembers = useCallback(async (page: number, size: number, search: string = '', filterParams?: { is_email: string | null; is_postal: string | null }) => {
     try {
@@ -193,14 +171,12 @@ export default function MembersPage() {
     if (checked) {
       const memberIds = activeTab === 'quarterly'
         ? members.map(m => m.id)
-        : activeTab === 'play'
-        ? playMembers.map(m => m.account_number)
         : noPlayMembers.map(m => m.account_number);
       setSelectedMembers(new Set(memberIds));
     } else {
       setSelectedMembers(new Set());
     }
-  }, [members, playMembers, noPlayMembers, activeTab]);
+  }, [members, noPlayMembers, activeTab]);
 
   const handleDeleteSelected = useCallback(() => {
     if (selectedMembers.size === 0) {
@@ -213,7 +189,7 @@ export default function MembersPage() {
     }
 
     // Only allow deletion for quarterly members (pre-commitment members are not in the members table)
-    if (activeTab === 'play' || activeTab === 'no-play') {
+    if (activeTab === 'no-play') {
       setAlertDialog({
         isOpen: true,
         message: 'Deletion is not available for pre-commitment members. These are managed through batches.',
@@ -297,14 +273,6 @@ export default function MembersPage() {
           batchId: m.latest_batch_id!,
           name: [m.title, m.first_name, m.last_name].filter(Boolean).join(' ') || m.account_number
         }));
-    } else if (activeTab === 'play') {
-      membersToExport = playMembers
-        .filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id)
-        .map(m => ({
-          account: m.account_number,
-          batchId: m.latest_play_batch_id!,
-          name: [m.first_name, m.last_name].filter(Boolean).join(' ').trim() || m.account_number
-        }));
     } else {
       membersToExport = noPlayMembers
         .filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id)
@@ -339,9 +307,9 @@ export default function MembersPage() {
     }
 
     await performExport(membersToExport, activeTab);
-  }, [selectedMembers, members, playMembers, noPlayMembers, activeTab]);
+  }, [selectedMembers, members, noPlayMembers, activeTab]);
 
-  const performExport = useCallback(async (membersToExport: Array<{ account: string; batchId: string; name: string }>, currentTab: 'quarterly' | 'play' | 'no-play') => {
+  const performExport = useCallback(async (membersToExport: Array<{ account: string; batchId: string; name: string }>, currentTab: 'quarterly' | 'no-play') => {
 
     try {
       setExporting(true);
@@ -352,8 +320,6 @@ export default function MembersPage() {
       const getPdfUrl = (account: string, batchId: string) => {
         if (currentTab === 'quarterly') {
           return `/api/member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
-        } else if (currentTab === 'play') {
-          return `/api/play-member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
         } else {
           return `/api/no-play-member-pdf?account=${encodeURIComponent(account)}&batch=${encodeURIComponent(batchId)}`;
         }
@@ -457,7 +423,7 @@ export default function MembersPage() {
       // Download zip file
       const link = document.createElement('a');
       const url = URL.createObjectURL(zipBlob);
-      const tabName = currentTab === 'quarterly' ? 'quarterly' : currentTab === 'play' ? 'play' : 'no-play';
+      const tabName = currentTab === 'quarterly' ? 'quarterly' : 'no-play';
       const dateStr = new Date().toISOString().split('T')[0];
       link.setAttribute('href', url);
       link.setAttribute('download', `${tabName}_members_pdfs_${dateStr}.zip`);
@@ -489,7 +455,7 @@ export default function MembersPage() {
       setExporting(false);
       setExportProgress(null);
     }
-  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
+  }, [members, noPlayMembers, activeTab, selectedMembers]);
 
   // Calculate export count based on selected members only
   const getExportCount = useCallback(() => {
@@ -498,12 +464,10 @@ export default function MembersPage() {
     }
     if (activeTab === 'quarterly') {
       return members.filter(m => selectedMembers.has(m.id) && m.latest_batch_id).length;
-    } else if (activeTab === 'play') {
-      return playMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_play_batch_id).length;
     } else {
       return noPlayMembers.filter(m => selectedMembers.has(m.account_number) && m.latest_no_play_batch_id).length;
     }
-  }, [members, playMembers, noPlayMembers, activeTab, selectedMembers]);
+  }, [members, noPlayMembers, activeTab, selectedMembers]);
 
   // Store eligible members for sending (used after confirmation)
   const eligibleMembersRef = useRef<Array<{ account_number: string; latest_batch_id?: string | null; latest_play_batch_id?: string | null; latest_no_play_batch_id?: string | null }>>([]);
@@ -658,16 +622,16 @@ export default function MembersPage() {
       }
     }
     
-    // For play and no-play tabs, fetch and send page by page (after confirmation)
-    if ((activeTab === 'play' || activeTab === 'no-play') && eligibleMembers.length === 0) {
+    // For no-play tab, fetch and send page by page (after confirmation)
+    if (activeTab === 'no-play' && eligibleMembers.length === 0) {
       try {
         setSendingAll(true);
 
-        const apiEndpoint = activeTab === 'play' ? '/api/list-play-members' : '/api/list-no-play-members';
+        const apiEndpoint = '/api/list-no-play-members';
         const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
         const isEmailParam = '&is_email=1';
         const pageSize = 100;
-        const sendApiEndpoint = activeTab === 'play' ? '/api/send-play-member-pdf' : '/api/send-no-play-member-pdf';
+        const sendApiEndpoint = '/api/send-no-play-member-pdf';
         
         // Get first page to know total pages
         const firstPageResponse = await fetch(`${apiEndpoint}?page=1&pageSize=${pageSize}${searchParam}${isEmailParam}`);
@@ -706,7 +670,7 @@ export default function MembersPage() {
             const isEmailEnabled = m.is_email === 1 || m.is_email === true || 
                                   (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'yes') ||
                                   (typeof m.is_email === 'string' && m.is_email.toLowerCase() === 'true');
-            const hasBatchId = activeTab === 'play' ? !!m.latest_play_batch_id : !!m.latest_no_play_batch_id;
+            const hasBatchId = !!m.latest_no_play_batch_id;
             const hasEmailAddress = m.email && m.email.trim() !== '';
             return isEmailEnabled && hasBatchId && hasEmailAddress;
           });
@@ -725,7 +689,7 @@ export default function MembersPage() {
                 },
                 body: JSON.stringify({
                   accounts: accountsToCheck,
-                  emailType: activeTab === 'play' ? 'play' : 'no-play',
+                  emailType: 'no-play',
                 }),
                 signal: controller.signal,
               });
@@ -758,7 +722,7 @@ export default function MembersPage() {
             
             // Send batch of emails concurrently
             const batchPromises = batch.map(async (member: any) => {
-              const batchId = activeTab === 'play' ? member.latest_play_batch_id : member.latest_no_play_batch_id;
+              const batchId = member.latest_no_play_batch_id;
               
               try {
                 // Create abort controller with timeout
@@ -827,11 +791,7 @@ export default function MembersPage() {
         });
 
         // Refresh the current tab's data
-        if (activeTab === 'play') {
-          await loadPlayMembers(currentPage, pageSize, activeSearch, filters);
-        } else {
-          await loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
-        }
+        await loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
         
         setSendingAll(false);
         setSendAllProgress(null);
@@ -861,8 +821,6 @@ export default function MembersPage() {
 
       const sendApiEndpoint = activeTab === 'quarterly' 
         ? '/api/send-member-pdf' 
-        : activeTab === 'play' 
-        ? '/api/send-play-member-pdf' 
         : '/api/send-no-play-member-pdf';
       
       let successCount = 0;
@@ -874,8 +832,6 @@ export default function MembersPage() {
         const member = eligibleMembers[i];
         const batchId = activeTab === 'quarterly' 
           ? member.latest_batch_id 
-          : activeTab === 'play' 
-          ? member.latest_play_batch_id 
           : member.latest_no_play_batch_id;
 
         try {
@@ -933,8 +889,6 @@ export default function MembersPage() {
       // Refresh the current tab's data
       if (activeTab === 'quarterly') {
         await loadMembers(currentPage, pageSize, activeSearch, filters);
-      } else if (activeTab === 'play') {
-        await loadPlayMembers(currentPage, pageSize, activeSearch, filters);
       } else {
         await loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
       }
@@ -950,7 +904,7 @@ export default function MembersPage() {
       setSendAllProgress(null);
       eligibleMembersRef.current = [];
     }
-  }, [activeTab, currentPage, pageSize, activeSearch, loadMembers, loadPlayMembers, loadNoPlayMembers, filters]);
+  }, [activeTab, currentPage, pageSize, activeSearch, loadMembers, loadNoPlayMembers, filters]);
 
   // Send all emails for members with is_email = true/yes
   const sendAllEmails = useCallback(async () => {
@@ -1017,8 +971,8 @@ export default function MembersPage() {
       return;
     }
 
-    // For play and no-play tabs, get count first, show dialog, then fetch data after confirmation
-    if (activeTab !== 'play' && activeTab !== 'no-play') {
+    // For no-play tab, get count first, show dialog, then fetch data after confirmation
+    if (activeTab !== 'no-play') {
       return;
     }
 
@@ -1028,8 +982,7 @@ export default function MembersPage() {
 
       // Get count of eligible members excluding those who already received emails today
       const searchParam = activeSearch.trim() ? `&search=${encodeURIComponent(activeSearch.trim())}` : '';
-      const emailType = activeTab === 'play' ? 'play' : 'no-play';
-      const countParams = `emailType=${emailType}${searchParam}`;
+      const countParams = `emailType=no-play${searchParam}`;
       
       const countController = new AbortController();
       const countTimeoutId = setTimeout(() => countController.abort(), 30000); // 30 second timeout
@@ -1081,14 +1034,12 @@ export default function MembersPage() {
       setSendingAll(false);
       setSendAllProgress(null);
     }
-  }, [activeTab, playMembers, noPlayMembers, currentPage, pageSize, activeSearch, loadPlayMembers, loadNoPlayMembers]);
+  }, [activeTab, noPlayMembers, currentPage, pageSize, activeSearch, loadNoPlayMembers]);
 
   // Load members on component mount and when page/tab/search/filters change
   useEffect(() => {
     if (activeTab === 'quarterly') {
       loadMembers(currentPage, pageSize, activeSearch, filters);
-    } else if (activeTab === 'play') {
-      loadPlayMembers(currentPage, pageSize, activeSearch, filters);
     } else {
       loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
     }
@@ -1131,23 +1082,6 @@ export default function MembersPage() {
               </button>
               <button
                 onClick={() => {
-                  setActiveTab('play');
-                  setCurrentPage(1);
-                  setSelectedMembers(new Set());
-                  setSearchQuery('');
-                  setActiveSearch('');
-                  setFilters({ is_email: null, is_postal: null });
-                }}
-                className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                  activeTab === 'play'
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                Play Pre-Commitment
-              </button>
-              <button
-                onClick={() => {
                   setActiveTab('no-play');
                   setCurrentPage(1);
                   setSelectedMembers(new Set());
@@ -1178,7 +1112,7 @@ export default function MembersPage() {
                   ) : activeSearch ? (
                     `Found ${totalMembers.toLocaleString()} matching members (Page ${currentPage} of ${totalPages})`
                   ) : (
-                    `Showing ${activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
+                    `Showing ${activeTab === 'quarterly' ? members.length : noPlayMembers.length} of ${totalMembers.toLocaleString()} members (Page ${currentPage} of ${totalPages})`
                   )}
                 </p>
               </div>
@@ -1238,7 +1172,7 @@ export default function MembersPage() {
                         {deleting ? 'Deleting...' : `Delete Selected (${selectedMembers.size})`}
                       </button>
                     )}
-                    {(activeTab === 'play' || activeTab === 'no-play') && (
+                    {activeTab === 'no-play' && (
                       <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium">
                         {selectedMembers.size} selected (deletion not available for pre-commitment members)
                       </div>
@@ -1259,7 +1193,7 @@ export default function MembersPage() {
                 })()}
                 <button
                   onClick={sendAllEmails}
-                  disabled={sendingAll || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0)}
+                  disabled={sendingAll || loadingMembers || (activeTab === 'quarterly' ? members.length === 0 : noPlayMembers.length === 0)}
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:bg-gray-400"
                 >
                   {sendingAll ? (sendAllProgress ? `Sending... ${sendAllProgress.current}/${sendAllProgress.total.toLocaleString()}` : 'Sending...') : 'Send All'}
@@ -1382,7 +1316,7 @@ export default function MembersPage() {
               <div className="text-center py-12 text-gray-500">
                 <p>Loading members...</p>
               </div>
-            ) : (activeTab === 'quarterly' ? members.length === 0 : activeTab === 'play' ? playMembers.length === 0 : noPlayMembers.length === 0) ? (
+            ) : (activeTab === 'quarterly' ? members.length === 0 : noPlayMembers.length === 0) ? (
               <div className="text-center py-12 text-gray-500">
                 {activeSearch ? (
                   <>
@@ -1391,7 +1325,7 @@ export default function MembersPage() {
                   </>
                 ) : (
                   <>
-                    <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : activeTab === 'play' ? 'Play Pre-Commitment' : 'No-Play Pre-Commitment'}</p>
+                    <p className="text-lg mb-2">No members found for {activeTab === 'quarterly' ? 'Quarterly Statement' : 'No-Play Pre-Commitment'}</p>
                     <p className="text-sm">
                       {activeTab === 'quarterly'
                         ? 'Members are automatically added when Activity Statement Templates are uploaded on the Quarterly Statement page.'
@@ -1408,10 +1342,10 @@ export default function MembersPage() {
                       <th className="px-3 py-2 text-left border border-gray-200 font-semibold text-xs w-12">
                         <input
                           type="checkbox"
-                          checked={(activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length) > 0 && selectedMembers.size === (activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length)}
+                          checked={(activeTab === 'quarterly' ? members.length : noPlayMembers.length) > 0 && selectedMembers.size === (activeTab === 'quarterly' ? members.length : noPlayMembers.length)}
                           ref={(input) => {
                             if (input) {
-                              const total = activeTab === 'quarterly' ? members.length : activeTab === 'play' ? playMembers.length : noPlayMembers.length;
+                              const total = activeTab === 'quarterly' ? members.length : noPlayMembers.length;
                               input.indeterminate = 
                                 selectedMembers.size > 0 && 
                                 selectedMembers.size < total;
@@ -1524,81 +1458,6 @@ export default function MembersPage() {
                                           name: memberName,
                                           email: member.email,
                                           type: 'quarterly'
-                                        });
-                                      }}
-                                      className="text-blue-600 hover:text-blue-800 transition-colors"
-                                      title="Send Email"
-                                    >
-                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                                      </svg>
-                                    </button>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-gray-400 text-xs">N/A</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    ) : activeTab === 'play' ? (
-                      playMembers.map((member) => {
-                        const previewUrl = member.latest_play_batch_id
-                          ? `/content/play/${member.account_number}/${member.latest_play_batch_id}/`
-                          : null;
-                        const address = [member.address1, member.address2].filter(Boolean).join(', ').trim() || null;
-                      
-                        return (
-                          <tr key={member.account_number} className="hover:bg-gray-50">
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">
-                              <input
-                                type="checkbox"
-                                checked={selectedMembers.has(member.account_number)}
-                                onChange={() => handleSelectMember(member.account_number)}
-                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              />
-                            </td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.account_number}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.last_name || <span className="text-gray-400">N/A</span>}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.first_name || <span className="text-gray-400">N/A</span>}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.email || <span className="text-gray-400">N/A</span>}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{address || <span className="text-gray-400">N/A</span>}</td>
-                            <td className="px-3 py-1.5 border border-gray-200 text-xs">{member.suburb || <span className="text-gray-400">N/A</span>}</td>
-                            <td className="px-3 py-1.5 border border-gray-200">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                                member.is_email 
-                                  ? 'bg-green-100 text-green-800' 
-                                  : 'bg-gray-100 text-gray-800'
-                              }`}>
-                                {member.is_email ? 'Yes' : 'No'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-1.5 border border-gray-200">
-                              {previewUrl ? (
-                                <div className="flex items-center gap-2">
-                                  <a
-                                    href={previewUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 hover:text-blue-800 transition-colors"
-                                    title="Preview"
-                                  >
-                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                    </svg>
-                                  </a>
-                                  {member.email && (
-                                    <button
-                                      onClick={() => {
-                                        const memberName = [member.first_name, member.last_name].filter(Boolean).join(' ').trim() || 'Member';
-                                        setEmailMember({ 
-                                          account: member.account_number, 
-                                          batchId: member.latest_play_batch_id!,
-                                          name: memberName,
-                                          email: member.email,
-                                          type: 'play'
                                         });
                                       }}
                                       className="text-blue-600 hover:text-blue-800 transition-colors"
@@ -1753,8 +1612,6 @@ export default function MembersPage() {
             // Refresh the current tab's data
             if (activeTab === 'quarterly') {
               loadMembers(currentPage, pageSize, activeSearch, filters);
-            } else if (activeTab === 'play') {
-              loadPlayMembers(currentPage, pageSize, activeSearch, filters);
             } else {
               loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
             }
@@ -1776,8 +1633,6 @@ export default function MembersPage() {
             // Optionally refresh data after successful email send
             if (activeTab === 'quarterly') {
               loadMembers(currentPage, pageSize, activeSearch, filters);
-            } else if (activeTab === 'play') {
-              loadPlayMembers(currentPage, pageSize, activeSearch, filters);
             } else {
               loadNoPlayMembers(currentPage, pageSize, activeSearch, filters);
             }

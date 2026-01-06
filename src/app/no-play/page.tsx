@@ -55,7 +55,6 @@ export default function NoPlayPage() {
   const [savingBatch, setSavingBatch] = useState<boolean>(false);
   const [deletingBatch, setDeletingBatch] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'generation' | 'history'>('generation');
-  const [playStatusTab, setPlayStatusTab] = useState<'play' | 'no-play'>('no-play');
   const [loadedBatchId, setLoadedBatchId] = useState<string | null>(null);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -73,12 +72,11 @@ export default function NoPlayPage() {
     type?: 'info' | 'error' | 'warning';
   } | null>(null);
 
-  // Filter players by Play/No-Play status
-  const playPlayers = uploadedFile?.players.filter(p => p.noPlayStatus === 'Play') || [];
+  // Filter players by No-Play status only
   const noPlayPlayers = uploadedFile?.players.filter(p => p.noPlayStatus === 'No Play') || [];
   
-  // Get the current filtered players based on the selected tab
-  const filteredPlayers = playStatusTab === 'play' ? playPlayers : noPlayPlayers;
+  // Always show only No-Play players
+  const filteredPlayers = noPlayPlayers;
   
   // Pagination calculations
   const totalPlayers = filteredPlayers.length;
@@ -87,10 +85,10 @@ export default function NoPlayPage() {
   const endIndex = startIndex + pageSize;
   const paginatedPlayers = filteredPlayers.slice(startIndex, endIndex);
 
-  // Reset to page 1 when players change or tab changes
+  // Reset to page 1 when players change
   useEffect(() => {
     setCurrentPage(1);
-  }, [uploadedFile?.players, playStatusTab]);
+  }, [uploadedFile?.players]);
 
   // Format dates for statement period display
   const formatStatementPeriod = (start: string, end: string): string => {
@@ -155,8 +153,8 @@ export default function NoPlayPage() {
     
     if (fileExtension === '.xlsx') {
       // For Excel files, use the new parser that extracts Member Contact data
-      // Set filterNoPlay to false to include both Play and No-Play players
-      parseExcelFileWithMemberContacts(file, { filterNoPlay: false })
+      // Parse file and filter to only No-Play players
+      parseExcelFileWithMemberContacts(file, { filterNoPlay: true })
         .then(async result => {
           const { players, memberContacts } = result;
           
@@ -229,8 +227,8 @@ export default function NoPlayPage() {
         });
     } else {
       // For CSV files, use the regular parser (no Member Contact sheet)
-      // Set filterNoPlay to false to include both Play and No-Play players
-      parseCSVFile(file, { filterNoPlay: false })
+      // Filter to only No-Play players
+      parseCSVFile(file, { filterNoPlay: true })
         .then(players => {
           // Update statement period if dates are set
           const updatedPlayers = (startDate && endDate) 
@@ -347,23 +345,36 @@ export default function NoPlayPage() {
       }
 
       const data = await response.json();
+      
       if (data.success) {
         setLoadedBatchId(batchId);
         
         if (data.players && data.players.length > 0) {
           // Extract dates from statement period if possible
           const statementPeriod = data.batch.statement_period || '';
-          // Try to parse dates from statement period (e.g., "June 30, 2025 - September 2025")
-          const dateMatch = statementPeriod.match(/(\w+)\s+(\d+),\s+(\d+)\s+-\s+(\w+)\s+(\d+)/);
+          
+          // Parse dates from statement period format: "1 March 2025 - 30 June 2025"
+          // Pattern: Day Month Year - Day Month Year
+          const dateMatch = statementPeriod.match(/(\d+)\s+(\w+)\s+(\d+)\s+-\s+(\d+)\s+(\w+)\s+(\d+)/);
+          
           if (dateMatch) {
-            // Set dates if we can parse them
-            // Note: This is a simple extraction, might need refinement
-            const [, startMonth, startDay, startYear, endMonth, endYear] = dateMatch;
-            // Create date strings (approximate - using first day of end month)
-            const startDateStr = `${startYear}-${String(new Date(`${startMonth} 1, ${startYear}`).getMonth() + 1).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
-            const endDateStr = `${endYear}-${String(new Date(`${endMonth} 1, ${endYear}`).getMonth() + 1).padStart(2, '0')}-01`;
-            setStartDate(startDateStr);
-            setEndDate(endDateStr);
+            // Extract matched groups: startDay, startMonth, startYear, endDay, endMonth, endYear
+            const [, startDay, startMonth, startYear, endDay, endMonth, endYear] = dateMatch;
+            
+            // Convert month name to month number (1-12)
+            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
+                               'july', 'august', 'september', 'october', 'november', 'december'];
+            const startMonthIndex = monthNames.findIndex(m => m === startMonth.toLowerCase());
+            const endMonthIndex = monthNames.findIndex(m => m === endMonth.toLowerCase());
+            
+            if (startMonthIndex !== -1 && endMonthIndex !== -1) {
+              // Create date strings in YYYY-MM-DD format for date inputs
+              const startDateStr = `${startYear}-${String(startMonthIndex + 1).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
+              const endDateStr = `${endYear}-${String(endMonthIndex + 1).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+              
+              setStartDate(startDateStr);
+              setEndDate(endDateStr);
+            }
           }
           
           setUploadedFile({
@@ -622,14 +633,14 @@ export default function NoPlayPage() {
     if (!filteredPlayers || filteredPlayers.length === 0) {
       setAlertDialog({
         isOpen: true,
-        message: `No ${playStatusTab === 'play' ? 'Play' : 'No-Play'} players to generate PDFs for`,
+        message: `No No-Play players to generate PDFs for`,
         type: 'warning',
       });
       return;
     }
 
     setIsGenerating(true);
-    setGenerationStatus(`Generating PDFs for all ${playStatusTab === 'play' ? 'Play' : 'No-Play'} players...`);
+    setGenerationStatus(`Generating PDFs for all No-Play players...`);
 
     try {
       // Generate PDFs one by one for the filtered players
@@ -665,10 +676,10 @@ export default function NoPlayPage() {
         await new Promise(resolve => setTimeout(resolve, 500));
       }
 
-      setGenerationStatus(`All ${playStatusTab === 'play' ? 'Play' : 'No-Play'} PDFs generated successfully!`);
+      setGenerationStatus(`All No-Play PDFs generated successfully!`);
       
       // Save batch to database after generating all PDFs
-      // Save all players (both Play and No-Play) to the batch
+      // Save all No-Play players to the batch
       if (!loadedBatchId && uploadedFile && uploadedFile.players.length > 0) {
         try {
           const response = await fetch('/api/save-no-play-batch', {
@@ -740,7 +751,7 @@ export default function NoPlayPage() {
       <div className="w-full px-6 py-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
-            Play & No-Play Pre-Commitment Statement Generator
+            No-Play Pre-Commitment Statement
           </h1>
           
           {/* Main Tabs */}
@@ -825,7 +836,7 @@ export default function NoPlayPage() {
           <div className="flex justify-between items-start mb-4">
             <div>
               <h2 className="text-xl font-semibold">Upload File</h2>
-              <p className="text-sm text-gray-600">Upload Excel (.xlsx) or CSV files to generate pre-commitment statements for both Play and No-Play players.</p>
+              <p className="text-sm text-gray-600">Upload Excel (.xlsx) or CSV files to generate pre-commitment statements for No-Play players.</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -861,7 +872,7 @@ export default function NoPlayPage() {
                 <div>
                   <p className="text-lg mb-2">Drag & drop Excel or CSV file here, or click to select</p>
                   <p className="text-sm text-gray-500">
-                    Supports .xlsx and .csv formats. Both Play and No-Play players will be processed.
+                    Supports .xlsx and .csv formats. No-Play players will be processed.
                   </p>
                 </div>
               )}
@@ -869,33 +880,6 @@ export default function NoPlayPage() {
           </div>
         </div>
 
-            {/* Play/No-Play Status Tabs (only show in generation tab when players are loaded) */}
-            {activeTab === 'generation' && uploadedFile && uploadedFile.players.length > 0 && (
-              <div className="border-b border-gray-200 mb-6">
-                <nav className="-mb-px flex space-x-8">
-                  <button
-                    onClick={() => setPlayStatusTab('play')}
-                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                      playStatusTab === 'play'
-                        ? 'border-green-500 text-green-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    Play ({playPlayers.length})
-                  </button>
-                  <button
-                    onClick={() => setPlayStatusTab('no-play')}
-                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                      playStatusTab === 'no-play'
-                        ? 'border-green-500 text-green-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
-                  >
-                    No Play ({noPlayPlayers.length})
-                  </button>
-                </nav>
-              </div>
-            )}
 
             {/* Players List */}
             {uploadedFile && uploadedFile.players.length > 0 && (
@@ -904,7 +888,7 @@ export default function NoPlayPage() {
                   <div>
                     <h2 className="text-xl font-semibold">Players Found</h2>
                     <p className="text-sm text-gray-600 mt-1">
-                      Total: {uploadedFile.players.length} players ({playPlayers.length} Play, {noPlayPlayers.length} No-Play)
+                      Total: {noPlayPlayers.length} No-Play players
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -952,8 +936,8 @@ export default function NoPlayPage() {
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="font-medium">
                     {totalPages > 1 
-                      ? `Showing ${startIndex + 1} to ${Math.min(endIndex, totalPlayers)} of ${totalPlayers.toLocaleString()} ${playStatusTab === 'play' ? 'Play' : 'No-Play'} players (Page ${currentPage} of ${totalPages})`
-                      : `${playStatusTab === 'play' ? 'Play' : 'No-Play'} Players: ${totalPlayers.toLocaleString()}`
+                      ? `Showing ${startIndex + 1} to ${Math.min(endIndex, totalPlayers)} of ${totalPlayers.toLocaleString()} No-Play players (Page ${currentPage} of ${totalPages})`
+                      : `No-Play Players: ${totalPlayers.toLocaleString()}`
                     }
                   </h3>
                   <div className="flex gap-2">
@@ -1069,7 +1053,7 @@ export default function NoPlayPage() {
                       </button>
                     </div>
                     <div className="text-sm text-gray-600">
-                      Showing {startIndex + 1} to {Math.min(endIndex, totalPlayers)} of {totalPlayers.toLocaleString()} {playStatusTab === 'play' ? 'Play' : 'No-Play'} players
+                      Showing {startIndex + 1} to {Math.min(endIndex, totalPlayers)} of {totalPlayers.toLocaleString()} No-Play players
                     </div>
                   </div>
                 )}

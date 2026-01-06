@@ -148,7 +148,7 @@ export default function Navigation() {
                         : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    Play & No-Play Pre-Commitment
+                    No-Play Pre-Commitment
                   </Link>
                 </div>
               )}
