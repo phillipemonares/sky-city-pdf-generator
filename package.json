@@ -19,6 +19,7 @@
   "dependencies": {
     "@sendgrid/mail": "^8.1.6",
     "@types/bcryptjs": "^3.0.0",
+    "@types/archiver": "^6.0.2",
     "@types/jszip": "^3.4.1",
     "@types/node": "^24.7.2",
     "@types/papaparse": "^5.3.16",
@@ -27,6 +28,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "@types/xlsx": "^0.0.36",
+    "archiver": "^7.0.1",
     "autoprefixer": "^10.4.21",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.2.3",
