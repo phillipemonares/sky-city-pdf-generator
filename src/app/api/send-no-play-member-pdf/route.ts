@@ -139,36 +139,100 @@ export async function POST(request: NextRequest) {
       
       // Parse statement period to extract dates in format "1 March 2025 – 30 June 2025"
       let formattedPeriod = statementPeriod;
+      let endDateStr = '';
+      
       if (statementPeriod.includes(' - ')) {
         const [startDate, endDate] = statementPeriod.split(' - ');
         formattedPeriod = `${startDate.trim()} – ${endDate.trim()}`;
+        endDateStr = endDate.trim();
       } else if (statementPeriod.includes(' and ')) {
         // Convert "and" to en dash format
         const [startDate, endDate] = statementPeriod.split(' and ');
         formattedPeriod = `${startDate.trim()} – ${endDate.trim()}`;
+        endDateStr = endDate.trim();
       } else if (statementPeriod.includes(' – ')) {
         // Already in correct format
         formattedPeriod = statementPeriod;
+        const parts = statementPeriod.split(' – ');
+        if (parts.length > 1) {
+          endDateStr = parts[1].trim();
+        }
       }
 
-      // Get quarter and year from statement_date for email body
-      // Parse statement_date to extract year and determine quarter
+      // Get quarter and year from the end date in statementPeriod
+      // Parse the end date to extract year and determine quarter
       let quarter = 0;
       let year = new Date().getFullYear();
-      if (batch.statement_date) {
+      
+      // Try to parse the end date from statementPeriod first
+      if (endDateStr) {
+        try {
+          // Parse date string like "30 June 2025" or "30 June, 2025"
+          const dateStr = endDateStr.replace(/,/g, '').trim();
+          
+          // Try parsing with Date constructor first
+          let endDate = new Date(dateStr);
+          
+          // If that fails, try manual parsing for format "DD Month YYYY"
+          if (isNaN(endDate.getTime())) {
+            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
+                              'july', 'august', 'september', 'october', 'november', 'december'];
+            const parts = dateStr.split(/\s+/);
+            if (parts.length >= 3) {
+              const day = parseInt(parts[0], 10);
+              const monthName = parts[1].toLowerCase();
+              const yearStr = parseInt(parts[2], 10);
+              const monthIndex = monthNames.findIndex(m => m.startsWith(monthName));
+              
+              if (monthIndex >= 0 && !isNaN(yearStr)) {
+                endDate = new Date(yearStr, monthIndex, day);
+              }
+            }
+          }
+          
+          if (!isNaN(endDate.getTime())) {
+            year = endDate.getFullYear();
+            const month = endDate.getMonth() + 1; // getMonth() returns 0-11
+            // Determine quarter from month: Q1 (Jan-Mar), Q2 (Apr-Jun), Q3 (Jul-Sep), Q4 (Oct-Dec)
+            if (month >= 1 && month <= 3) quarter = 1;
+            else if (month >= 4 && month <= 6) quarter = 2;
+            else if (month >= 7 && month <= 9) quarter = 3;
+            else if (month >= 10 && month <= 12) quarter = 4;
+          }
+        } catch (error) {
+          console.warn('Could not parse end date from statementPeriod for quarter/year:', error);
+        }
+      }
+      
+      // Fallback to batch.statement_date if we couldn't parse from statementPeriod
+      if (quarter === 0 && batch.statement_date) {
         try {
           const statementDate = new Date(batch.statement_date);
-          year = statementDate.getFullYear();
-          const month = statementDate.getMonth() + 1; // getMonth() returns 0-11
-          // Determine quarter from month: Q1 (Jan-Mar), Q2 (Apr-Jun), Q3 (Jul-Sep), Q4 (Oct-Dec)
-          if (month >= 1 && month <= 3) quarter = 1;
-          else if (month >= 4 && month <= 6) quarter = 2;
-          else if (month >= 7 && month <= 9) quarter = 3;
-          else if (month >= 10 && month <= 12) quarter = 4;
+          if (!isNaN(statementDate.getTime())) {
+            year = statementDate.getFullYear();
+            const month = statementDate.getMonth() + 1; // getMonth() returns 0-11
+            // Determine quarter from month: Q1 (Jan-Mar), Q2 (Apr-Jun), Q3 (Jul-Sep), Q4 (Oct-Dec)
+            if (month >= 1 && month <= 3) quarter = 1;
+            else if (month >= 4 && month <= 6) quarter = 2;
+            else if (month >= 7 && month <= 9) quarter = 3;
+            else if (month >= 10 && month <= 12) quarter = 4;
+          }
         } catch (error) {
           console.warn('Could not parse statement_date for quarter/year:', error);
         }
       }
+      
+      // Final fallback: use current date if still no quarter
+      if (quarter === 0) {
+        const now = new Date();
+        year = now.getFullYear();
+        const month = now.getMonth() + 1;
+        if (month >= 1 && month <= 3) quarter = 1;
+        else if (month >= 4 && month <= 6) quarter = 2;
+        else if (month >= 7 && month <= 9) quarter = 3;
+        else if (month >= 10 && month <= 12) quarter = 4;
+      }
+      
       const quarterLabel = `Q${quarter} ${year}`;
 
       // Logo URL
