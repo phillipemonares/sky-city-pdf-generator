@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 Update is_email column in no_play_players table based on CSV file.
 
 This script:
@@ -9,7 +9,7 @@ This script:
 
 Usage:
     python services/update_is_email_no_play_statement.py --csv path/to/file.csv
-    python services/update_is_email_no_play_statement.py --csv csv/PreCommitment_Template\(Member\ Contact\).csv
+    python services/update_is_email_no_play_statement.py --csv "csv/PreCommitment_Template(Member Contact).csv"
 """
 
 import os
@@ -121,11 +121,16 @@ def read_csv_accounts(csv_path: str) -> Dict[str, bool]:
     
     try:
         with open(csv_path, 'r', encoding='utf-8') as csvfile:
-            # Try to detect delimiter
+            # Try to detect delimiter, fallback to comma if detection fails
             sample = csvfile.read(1024)
             csvfile.seek(0)
-            sniffer = csv.Sniffer()
-            delimiter = sniffer.sniff(sample).delimiter
+            delimiter = ','
+            try:
+                sniffer = csv.Sniffer()
+                delimiter = sniffer.sniff(sample).delimiter
+            except (csv.Error, AttributeError):
+                # If detection fails, use comma as default
+                delimiter = ','
             
             reader = csv.DictReader(csvfile, delimiter=delimiter)
             
