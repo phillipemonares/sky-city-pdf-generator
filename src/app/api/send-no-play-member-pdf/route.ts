@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getNoPlayBatchById, getNoPlayPlayersByBatch, getMemberByAccount } from '@/lib/db';
+import { getNoPlayBatchById, getNoPlayPlayersByBatch } from '@/lib/db';
 import { createEmailTrackingRecord, updateEmailTrackingStatus } from '@/lib/db/email';
 import { generatePreCommitmentPDFHTML } from '@/lib/pc-no-play-pdf-template';
 import { normalizeAccount } from '@/lib/pdf-shared';
@@ -42,15 +42,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get member from database (for name and other member info)
+    // Normalize account number
     const normalizedAccount = normalizeAccount(account);
-    const member = await getMemberByAccount(normalizedAccount);
-    if (!member) {
-      return NextResponse.json(
-        { success: false, error: 'Member not found' },
-        { status: 404 }
-      );
-    }
 
     // Get batch information
     const batch = await getNoPlayBatchById(batchId);
@@ -63,11 +56,17 @@ export async function POST(request: NextRequest) {
 
     // Get all players from the batch
     const players = await getNoPlayPlayersByBatch(batchId);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ca5f2dea-fea2-4816-8058-9303394d589c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'send-no-play-member-pdf/route.ts:65',message:'Players from batch',data:{batchId,playersCount:players.length,accountNumbers:players.slice(0,5).map(p=>normalizeAccount(p.account_number))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
 
     // Find the specific account
     const targetPlayer = players.find(
       p => normalizeAccount(p.account_number) === normalizedAccount
     );
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ca5f2dea-fea2-4816-8058-9303394d589c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'send-no-play-member-pdf/route.ts:70',message:'Target player search result',data:{account:normalizedAccount,targetPlayerFound:!!targetPlayer,targetPlayerAccount:targetPlayer?.account_number},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
 
     if (!targetPlayer) {
       return NextResponse.json(
@@ -79,6 +78,9 @@ export async function POST(request: NextRequest) {
     // Extract email from player_data (this is the source of truth for no-play statements)
     // player_data is already parsed as PreCommitmentPlayer by getNoPlayPlayersByBatch
     const playerData = targetPlayer.player_data;
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/ca5f2dea-fea2-4816-8058-9303394d589c',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'send-no-play-member-pdf/route.ts:81',message:'PlayerData available info',data:{hasPlayerInfo:!!playerData?.playerInfo,hasFirstName:!!playerData?.playerInfo?.firstName,hasLastName:!!playerData?.playerInfo?.lastName,hasEmail:!!playerData?.playerInfo?.email,hasSalutation:!!playerData?.playerInfo?.salutation,firstName:playerData?.playerInfo?.firstName,lastName:playerData?.playerInfo?.lastName,email:playerData?.playerInfo?.email},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4,H5'})}).catch(()=>{});
+    // #endregion
     
     // Get email from player_data (this is where the updated email should be)
     const recipientEmail = playerData?.playerInfo?.email || '';
@@ -98,7 +100,8 @@ export async function POST(request: NextRequest) {
 
     // Generate HTML using the no-play template
     // Use the parsed playerData (which may have been decrypted)
-    const html = generatePreCommitmentPDFHTML(playerData, headerDataUrl, member);
+    // No member data needed - playerData.playerInfo has all the info we need
+    const html = generatePreCommitmentPDFHTML(playerData, headerDataUrl, null);
 
     // Generate PDF
     const browser = await puppeteer.launch({
@@ -108,7 +111,10 @@ export async function POST(request: NextRequest) {
 
     try {
       const page = await browser.newPage();
-      await page.setContent(html, { waitUntil: 'networkidle0' });
+      // Set longer timeout for PDF generation (2 minutes)
+      page.setDefaultNavigationTimeout(120000);
+      page.setDefaultTimeout(120000);
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 120000 });
 
       // Wait for fonts to load
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -126,14 +132,15 @@ export async function POST(request: NextRequest) {
 
       await browser.close();
 
-      // Prepare email
+      // Prepare email - use playerData.playerInfo as source of truth
+      const playerInfo = playerData?.playerInfo || {};
       const playerName = [
-        member.title,
-        member.first_name,
-        member.last_name
+        playerInfo.salutation,
+        playerInfo.firstName,
+        playerInfo.lastName
       ].filter(Boolean).join(' ') || 'Member';
       // Extract only the first word from firstName (in case it contains multiple names)
-      const firstName = (member.first_name || 'Member').split(' ')[0];
+      const firstName = (playerInfo.firstName || 'Member').split(' ')[0];
 
       const statementPeriod = playerData.statementPeriod || 'Current Period';
       

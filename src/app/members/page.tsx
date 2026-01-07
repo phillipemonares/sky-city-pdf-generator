@@ -724,6 +724,11 @@ export default function MembersPage() {
             const batchPromises = batch.map(async (member: any) => {
               const batchId = member.latest_no_play_batch_id;
               
+              // Validate batchId exists
+              if (!batchId) {
+                return { success: false, account: member.account_number, error: 'No batch ID found for member' };
+              }
+              
               try {
                 // Create abort controller with timeout
                 const controller = new AbortController();
@@ -742,12 +747,25 @@ export default function MembersPage() {
                 });
 
                 clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                  const errorText = await response.text();
+                  let errorMessage = `HTTP ${response.status}`;
+                  try {
+                    const errorData = JSON.parse(errorText);
+                    errorMessage = errorData.error || errorMessage;
+                  } catch {
+                    errorMessage = errorText || errorMessage;
+                  }
+                  return { success: false, account: member.account_number, error: errorMessage };
+                }
+                
                 const data = await response.json();
 
                 if (data.success) {
                   return { success: true, account: member.account_number };
                 } else {
-                  return { success: false, account: member.account_number, error: data.error };
+                  return { success: false, account: member.account_number, error: data.error || 'Unknown error' };
                 }
               } catch (error) {
                 if (error instanceof Error && error.name === 'AbortError') {
@@ -851,13 +869,29 @@ export default function MembersPage() {
           });
 
           clearTimeout(timeoutId);
-          const data = await response.json();
-
-          if (data.success) {
-            successCount++;
-          } else {
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            let errorMessage = `HTTP ${response.status}`;
+            try {
+              const errorData = JSON.parse(errorText);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = errorText || errorMessage;
+            }
+            console.error(`Error sending email to ${member.account_number}: ${errorMessage}`);
             failedCount++;
             failedAccounts.push(member.account_number);
+          } else {
+            const data = await response.json();
+
+            if (data.success) {
+              successCount++;
+            } else {
+              failedCount++;
+              failedAccounts.push(member.account_number);
+              console.error(`Error sending email to ${member.account_number}: ${data.error || 'Unknown error'}`);
+            }
           }
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') {
