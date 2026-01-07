@@ -31,11 +31,16 @@ export async function GET(request: NextRequest) {
               (file) => !file.startsWith('.') // Exclude hidden files
             );
 
+            // Check if zip file exists
+            const zipPath = join(UPLOADS_DIR, `${item}.zip`);
+            const hasZip = existsSync(zipPath);
+
             return {
               name: item,
               fileCount: files.length,
               size: await calculateFolderSize(itemPath),
               lastModified: stats.mtime.toISOString(),
+              hasZip,
             };
           }
           return null;
