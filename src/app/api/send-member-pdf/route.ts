@@ -356,7 +356,7 @@ export async function POST(request: NextRequest) {
         to: member.email,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
-        text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Quarterly Statement for ${quarterLabel} is now available for viewing and is attached to this email.\n\nIf you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nPlease feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.\n\nKind Regards,\nSkyCity Adelaide`,
+        text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Quarterly Statement for ${quarterLabel} is now available for viewing and is attached to this email.\n\nIf you have questions about your activity statement, please speak with the staff at the Rewards or the Host desk or, alternatively call (08) 8218 2811. If your gambling is a concern or you are concerned about someone's gambling, we encourage you to get in touch with our specially trained staff by calling (08) 8218 414 and ask for our Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nKind Regards,\nSkyCity Adelaide`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0; padding: 20px;">
             <div style="text-align: left; margin-bottom: 20px;">
@@ -368,8 +368,7 @@ export async function POST(request: NextRequest) {
             <div style="color: #1a1a1a; line-height: 1.6;">
               <p style="margin: 0 0 20px 0;">Dear ${firstName},</p>
               <p style="margin: 0 0 20px 0;">Your Quarterly Statement for ${quarterLabel} is now available for viewing and is attached to this email.</p>
-              <p style="margin: 0 0 20px 0;">If you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.</p>
-              <p style="margin: 0 0 20px 0;">Please feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.</p>
+              <p style="margin: 0 0 20px 0;">If you have questions about your activity statement, please speak with the staff at the Rewards or the Host desk or, alternatively call (08) 8218 2811. If your gambling is a concern or you are concerned about someone's gambling, we encourage you to get in touch with our specially trained staff by calling (08) 8218 414 and ask for our Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.</p>
               <p style="margin: 0;">Kind Regards,<br>SkyCity Adelaide</p>
             </div>
           </div>
