@@ -446,7 +446,7 @@ export function renderActivityPages(
     </div>
 
     <div class="contact-info">
-      If you have questions about your activity statement, please speak with the staff at the Rewards or the Host desk or, alternatively call (08) 8218 2811. If your gambling is a concern or you are concerned about someone’s gambling, we encourage you to get in touch with our specially trained staff by calling (08) 8218 414 and ask for our Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7
+      If you have questions about your activity statement, please speak with the staff at the Rewards or the Host desk or, alternatively call (08) 8218 2811. If your gambling is a concern or you are concerned about someone’s gambling, we encourage you to get in touch with our specially trained staff by calling (08) 8218 4141 and ask for our Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7
       <br><br>
       Please feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.
     </div>
