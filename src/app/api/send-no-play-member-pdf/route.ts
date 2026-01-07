@@ -42,20 +42,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get member from database to get email
+    // Get member from database (for name and other member info)
     const normalizedAccount = normalizeAccount(account);
     const member = await getMemberByAccount(normalizedAccount);
     if (!member) {
       return NextResponse.json(
         { success: false, error: 'Member not found' },
         { status: 404 }
-      );
-    }
-
-    if (!member.email || member.email.trim() === '') {
-      return NextResponse.json(
-        { success: false, error: 'No email address found for this member' },
-        { status: 400 }
       );
     }
 
@@ -83,6 +76,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Extract email from player_data (this is the source of truth for no-play statements)
+    // player_data is already parsed as PreCommitmentPlayer by getNoPlayPlayersByBatch
+    const playerData = targetPlayer.player_data;
+    
+    // Get email from player_data (this is where the updated email should be)
+    const recipientEmail = playerData?.playerInfo?.email || '';
+    
+    if (!recipientEmail || recipientEmail.trim() === '') {
+      return NextResponse.json(
+        { success: false, error: 'No email address found in player data for this member' },
+        { status: 400 }
+      );
+    }
+
     // Convert no-play header to base64
     const headerPath = join(process.cwd(), 'public', 'no-play-header.png');
     const headerBuffer = readFileSync(headerPath);
@@ -90,7 +97,8 @@ export async function POST(request: NextRequest) {
     const headerDataUrl = `data:image/png;base64,${headerBase64}`;
 
     // Generate HTML using the no-play template
-    const html = generatePreCommitmentPDFHTML(targetPlayer.player_data, headerDataUrl, member);
+    // Use the parsed playerData (which may have been decrypted)
+    const html = generatePreCommitmentPDFHTML(playerData, headerDataUrl, member);
 
     // Generate PDF
     const browser = await puppeteer.launch({
@@ -127,7 +135,7 @@ export async function POST(request: NextRequest) {
       // Extract only the first word from firstName (in case it contains multiple names)
       const firstName = (member.first_name || 'Member').split(' ')[0];
 
-      const statementPeriod = targetPlayer.player_data.statementPeriod || 'Current Period';
+      const statementPeriod = playerData.statementPeriod || 'Current Period';
       
       // Parse statement period to extract dates in format "1 March 2025 – 30 June 2025"
       let formattedPeriod = statementPeriod;
@@ -173,7 +181,7 @@ export async function POST(request: NextRequest) {
 
       // Create email tracking record before sending
       const trackingId = await createEmailTrackingRecord({
-        recipient_email: member.email,
+        recipient_email: recipientEmail,
         recipient_account: normalizedAccount,
         recipient_name: playerName,
         email_type: 'no-play',
@@ -182,7 +190,7 @@ export async function POST(request: NextRequest) {
       });
 
       const msg = {
-        to: member.email,
+        to: recipientEmail,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
         text: `Dear ${firstName},\n\nYour MyPlay Statement for ${quarterLabel} is now available for viewing and is attached to this email.\n\nIf you have questions about your MyPlay statement, please speak with the staff at the Rewards or the Host desk or, alternatively call (08) 8218 2811. If your gambling is a concern or you are concerned about someone's gambling, we encourage you to get in touch with our specially trained staff by calling (08) 8218 4141 and ask for our Host Responsibility team. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nKind Regards,\nSkyCity Adelaide`,
@@ -271,8 +279,8 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: `PDF sent successfully to ${member.email}`,
-        email: member.email
+        message: `PDF sent successfully to ${recipientEmail}`,
+        email: recipientEmail
       });
 
     } catch (error) {

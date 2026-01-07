@@ -42,20 +42,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get member from database to get email
+    // Get member from database (for name and other member info)
     const normalizedAccount = normalizeAccount(account);
     const member = await getMemberByAccount(normalizedAccount);
     if (!member) {
       return NextResponse.json(
         { success: false, error: 'Member not found' },
         { status: 404 }
-      );
-    }
-
-    if (!member.email || member.email.trim() === '') {
-      return NextResponse.json(
-        { success: false, error: 'No email address found for this member' },
-        { status: 400 }
       );
     }
 
@@ -83,6 +76,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Extract email from player_data (this is the source of truth for play statements)
+    // player_data is already parsed as PreCommitmentPlayer by getNoPlayPlayersByBatch
+    const playerData = targetPlayer.player_data;
+    
+    // Get email from player_data (this is where the updated email should be)
+    const recipientEmail = playerData?.playerInfo?.email || '';
+    
+    if (!recipientEmail || recipientEmail.trim() === '') {
+      return NextResponse.json(
+        { success: false, error: 'No email address found in player data for this member' },
+        { status: 400 }
+      );
+    }
+
     // Convert no-play header to base64
     const headerPath = join(process.cwd(), 'public', 'no-play-header.png');
     const headerBuffer = readFileSync(headerPath);
@@ -90,7 +97,7 @@ export async function POST(request: NextRequest) {
     const headerDataUrl = `data:image/png;base64,${headerBase64}`;
 
     // Generate HTML using the play template
-    const html = generatePlayPreCommitmentPDFHTML(targetPlayer.player_data, headerDataUrl, member);
+    const html = generatePlayPreCommitmentPDFHTML(playerData, headerDataUrl, member);
 
     // Generate PDF
     const browser = await puppeteer.launch({
@@ -127,7 +134,7 @@ export async function POST(request: NextRequest) {
       // Extract only the first word from firstName (in case it contains multiple names)
       const firstName = (member.first_name || 'Member').split(' ')[0];
 
-      const statementPeriod = targetPlayer.player_data.statementPeriod || 'Current Period';
+      const statementPeriod = playerData.statementPeriod || 'Current Period';
       
       // Parse statement period to extract dates in format "1 March 2025 – 30 June 2025"
       let formattedPeriod = statementPeriod;
@@ -153,7 +160,7 @@ export async function POST(request: NextRequest) {
 
       // Create email tracking record before sending
       const trackingId = await createEmailTrackingRecord({
-        recipient_email: member.email,
+        recipient_email: recipientEmail,
         recipient_account: normalizedAccount,
         recipient_name: playerName,
         email_type: 'play',
@@ -162,7 +169,7 @@ export async function POST(request: NextRequest) {
       });
 
       const msg = {
-        to: member.email,
+        to: recipientEmail,
         from: process.env.SENDGRID_FROM_EMAIL || 'noreply@skycity.com',
         subject: subject,
         text: `Account: ${normalizedAccount}\n\nDear ${firstName},\n\nYour Pre-Commitment Statement for the period ${formattedPeriod} is now available for viewing and is attached to this email.\n\nWe would like to inform you that the attached statement reflects data for a 4-month period, rather than the usual 6 months. This adjustment is due to a change in our reporting structure. Moving forward, we will be issuing your MyPlay Statement quarterly with your activity statement, creating a more streamlined overview of your account.\n\nThe period covered in this statement represents the time between the end of your previous statement and the start of the new statement format.\n\nIf you or someone you know needs help, please get in touch with our specially trained staff by calling (08) 8218 4141. Alternatively, you can contact the National Gambling Helpline on 1800 858 858. Available 24/7.\n\nPlease feel free to contact SkyCity Rewards or a VIP Host if you have any questions regarding statements.\n\nKind Regards,\nSkyCity Adelaide`,
@@ -257,8 +264,8 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: `PDF sent successfully to ${member.email}`,
-        email: member.email
+        message: `PDF sent successfully to ${recipientEmail}`,
+        email: recipientEmail
       });
 
     } catch (error) {
