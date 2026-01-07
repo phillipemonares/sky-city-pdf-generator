@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readdir, stat } from 'fs';
+import { readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import archiver from 'archiver';
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify it's a directory
-    const stats = await stat(folderPath);
+    const stats = statSync(folderPath);
     if (!stats.isDirectory()) {
       return NextResponse.json(
         { success: false, error: 'Path is not a directory' },
@@ -97,7 +97,7 @@ function addFolderToArchive(
   folderPath: string,
   zipPath: string
 ): void {
-  const items = readdir.sync(folderPath);
+  const items = readdirSync(folderPath);
 
   for (const item of items) {
     // Skip hidden files
@@ -107,7 +107,7 @@ function addFolderToArchive(
 
     const itemPath = join(folderPath, item);
     const itemZipPath = zipPath ? `${zipPath}/${item}` : item;
-    const stats = stat.sync(itemPath);
+    const stats = statSync(itemPath);
 
     if (stats.isDirectory()) {
       // Recursively add subdirectories
