@@ -6,6 +6,7 @@ Queries all members from the database and generates PDFs for each using the API.
 
 import os
 import sys
+import re
 import mysql.connector
 from mysql.connector import Error
 import requests
@@ -13,6 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Load environment variables from .env file
 load_dotenv()
@@ -129,6 +131,59 @@ def normalize_account(account: str) -> str:
     return decrypted.strip().replace(" ", "")
 
 
+def get_quarter_from_date(date_str: str) -> tuple:
+    """
+    Determine quarter number from a date string.
+    Q1: Jan-Mar (months 1-3)
+    Q2: Apr-Jun (months 4-6)
+    Q3: Jul-Sep (months 7-9)
+    Q4: Oct-Dec (months 10-12)
+    Returns (quarter, year)
+    """
+    try:
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+        month = date_obj.month
+        year = date_obj.year
+        
+        if month >= 1 and month <= 3:
+            quarter = 1
+        elif month >= 4 and month <= 6:
+            quarter = 2
+        elif month >= 7 and month <= 9:
+            quarter = 3
+        else:
+            quarter = 4
+        
+        return quarter, year
+    except Exception:
+        # Default to Q3 2025 if parsing fails
+        return 3, 2025
+
+
+def get_expected_pdf_path(account: str, start_date: str, uploads_dir: str = 'uploads') -> Path:
+    """
+    Get the expected PDF file path for an account.
+    Returns Path object for the expected file location.
+    """
+    quarter, year = get_quarter_from_date(start_date)
+    quarter_folder = f"q{quarter}-{year}"
+    
+    # Sanitize account number (same as API does: replace(/[^a-zA-Z0-9_-]/g, ''))
+    sanitized_account = re.sub(r'[^a-zA-Z0-9_-]', '', account) or 'member'
+    
+    filename = f"Statement_Q{quarter}_{year}_{sanitized_account}.pdf"
+    return Path(uploads_dir) / quarter_folder / filename
+
+
+def pdf_exists(account: str, start_date: str, uploads_dir: str = 'uploads') -> bool:
+    """
+    Check if PDF file already exists for an account.
+    Returns True if file exists, False otherwise.
+    """
+    pdf_path = get_expected_pdf_path(account, start_date, uploads_dir)
+    return pdf_path.exists() and pdf_path.is_file()
+
+
 def generate_pdf_for_member(account: str, start_date: str, end_date: str, token: str):
     """
     Generate PDF for a member using the API.
@@ -174,7 +229,9 @@ def generate_pdf_for_member(account: str, start_date: str, end_date: str, token:
         return False, str(e)
 
 
-def export_statements(start_date: str = None, end_date: str = None, token: str = None):
+def export_statements(start_date: str = None, end_date: str = None, token: str = None, 
+                      start_from_account: str = None, skip_existing: bool = False,
+                      uploads_dir: str = 'uploads'):
     """
     Main function to export statements for all members.
     
@@ -182,6 +239,9 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
         start_date: Start date in YYYY-MM-DD format
         end_date: End date in YYYY-MM-DD format
         token: API authentication token
+        start_from_account: Account number to start from (will skip all accounts before this)
+        skip_existing: If True, skip accounts that already have PDF files
+        uploads_dir: Directory where PDFs are stored (default: 'uploads')
     """
     # Use defaults if not provided
     start_date = start_date or DEFAULT_START_DATE
@@ -195,6 +255,10 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
     print(f"Starting PDF export process...")
     print(f"Date range: {start_date} to {end_date}")
     print(f"API URL: {API_BASE_URL}{API_ENDPOINT}")
+    if start_from_account:
+        print(f"Starting from account: {start_from_account}")
+    if skip_existing:
+        print(f"Skipping existing PDF files: Enabled")
     print("-" * 60)
     
     # Connect to database
@@ -211,11 +275,47 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
             print("No members found in database.")
             return
         
-        print(f"Found {total_members} members to process.")
+        # Filter members if start_from_account is specified
+        if start_from_account:
+            start_account_normalized = normalize_account(start_from_account)
+            filtered_members = []
+            start_found = False
+            
+            for member in members:
+                account = normalize_account(member.get('account_number', ''))
+                if not start_found:
+                    # Try to match by account number (numeric comparison if both are numeric)
+                    try:
+                        # If both are numeric, compare as numbers
+                        if account.isdigit() and start_account_normalized.isdigit():
+                            if int(account) >= int(start_account_normalized):
+                                start_found = True
+                                filtered_members.append(member)
+                        # Otherwise, compare as strings
+                        elif account >= start_account_normalized:
+                            start_found = True
+                            filtered_members.append(member)
+                    except:
+                        # Fallback to string comparison
+                        if account >= start_account_normalized:
+                            start_found = True
+                            filtered_members.append(member)
+                else:
+                    filtered_members.append(member)
+            
+            members = filtered_members
+            print(f"Filtered to {len(members)} members starting from account {start_from_account}")
+        
+        if len(members) == 0:
+            print("No members to process after filtering.")
+            return
+        
+        print(f"Found {len(members)} members to process (out of {total_members} total).")
         print("-" * 60)
         
         # Process each member
         success_count = 0
+        skipped_count = 0
         error_count = 0
         errors = []
         
@@ -223,12 +323,18 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
             account = normalize_account(member.get('account_number', ''))
             
             if not account:
-                print(f"[{index}/{total_members}] Skipping member with empty account number (ID: {member.get('id', 'unknown')})")
+                print(f"[{index}/{len(members)}] Skipping member with empty account number (ID: {member.get('id', 'unknown')})")
                 error_count += 1
                 continue
             
+            # Check if PDF already exists
+            if skip_existing and pdf_exists(account, start_date, uploads_dir):
+                print(f"[{index}/{len(members)}] Skipping account {account} (PDF already exists)")
+                skipped_count += 1
+                continue
+            
             # Show progress
-            print(f"[{index}/{total_members}] Generating PDF for account: {account}...", end=" ", flush=True)
+            print(f"[{index}/{len(members)}] Generating PDF for account: {account}...", end=" ", flush=True)
             
             # Generate PDF
             success, error_msg = generate_pdf_for_member(account, start_date, end_date, token)
@@ -247,8 +353,9 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
         # Summary
         print("-" * 60)
         print(f"\nExport completed!")
-        print(f"Total members: {total_members}")
+        print(f"Total members processed: {len(members)}")
         print(f"Successful: {success_count}")
+        print(f"Skipped (existing): {skipped_count}")
         print(f"Failed: {error_count}")
         
         if errors:
@@ -272,13 +379,19 @@ def main():
     parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)', default=DEFAULT_START_DATE)
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)', default=DEFAULT_END_DATE)
     parser.add_argument('--token', type=str, help='API authentication token', default=API_TOKEN)
+    parser.add_argument('--start-from-account', type=str, help='Account number to start from (will skip all accounts before this)', default=None)
+    parser.add_argument('--skip-existing', action='store_true', help='Skip accounts that already have PDF files')
+    parser.add_argument('--uploads-dir', type=str, help='Directory where PDFs are stored', default='uploads')
     
     args = parser.parse_args()
     
     export_statements(
         start_date=args.start_date,
         end_date=args.end_date,
-        token=args.token
+        token=args.token,
+        start_from_account=args.start_from_account,
+        skip_existing=args.skip_existing,
+        uploads_dir=args.uploads_dir
     )
 
 
