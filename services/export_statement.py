@@ -62,6 +62,20 @@ def get_all_members(connection) -> List[Dict]:
         return []
 
 
+def delete_member(connection, member_id: int) -> bool:
+    """Delete a member from the database by ID."""
+    try:
+        cursor = connection.cursor()
+        query = "DELETE FROM members WHERE id = %s"
+        cursor.execute(query, (member_id,))
+        connection.commit()
+        cursor.close()
+        return True
+    except Error as e:
+        print(f"Error deleting member {member_id}: {e}")
+        return False
+
+
 def get_encryption_key():
     """Get encryption key from environment variable."""
     key = os.getenv('ENCRYPTION_KEY')
@@ -230,8 +244,8 @@ def generate_pdf_for_member(account: str, start_date: str, end_date: str, token:
 
 
 def export_statements(start_date: str = None, end_date: str = None, token: str = None, 
-                      start_from_account: str = None, skip_existing: bool = False,
-                      uploads_dir: str = 'uploads'):
+                      start_from_account: str = None, start_from_index: int = None,
+                      skip_existing: bool = False, uploads_dir: str = 'uploads'):
     """
     Main function to export statements for all members.
     
@@ -240,6 +254,7 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
         end_date: End date in YYYY-MM-DD format
         token: API authentication token
         start_from_account: Account number to start from (will skip all accounts before this)
+        start_from_index: Row number to start from (1-indexed, will skip all rows before this)
         skip_existing: If True, skip accounts that already have PDF files
         uploads_dir: Directory where PDFs are stored (default: 'uploads')
     """
@@ -257,6 +272,8 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
     print(f"API URL: {API_BASE_URL}{API_ENDPOINT}")
     if start_from_account:
         print(f"Starting from account: {start_from_account}")
+    if start_from_index:
+        print(f"Starting from row: {start_from_index}")
     if skip_existing:
         print(f"Skipping existing PDF files: Enabled")
     print("-" * 60)
@@ -275,8 +292,19 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
             print("No members found in database.")
             return
         
-        # Filter members if start_from_account is specified
-        if start_from_account:
+        # Filter members if start_from_index is specified (takes precedence over start_from_account)
+        if start_from_index:
+            if start_from_index < 1:
+                print(f"Error: start_from_index must be >= 1 (got {start_from_index})")
+                sys.exit(1)
+            if start_from_index > total_members:
+                print(f"Error: start_from_index ({start_from_index}) exceeds total members ({total_members})")
+                sys.exit(1)
+            # Skip first (start_from_index - 1) members (convert from 1-indexed to 0-indexed)
+            members = members[start_from_index - 1:]
+            print(f"Filtered to {len(members)} members starting from row {start_from_index}")
+        # Filter members if start_from_account is specified (only if start_from_index is not set)
+        elif start_from_account:
             start_account_normalized = normalize_account(start_from_account)
             filtered_members = []
             start_found = False
@@ -317,24 +345,30 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
         success_count = 0
         skipped_count = 0
         error_count = 0
+        deleted_count = 0
         errors = []
         
+        # Calculate starting index for display (if we skipped rows, show actual row number)
+        display_start_index = start_from_index if start_from_index else 1
+        
         for index, member in enumerate(members, 1):
+            # Calculate actual row number for display
+            actual_row = display_start_index + index - 1
             account = normalize_account(member.get('account_number', ''))
             
             if not account:
-                print(f"[{index}/{len(members)}] Skipping member with empty account number (ID: {member.get('id', 'unknown')})")
+                print(f"[Row {actual_row} / {total_members}] Skipping member with empty account number (ID: {member.get('id', 'unknown')})")
                 error_count += 1
                 continue
             
             # Check if PDF already exists
             if skip_existing and pdf_exists(account, start_date, uploads_dir):
-                print(f"[{index}/{len(members)}] Skipping account {account} (PDF already exists)")
+                print(f"[Row {actual_row} / {total_members}] Skipping account {account} (PDF already exists)")
                 skipped_count += 1
                 continue
             
             # Show progress
-            print(f"[{index}/{len(members)}] Generating PDF for account: {account}...", end=" ", flush=True)
+            print(f"[Row {actual_row} / {total_members}] Generating PDF for account: {account}...", end=" ", flush=True)
             
             # Generate PDF
             success, error_msg = generate_pdf_for_member(account, start_date, end_date, token)
@@ -345,6 +379,17 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
             else:
                 print(f"✗ Failed: {error_msg}")
                 error_count += 1
+                
+                # Check if error is "No batch data found for this account" and delete member
+                if error_msg and "No batch data found for this account" in error_msg:
+                    member_id = member.get('id')
+                    if member_id:
+                        if delete_member(connection, member_id):
+                            print(f"  → Deleted member {account} (ID: {member_id}) from database")
+                            deleted_count += 1
+                        else:
+                            print(f"  → Failed to delete member {account} (ID: {member_id}) from database")
+                
                 errors.append({
                     'account': account,
                     'error': error_msg
@@ -357,6 +402,7 @@ def export_statements(start_date: str = None, end_date: str = None, token: str =
         print(f"Successful: {success_count}")
         print(f"Skipped (existing): {skipped_count}")
         print(f"Failed: {error_count}")
+        print(f"Deleted (no batch data): {deleted_count}")
         
         if errors:
             print(f"\nErrors encountered:")
@@ -380,6 +426,7 @@ def main():
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)', default=DEFAULT_END_DATE)
     parser.add_argument('--token', type=str, help='API authentication token', default=API_TOKEN)
     parser.add_argument('--start-from-account', type=str, help='Account number to start from (will skip all accounts before this)', default=None)
+    parser.add_argument('--start-from-index', type=int, help='Row number to start from (1-indexed, will skip all rows before this)', default=None)
     parser.add_argument('--skip-existing', action='store_true', help='Skip accounts that already have PDF files')
     parser.add_argument('--uploads-dir', type=str, help='Directory where PDFs are stored', default='uploads')
     
@@ -390,6 +437,7 @@ def main():
         end_date=args.end_date,
         token=args.token,
         start_from_account=args.start_from_account,
+        start_from_index=args.start_from_index,
         skip_existing=args.skip_existing,
         uploads_dir=args.uploads_dir
     )

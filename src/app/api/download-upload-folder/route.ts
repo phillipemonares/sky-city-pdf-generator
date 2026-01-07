@@ -1,10 +1,118 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { readdirSync, statSync } from 'fs';
+import { readdirSync, statSync, createReadStream, createWriteStream } from 'fs';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { mkdir } from 'fs/promises';
 import archiver from 'archiver';
 
 const UPLOADS_DIR = join(process.cwd(), 'uploads');
+const ZIP_CACHE_DIR = join(UPLOADS_DIR, '.zips');
+
+// Ensure zip cache directory exists
+async function ensureZipCacheDir() {
+  if (!existsSync(ZIP_CACHE_DIR)) {
+    await mkdir(ZIP_CACHE_DIR, { recursive: true });
+  }
+}
+
+/**
+ * Get the path to the cached zip file for a folder
+ */
+function getCachedZipPath(folderName: string): string {
+  return join(ZIP_CACHE_DIR, `${folderName}.zip`);
+}
+
+/**
+ * Check if cached zip exists and is up-to-date
+ */
+function isZipCacheValid(folderPath: string, zipPath: string): boolean {
+  if (!existsSync(zipPath)) {
+    return false;
+  }
+
+  try {
+    const folderStats = statSync(folderPath);
+    const zipStats = statSync(zipPath);
+
+    // Zip is valid if it was created after the folder was last modified
+    return zipStats.mtime >= folderStats.mtime;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a zip file and save it to cache
+ */
+async function createZipFile(
+  folderPath: string,
+  zipPath: string,
+  folderName: string
+): Promise<void> {
+  await ensureZipCacheDir();
+
+  return new Promise((resolve, reject) => {
+    const output = createWriteStream(zipPath);
+    const archive = archiver('zip', {
+      zlib: { level: 6 }, // Compression level
+    });
+
+    output.on('close', () => {
+      console.log(`Zip file created: ${zipPath} (${archive.pointer()} bytes)`);
+      resolve();
+    });
+
+    archive.on('error', (err) => {
+      reject(err);
+    });
+
+    archive.pipe(output);
+
+    // Recursively add files to archive
+    addFolderToArchive(archive, folderPath, folderName);
+
+    // Finalize the archive
+    archive.finalize();
+  });
+}
+
+/**
+ * Stream a file as a response
+ */
+async function streamFileAsResponse(
+  filePath: string,
+  filename: string
+): Promise<NextResponse> {
+  const stats = statSync(filePath);
+  const fileStream = createReadStream(filePath);
+
+  // Convert Node.js ReadableStream to Web ReadableStream
+  const webStream = new ReadableStream({
+    start(controller) {
+      fileStream.on('data', (chunk) => {
+        controller.enqueue(chunk);
+      });
+      fileStream.on('end', () => {
+        controller.close();
+      });
+      fileStream.on('error', (err) => {
+        controller.error(err);
+      });
+    },
+    cancel() {
+      fileStream.destroy();
+    },
+  });
+
+  return new NextResponse(webStream, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${filename}.zip"`,
+      'Content-Length': stats.size.toString(),
+    },
+  });
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -39,44 +147,21 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Create a streaming zip archive
-    const archive = archiver('zip', {
-      zlib: { level: 6 }, // Compression level
-    });
+    // Check if we have a valid cached zip file
+    const cachedZipPath = getCachedZipPath(sanitizedFolderName);
+    
+    if (isZipCacheValid(folderPath, cachedZipPath)) {
+      // Stream the cached zip file directly - this is fast!
+      console.log(`Serving cached zip file for ${sanitizedFolderName}`);
+      return await streamFileAsResponse(cachedZipPath, sanitizedFolderName);
+    }
 
-    // Convert archiver stream to ReadableStream for Next.js
-    const stream = new ReadableStream({
-      start(controller) {
-        archive.on('data', (chunk) => {
-          controller.enqueue(chunk);
-        });
+    // Zip doesn't exist or is outdated - create it
+    console.log(`Creating zip file for ${sanitizedFolderName}...`);
+    await createZipFile(folderPath, cachedZipPath, sanitizedFolderName);
 
-        archive.on('end', () => {
-          controller.close();
-        });
-
-        archive.on('error', (err) => {
-          controller.error(err);
-        });
-      },
-    });
-
-    // Recursively add files to archive (streaming, not loading into memory)
-    addFolderToArchive(archive, folderPath, sanitizedFolderName);
-
-    // Finalize the archive
-    archive.finalize();
-
-    // Return streaming response
-    return new NextResponse(stream, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="${sanitizedFolderName}.zip"`,
-        // Don't set Content-Length for streaming responses
-        'Transfer-Encoding': 'chunked',
-      },
-    });
+    // Now stream the newly created zip file
+    return await streamFileAsResponse(cachedZipPath, sanitizedFolderName);
   } catch (error) {
     console.error('Error creating zip file:', error);
     return NextResponse.json(
