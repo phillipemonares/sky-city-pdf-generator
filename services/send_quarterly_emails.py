@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Export Statement Service (Batch-based)
-Queries accounts from a specific generation batch and generates PDFs for each using the API.
+Send Quarterly Email Service
+Queries accounts from quarterly batches and sends statement emails using the API.
 """
 
 import os
 import sys
-import re
 import mysql.connector
 from mysql.connector import Error
 import requests
@@ -14,7 +13,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from dotenv import load_dotenv
-from pathlib import Path
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -29,7 +28,7 @@ DB_CONFIG = {
 
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:3000')
 API_TOKEN = os.getenv('QUARTERLY_PDF_API_TOKEN', '')
-API_ENDPOINT = '/api/generate-quarterly-pdf'
+API_ENDPOINT = '/api/send-quarterly-email'
 
 
 def get_db_connection():
@@ -83,14 +82,25 @@ def get_batch_by_id(connection, batch_id: str) -> Optional[Dict]:
 
 
 def get_accounts_from_batch(connection, batch_id: str) -> List[Dict]:
-    """Query all accounts from quarterly_user_statements for a specific batch."""
+    """
+    Query all accounts from quarterly_user_statements for a specific batch.
+    Joins with members table to get is_email flag.
+    """
     try:
         cursor = connection.cursor(dictionary=True)
         query = """
-            SELECT id, batch_id, account_number, data, created_at, updated_at
-            FROM quarterly_user_statements
-            WHERE batch_id = %s
-            ORDER BY account_number
+            SELECT 
+                qus.id, 
+                qus.batch_id, 
+                qus.account_number, 
+                qus.data, 
+                qus.created_at, 
+                qus.updated_at,
+                COALESCE(m.is_email, 0) as is_email
+            FROM quarterly_user_statements qus
+            LEFT JOIN members m ON qus.account_number = m.account_number
+            WHERE qus.batch_id = %s
+            ORDER BY qus.account_number
         """
         cursor.execute(query, (batch_id,))
         accounts = cursor.fetchall()
@@ -157,6 +167,47 @@ def decrypt_account(encrypted_account: str) -> str:
         return encrypted_account
 
 
+def decrypt_json(encrypted_json: str) -> Optional[dict]:
+    """
+    Decrypt an encrypted JSON string.
+    Returns None if decryption fails.
+    """
+    if not encrypted_json:
+        return None
+    
+    # If it's not encrypted, try to parse as JSON directly
+    if not encrypted_json.startswith('ENC:'):
+        try:
+            return json.loads(encrypted_json)
+        except:
+            return None
+    
+    key = get_encryption_key()
+    if not key:
+        return None
+    
+    try:
+        # Remove 'ENC:' prefix and split
+        parts = encrypted_json[4:].split(':')
+        if len(parts) != 3:
+            return None
+        
+        iv_hex, auth_tag_hex, encrypted_hex = parts
+        iv = bytes.fromhex(iv_hex)
+        auth_tag = bytes.fromhex(auth_tag_hex)
+        encrypted_data = bytes.fromhex(encrypted_hex)
+        
+        # For AES-GCM, combine encrypted data with auth tag
+        ciphertext_with_tag = encrypted_data + auth_tag
+        
+        # Decrypt using AESGCM
+        aesgcm = AESGCM(key)
+        decrypted = aesgcm.decrypt(iv, ciphertext_with_tag, None)
+        return json.loads(decrypted.decode('utf-8'))
+    except Exception as e:
+        return None
+
+
 def normalize_account(account: str) -> str:
     """Normalize account number (remove spaces, convert to string, decrypt if needed)."""
     if account is None:
@@ -169,32 +220,36 @@ def normalize_account(account: str) -> str:
     return decrypted.strip().replace(" ", "")
 
 
-def get_expected_pdf_path(account: str, quarter: int, year: int, uploads_dir: str = 'uploads') -> Path:
-    """
-    Get the expected PDF file path for an account.
-    Returns Path object for the expected file location.
-    """
-    quarter_folder = f"q{quarter}-{year}"
+def extract_email_from_cashless_data(data: dict) -> Optional[str]:
+    """Extract email from quarterly user statement data (from cashless statement)."""
+    if not data:
+        return None
     
-    # Sanitize account number (same as API does: replace(/[^a-zA-Z0-9_-]/g, ''))
-    sanitized_account = re.sub(r'[^a-zA-Z0-9_-]', '', account) or 'member'
-    
-    filename = f"Statement_Q{quarter}_{year}_{sanitized_account}.pdf"
-    return Path(uploads_dir) / quarter_folder / filename
+    try:
+        # Check cashless_statement first
+        cashless = data.get('cashless_statement', {})
+        if cashless:
+            email = cashless.get('playerInfo', {}).get('email', None)
+            if email:
+                return email
+        
+        # Fallback to quarterlyData
+        quarterly_data = data.get('quarterlyData', {})
+        if quarterly_data:
+            players = quarterly_data.get('players', [])
+            if players and len(players) > 0:
+                email = players[0].get('playerInfo', {}).get('email', None)
+                if email:
+                    return email
+        
+        return None
+    except:
+        return None
 
 
-def pdf_exists(account: str, quarter: int, year: int, uploads_dir: str = 'uploads') -> bool:
+def send_quarterly_email(account: str, start_date: str, end_date: str, email: str, token: str):
     """
-    Check if PDF file already exists for an account.
-    Returns True if file exists, False otherwise.
-    """
-    pdf_path = get_expected_pdf_path(account, quarter, year, uploads_dir)
-    return pdf_path.exists() and pdf_path.is_file()
-
-
-def generate_pdf_for_member(account: str, start_date: str, end_date: str, token: str):
-    """
-    Generate PDF for a member using the API.
+    Send quarterly email for an account using the API.
     Returns (success: bool, error_message: Optional[str])
     """
     url = f"{API_BASE_URL}{API_ENDPOINT}"
@@ -203,6 +258,7 @@ def generate_pdf_for_member(account: str, start_date: str, end_date: str, token:
         "account": account,
         "startDate": start_date,
         "endDate": end_date,
+        "email": email,
         "token": token
     }
     
@@ -237,19 +293,15 @@ def generate_pdf_for_member(account: str, start_date: str, end_date: str, token:
         return False, str(e)
 
 
-def export_statements_from_batch(batch_id: str = None, token: str = None, 
-                                  start_from_index: int = None,
-                                  skip_existing: bool = False, 
-                                  uploads_dir: str = 'uploads'):
+def send_emails_from_batch(batch_id: str = None, token: str = None, 
+                           start_from_index: int = None):
     """
-    Main function to export statements for all accounts in a batch.
+    Main function to send quarterly emails for all accounts in a batch.
     
     Args:
         batch_id: Batch ID to process (if None, will list all batches and prompt)
         token: API authentication token
         start_from_index: Row number to start from (1-indexed, will skip all rows before this)
-        skip_existing: If True, skip accounts that already have PDF files
-        uploads_dir: Directory where PDFs are stored (default: 'uploads')
     """
     token = token or API_TOKEN
     
@@ -338,31 +390,59 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
         quarter = batch['quarter']
         year = batch['year']
         
+        # Count accounts by is_email flag and email availability
+        accounts_is_email_true = 0
+        accounts_is_email_false = 0
+        accounts_with_email_data = 0
+        accounts_without_email_data = 0
+        
+        for account_record in accounts:
+            is_email = account_record.get('is_email', 0)
+            
+            if is_email == 1:
+                accounts_is_email_true += 1
+            else:
+                accounts_is_email_false += 1
+            
+            data_json = account_record.get('data', '')
+            data = decrypt_json(data_json) if data_json else None
+            email = extract_email_from_cashless_data(data)
+            
+            if email and email.strip():
+                accounts_with_email_data += 1
+            else:
+                accounts_without_email_data += 1
+        
         # Display summary
         print("\n" + "=" * 80)
-        print("EXPORT SUMMARY")
+        print("EMAIL SENDING SUMMARY")
         print("=" * 80)
         print(f"Batch ID: {batch_id}")
         print(f"Quarter: Q{quarter} {year}")
         print(f"Period: {start_date} to {end_date}")
         print(f"Total accounts in batch: {total_accounts}")
         print(f"Accounts to process: {len(accounts)}")
+        print(f"\nEmail Preferences (is_email flag from members table):")
+        print(f"  - is_email = 1 (opted in): {accounts_is_email_true}")
+        print(f"  - is_email = 0 (opted out): {accounts_is_email_false}")
+        print(f"\nEmail Data Availability:")
+        print(f"  - With email address: {accounts_with_email_data}")
+        print(f"  - Without email address: {accounts_without_email_data}")
+        print(f"\nNote: Only accounts with is_email=1 AND valid email will be sent.")
         if start_from_index:
-            print(f"Starting from row: {start_from_index}")
-        if skip_existing:
-            print(f"Skip existing PDFs: Enabled")
-        print(f"API URL: {API_BASE_URL}{API_ENDPOINT}")
+            print(f"\nStarting from row: {start_from_index}")
+        print(f"\nAPI URL: {API_BASE_URL}{API_ENDPOINT}")
         print("=" * 80)
         
         # Ask for confirmation
-        confirmation = input("\nProceed with export? (Y/N): ").strip().upper()
+        confirmation = input("\nProceed with sending emails? (Y/N): ").strip().upper()
         
         if confirmation != 'Y':
-            print("Export cancelled.")
+            print("Email sending cancelled.")
             return
         
         print("\n" + "-" * 80)
-        print("Starting PDF export process...")
+        print("Starting email sending process...")
         print("-" * 80)
         
         # Process each account
@@ -386,17 +466,28 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
                 error_count += 1
                 continue
             
-            # Check if PDF already exists
-            if skip_existing and pdf_exists(account, quarter, year, uploads_dir):
-                print(f"[Row {actual_row} / {total_accounts}] Skipping account {account} (PDF already exists)")
+            # Check is_email flag
+            is_email = account_record.get('is_email', 0)
+            if is_email != 1:
+                print(f"[Row {actual_row} / {total_accounts}] Skipping account {account} (is_email=0, opted out)")
+                skipped_count += 1
+                continue
+            
+            # Decrypt and extract email from data
+            data_json = account_record.get('data', '')
+            data = decrypt_json(data_json) if data_json else None
+            email = extract_email_from_cashless_data(data)
+            
+            if not email or not email.strip():
+                print(f"[Row {actual_row} / {total_accounts}] Skipping account {account} (no email address)")
                 skipped_count += 1
                 continue
             
             # Show progress
-            print(f"[Row {actual_row} / {total_accounts}] Generating PDF for account: {account}...", end=" ", flush=True)
+            print(f"[Row {actual_row} / {total_accounts}] Sending email to {account} ({email})...", end=" ", flush=True)
             
-            # Generate PDF
-            success, error_msg = generate_pdf_for_member(account, start_date, end_date, token)
+            # Send email
+            success, error_msg = send_quarterly_email(account, start_date, end_date, email, token)
             
             if success:
                 print("✓ Success")
@@ -406,21 +497,22 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
                 error_count += 1
                 errors.append({
                     'account': account,
+                    'email': email,
                     'error': error_msg
                 })
         
         # Summary
         print("-" * 80)
-        print(f"\nExport completed!")
+        print(f"\nEmail sending completed!")
         print(f"Total accounts processed: {len(accounts)}")
         print(f"Successful: {success_count}")
-        print(f"Skipped (existing): {skipped_count}")
+        print(f"Skipped (opted out or no email): {skipped_count}")
         print(f"Failed: {error_count}")
         
         if errors:
             print(f"\nErrors encountered:")
             for error in errors[:10]:  # Show first 10 errors
-                print(f"  - Account {error['account']}: {error['error']}")
+                print(f"  - Account {error['account']} ({error['email']}): {error['error']}")
             if len(errors) > 10:
                 print(f"  ... and {len(errors) - 10} more errors")
     
@@ -434,21 +526,17 @@ def main():
     """Entry point for the script."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Export PDF statements for all accounts in a batch')
+    parser = argparse.ArgumentParser(description='Send quarterly statement emails for all accounts in a batch')
     parser.add_argument('--batch-id', type=str, help='Batch ID to process (if not provided, will list all batches)', default=None)
     parser.add_argument('--token', type=str, help='API authentication token', default=API_TOKEN)
     parser.add_argument('--start-from-index', type=int, help='Row number to start from (1-indexed, will skip all rows before this)', default=None)
-    parser.add_argument('--skip-existing', action='store_true', help='Skip accounts that already have PDF files')
-    parser.add_argument('--uploads-dir', type=str, help='Directory where PDFs are stored', default='uploads')
     
     args = parser.parse_args()
     
-    export_statements_from_batch(
+    send_emails_from_batch(
         batch_id=args.batch_id,
         token=args.token,
-        start_from_index=args.start_from_index,
-        skip_existing=args.skip_existing,
-        uploads_dir=args.uploads_dir
+        start_from_index=args.start_from_index
     )
 
 

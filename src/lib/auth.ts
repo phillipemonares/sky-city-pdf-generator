@@ -230,9 +230,7 @@ export function generateTotpUrl(secret: string, username: string): string {
     issuer: issuer,
     encoding: 'base32',
   });
-}
-
-/**
+}/**
  * Verify a TOTP token against a secret
  */
 export function verifyTotpToken(secret: string, token: string): boolean {
@@ -249,4 +247,3 @@ export function verifyTotpToken(secret: string, token: string): boolean {
     return false;
   }
 }
-

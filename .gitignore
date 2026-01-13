@@ -54,3 +54,4 @@ logs/
 *.xlsx
 
 uploads/
+venv/
