@@ -198,30 +198,6 @@ def decrypt_json(encrypted_json: str) -> Optional[dict]:
         return None
 
 
-def parse_statement_period(statement_period: str) -> tuple:
-    """
-    Parse statement_period string to extract start and end dates.
-    Format: "1 October 2025 - 31 December 2025"
-    Returns: (start_date: str, end_date: str) in YYYY-MM-DD format
-    """
-    try:
-        parts = statement_period.split(' - ')
-        if len(parts) != 2:
-            return None, None
-        
-        start_str = parts[0].strip()
-        end_str = parts[1].strip()
-        
-        # Parse dates like "1 October 2025"
-        start_date = datetime.strptime(start_str, '%d %B %Y')
-        end_date = datetime.strptime(end_str, '%d %B %Y')
-        
-        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
-    except Exception as e:
-        print(f"Warning: Could not parse statement_period '{statement_period}': {e}")
-        return None, None
-
-
 def normalize_account(account: str) -> str:
     """Normalize account number (remove spaces, convert to string, decrypt if needed)."""
     if account is None:
@@ -245,7 +221,7 @@ def extract_email_from_player_data(player_data: dict) -> Optional[str]:
         return None
 
 
-def send_no_play_email(account: str, start_date: str, end_date: str, email: str, token: str):
+def send_no_play_email(account: str, batch_id: str, email: str, token: str):
     """
     Send no-play email for an account using the API.
     Returns (success: bool, error_message: Optional[str])
@@ -254,8 +230,7 @@ def send_no_play_email(account: str, start_date: str, end_date: str, email: str,
     
     payload = {
         "account": account,
-        "startDate": start_date,
-        "endDate": end_date,
+        "batchId": batch_id,
         "email": email,
         "token": token
     }
@@ -384,15 +359,7 @@ def send_emails_from_batch(batch_id: str = None, token: str = None,
                 sys.exit(1)
             accounts = accounts[start_from_index - 1:]
         
-        # Parse statement_period to extract start and end dates
         statement_period = batch.get('statement_period', '')
-        start_date, end_date = parse_statement_period(statement_period)
-        
-        if not start_date or not end_date:
-            print("Error: Could not parse statement_period from batch.")
-            print(f"Statement period: {statement_period}")
-            sys.exit(1)
-        
         statement_date = batch.get('statement_date', 'N/A')
         
         # Count accounts by is_email flag and email availability
@@ -425,7 +392,6 @@ def send_emails_from_batch(batch_id: str = None, token: str = None,
         print(f"Batch ID: {batch_id}")
         print(f"Statement Period: {statement_period}")
         print(f"Statement Date: {statement_date}")
-        print(f"Date Range (API): {start_date} to {end_date}")
         print(f"Total accounts in batch: {total_accounts}")
         print(f"Accounts to process: {len(accounts)}")
         print(f"\nEmail Preferences (is_email flag):")
@@ -498,7 +464,7 @@ def send_emails_from_batch(batch_id: str = None, token: str = None,
             print(f"[Row {actual_row} / {total_accounts}] Sending email to {account} ({email}) [{no_play_status}]...", end=" ", flush=True)
             
             # Send email
-            success, error_msg = send_no_play_email(account, start_date, end_date, email, token)
+            success, error_msg = send_no_play_email(account, batch_id, email, token)
             
             if success:
                 print("✓ Success")

@@ -20,23 +20,17 @@ if (process.env.SENDGRID_API_KEY) {
 export const maxDuration = 120; // 2 minutes
 
 /**
- * Get no-play player data by account number and date range
+ * Get no-play player data by account number and batch ID
  */
-async function getNoPlayPlayerByAccountAndDateRange(
+async function getNoPlayPlayerByAccountAndBatch(
   accountNumber: string,
-  startDate: Date,
-  endDate: Date
+  batchId: string
 ): Promise<{ player: any; batch: any } | null> {
   try {
     const normalizedAccount = normalizeAccount(accountNumber);
     const encryptedAccount = encryptDeterministic(normalizedAccount);
 
-    // Format dates for comparison (statement_date is stored as string in format like "2025-06-30")
-    const startDateStr = startDate.toISOString().split('T')[0];
-    const endDateStr = endDate.toISOString().split('T')[0];
-
-    // Query to find no-play player matching account and date range
-    // We'll look for players where the statement_date falls within the range
+    // Query to find no-play player matching account and batch ID
     const [rows] = await pool.execute<mysql.RowDataPacket[]>(
       `SELECT 
         npp.id,
@@ -51,12 +45,10 @@ async function getNoPlayPlayerByAccountAndDateRange(
        FROM no_play_players npp
        INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
        WHERE npp.account_number = ? 
+         AND npp.batch_id = ?
          AND npp.no_play_status = 'No Play'
-         AND npp.statement_date >= ?
-         AND npp.statement_date <= ?
-       ORDER BY npb.generation_date DESC
        LIMIT 1`,
-      [encryptedAccount, startDateStr, endDateStr]
+      [encryptedAccount, batchId]
     );
 
     if (rows.length === 0) {
@@ -75,12 +67,10 @@ async function getNoPlayPlayerByAccountAndDateRange(
          FROM no_play_players npp
          INNER JOIN no_play_batches npb ON npp.batch_id = npb.id
          WHERE npp.account_number = ? 
+           AND npp.batch_id = ?
            AND npp.no_play_status = 'No Play'
-           AND npp.statement_date >= ?
-           AND npp.statement_date <= ?
-         ORDER BY npb.generation_date DESC
          LIMIT 1`,
-        [normalizedAccount, startDateStr, endDateStr]
+        [normalizedAccount, batchId]
       );
 
       if (unencryptedRows.length === 0) {
@@ -143,7 +133,7 @@ async function getNoPlayPlayerByAccountAndDateRange(
       },
     };
   } catch (error) {
-    console.error('Error getting no-play player by account and date range:', error);
+    console.error('Error getting no-play player by account and batch:', error);
     throw error;
   }
 }
@@ -151,7 +141,7 @@ async function getNoPlayPlayerByAccountAndDateRange(
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { account, startDate, endDate, email, token } = body;
+    const { account, batchId, email, token } = body;
 
     // Check authentication token
     const authToken = request.headers.get('authorization')?.replace('Bearer ', '') || 
@@ -182,16 +172,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!startDate) {
+    if (!batchId) {
       return NextResponse.json(
-        { success: false, error: 'Start date is required' },
-        { status: 400 }
-      );
-    }
-
-    if (!endDate) {
-      return NextResponse.json(
-        { success: false, error: 'End date is required' },
+        { success: false, error: 'Batch ID is required' },
         { status: 400 }
       );
     }
@@ -210,26 +193,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse dates
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid date format. Use YYYY-MM-DD or ISO format' },
-        { status: 400 }
-      );
-    }
-
     // Normalize account number
     const normalizedAccount = normalizeAccount(account);
 
-    // Get no-play player data by account and date range
-    const playerData = await getNoPlayPlayerByAccountAndDateRange(normalizedAccount, start, end);
+    // Get no-play player data by account and batch ID
+    const playerData = await getNoPlayPlayerByAccountAndBatch(normalizedAccount, batchId);
 
     if (!playerData) {
       return NextResponse.json(
-        { success: false, error: 'No-play player data not found for this account and date range' },
+        { success: false, error: 'No-play player data not found for this account and batch' },
         { status: 404 }
       );
     }
