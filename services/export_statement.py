@@ -183,13 +183,53 @@ def get_expected_pdf_path(account: str, quarter: int, year: int, uploads_dir: st
     return Path(uploads_dir) / quarter_folder / filename
 
 
-def pdf_exists(account: str, quarter: int, year: int, uploads_dir: str = 'uploads') -> bool:
+def pdf_exists(account: str, quarter: int, year: int, uploads_dir: str = 'uploads', check_all_quarters: bool = True) -> tuple:
     """
     Check if PDF file already exists for an account.
-    Returns True if file exists, False otherwise.
+    
+    Args:
+        account: Account number
+        quarter: Quarter number (1-4)
+        year: Year
+        uploads_dir: Base uploads directory
+        check_all_quarters: If True, check all quarter folders; if False, only check current quarter
+    
+    Returns:
+        (exists: bool, found_path: Optional[str]) - Tuple indicating if PDF exists and where it was found
     """
+    # First check the expected path for this quarter
     pdf_path = get_expected_pdf_path(account, quarter, year, uploads_dir)
-    return pdf_path.exists() and pdf_path.is_file()
+    if pdf_path.exists() and pdf_path.is_file():
+        return True, str(pdf_path)
+    
+    # If check_all_quarters is enabled, search all quarter folders
+    if check_all_quarters:
+        uploads_path = Path(uploads_dir)
+        if not uploads_path.exists():
+            return False, None
+        
+        # Sanitize account number
+        sanitized_account = re.sub(r'[^a-zA-Z0-9_-]', '', account) or 'member'
+        
+        # Search all quarter folders (q1-2024, q2-2024, q3-2025, etc.)
+        for quarter_folder in uploads_path.iterdir():
+            if not quarter_folder.is_dir():
+                continue
+            
+            # Check if it's a quarter folder (format: q{1-4}-{year})
+            folder_name = quarter_folder.name
+            if not re.match(r'^q[1-4]-\d{4}$', folder_name):
+                continue
+            
+            # Check for PDF with this account number
+            # Pattern: Statement_Q{quarter}_{year}_{account}.pdf
+            pdf_pattern = f"Statement_Q*_{sanitized_account}.pdf"
+            
+            for pdf_file in quarter_folder.glob(pdf_pattern):
+                if pdf_file.is_file():
+                    return True, str(pdf_file)
+    
+    return False, None
 
 
 def generate_pdf_for_member(account: str, start_date: str, end_date: str, token: str):
@@ -340,12 +380,68 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
         
         # Count existing PDFs if skip_existing is enabled
         existing_pdf_count = 0
+        existing_pdf_details = {}  # Track where PDFs were found
+        existing_pdfs_set = set()  # Set of account numbers with existing PDFs
         if skip_existing:
             print("\nChecking for existing PDFs...")
+            print("Note: Checking local 'uploads' directory. If PDFs are on the server, ensure you're running this script on the server or use --uploads-dir to specify the server path.")
+            
+            # Build a set of all existing PDF account numbers for faster lookup
+            # This is much faster than checking each account individually
+            existing_pdfs_set = set()
+            quarter_folder_name = f"q{quarter}-{year}"
+            quarter_path = Path(uploads_dir) / quarter_folder_name
+            
+            if quarter_path.exists() and quarter_path.is_dir():
+                print(f"Scanning {quarter_folder_name} folder...")
+                # Get all PDF files in the quarter folder
+                pdf_files = list(quarter_path.glob("Statement_Q*.pdf"))
+                print(f"Found {len(pdf_files)} PDF files in {quarter_folder_name}")
+                
+                # Extract account numbers from filenames
+                # Pattern: Statement_Q{quarter}_{year}_{account}.pdf
+                for pdf_file in pdf_files:
+                    filename = pdf_file.stem  # Without .pdf extension
+                    # Extract account number (everything after the last underscore)
+                    parts = filename.split('_')
+                    if len(parts) >= 4:  # Statement, Q{quarter}, {year}, {account}
+                        account_from_file = parts[-1]
+                        existing_pdfs_set.add(account_from_file)
+            
+            # Also check other quarter folders if needed
+            uploads_path = Path(uploads_dir)
+            if uploads_path.exists():
+                for quarter_folder in uploads_path.iterdir():
+                    if not quarter_folder.is_dir():
+                        continue
+                    folder_name = quarter_folder.name
+                    if re.match(r'^q[1-4]-\d{4}$', folder_name) and folder_name != quarter_folder_name:
+                        # Scan this folder too
+                        pdf_files = list(quarter_folder.glob("Statement_Q*.pdf"))
+                        for pdf_file in pdf_files:
+                            filename = pdf_file.stem
+                            parts = filename.split('_')
+                            if len(parts) >= 4:
+                                account_from_file = parts[-1]
+                                existing_pdfs_set.add(account_from_file)
+                                existing_pdf_details[account_from_file] = folder_name
+            
+            print(f"Total unique accounts with existing PDFs: {len(existing_pdfs_set)}")
+            
+            # Now check each account against the set
             for account_record in accounts:
                 account = normalize_account(account_record.get('account_number', ''))
-                if account and pdf_exists(account, quarter, year, uploads_dir):
-                    existing_pdf_count += 1
+                if account:
+                    # Sanitize account for comparison (same as filename)
+                    sanitized_account = re.sub(r'[^a-zA-Z0-9_-]', '', account) or 'member'
+                    
+                    if sanitized_account in existing_pdfs_set:
+                        existing_pdf_count += 1
+                        if sanitized_account in existing_pdf_details:
+                            # Already tracked from other quarter scan
+                            pass
+                        else:
+                            existing_pdf_details[sanitized_account] = quarter_folder_name
         
         # Display summary
         print("\n" + "=" * 80)
@@ -362,6 +458,15 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
             print(f"Skip existing PDFs: Enabled")
             print(f"Existing PDFs found: {existing_pdf_count}")
             print(f"PDFs to generate: {len(accounts) - existing_pdf_count}")
+            if existing_pdf_count > 0:
+                # Show breakdown by quarter folder
+                quarter_breakdown = {}
+                for folder in existing_pdf_details.values():
+                    quarter_breakdown[folder] = quarter_breakdown.get(folder, 0) + 1
+                if quarter_breakdown:
+                    print(f"\nExisting PDFs by quarter:")
+                    for folder, count in sorted(quarter_breakdown.items()):
+                        print(f"  {folder}: {count}")
         print(f"API URL: {API_BASE_URL}{API_ENDPOINT}")
         print("=" * 80)
         
@@ -385,6 +490,9 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
         # Calculate starting index for display
         display_start_index = start_from_index if start_from_index else 1
         
+        # Build existing PDFs set if skip_existing is enabled (reuse from earlier scan)
+        # The existing_pdfs_set was already built above, we just need to reference it
+        
         for index, account_record in enumerate(accounts, 1):
             # Calculate actual row number for display
             actual_row = display_start_index + index - 1
@@ -397,11 +505,16 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
                 error_count += 1
                 continue
             
-            # Check if PDF already exists
-            if skip_existing and pdf_exists(account, quarter, year, uploads_dir):
-                print(f"[Row {actual_row} / {total_accounts}] Skipping account {account} (PDF already exists)")
-                skipped_count += 1
-                continue
+            # Check if PDF already exists (using pre-built set for speed)
+            if skip_existing:
+                sanitized_account = re.sub(r'[^a-zA-Z0-9_-]', '', account) or 'member'
+                if sanitized_account in existing_pdfs_set:
+                    quarter_info = ""
+                    if sanitized_account in existing_pdf_details:
+                        quarter_info = f" (found in {existing_pdf_details[sanitized_account]})"
+                    print(f"[Row {actual_row} / {total_accounts}] Skipping account {account} (PDF already exists{quarter_info})")
+                    skipped_count += 1
+                    continue
             
             # Show progress
             print(f"[Row {actual_row} / {total_accounts}] Generating PDF for account: {account}...", end=" ", flush=True)

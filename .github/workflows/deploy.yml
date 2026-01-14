@@ -22,45 +22,63 @@ jobs:
           script: |
             cd /var/www/sky-city-pdf-generator
             
-            echo "Cleaning node_modules and package-lock..."
-            rm -rf node_modules
-            rm -f package-lock.json
-
+            # Store current HEAD before pulling
+            PREVIOUS_HEAD=$(git rev-parse HEAD)
+            
             echo "Pulling latest changes..."
             git pull origin main
             
-            echo "Clearing npm cache..."
-            npm cache clean --force
+            # Get list of changed files between previous and current HEAD
+            CHANGED_FILES=$(git diff --name-only $PREVIOUS_HEAD HEAD)
             
-            echo "Installing dependencies..."
-            npm install
-            
-            # Verify next is installed
-            if [ ! -f "node_modules/.bin/next" ]; then
-              echo "Error: Next.js not properly installed!"
-              exit 1
+            # Check if only Python/SQL files changed (services/ directory or .sql files in db/)
+            if echo "$CHANGED_FILES" | grep -qvE '^(services/|db/.*\.sql)'; then
+              echo "Non-Python files detected, performing full deployment..."
+              echo "Changed files:"
+              echo "$CHANGED_FILES"
+              
+              echo "Cleaning node_modules and package-lock..."
+              rm -rf node_modules
+              rm -f package-lock.json
+              
+              echo "Clearing npm cache..."
+              npm cache clean --force
+              
+              echo "Installing dependencies..."
+              npm install
+              
+              # Verify next is installed
+              if [ ! -f "node_modules/.bin/next" ]; then
+                echo "Error: Next.js not properly installed!"
+                exit 1
+              fi
+              
+              echo "Building Next.js application..."
+              npm run build
+              
+              # Verify build exists
+              if [ ! -d ".next" ]; then
+                echo "Error: Build failed - .next directory not found!"
+                exit 1
+              fi
+              
+              echo "Stopping PM2 process..."
+              pm2 stop ecosystem.config.js || true
+              
+              sleep 3
+              
+              echo "Starting PM2..."
+              pm2 start ecosystem.config.js
+              
+              pm2 save
+              
+              sudo systemctl reload nginx
+              
+              echo "Full deployment completed successfully!"
+            else
+              echo "Only Python/SQL files changed, skipping build and restart..."
+              echo "Changed files:"
+              echo "$CHANGED_FILES"
+              echo "Git pull completed - Python scripts updated!"
             fi
-            
-            echo "Building Next.js application..."
-            npm run build
-            
-            # Verify build exists
-            if [ ! -d ".next" ]; then
-              echo "Error: Build failed - .next directory not found!"
-              exit 1
-            fi
-            
-            echo "Stopping PM2 process..."
-            pm2 stop ecosystem.config.js || true
-            
-            sleep 3
-            
-            echo "Starting PM2..."
-            pm2 start ecosystem.config.js
-            
-            pm2 save
-            
-            sudo systemctl reload nginx
-            
-            echo "Deployment completed successfully!"
 
