@@ -17,7 +17,7 @@ if (process.env.SENDGRID_API_KEY) {
 }
 
 // Increase timeout for email sending (PDF generation + email sending can take time)
-export const maxDuration = 120; // 2 minutes
+export const maxDuration = 300; // 5 minutes
 
 /**
  * Get no-play player data by account number and batch ID
@@ -236,10 +236,10 @@ export async function POST(request: NextRequest) {
 
     try {
       const page = await browser.newPage();
-      // Set longer timeout for PDF generation (2 minutes)
-      page.setDefaultNavigationTimeout(120000);
-      page.setDefaultTimeout(120000);
-      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 120000 });
+      // Set longer timeout for PDF generation (5 minutes)
+      page.setDefaultNavigationTimeout(300000);
+      page.setDefaultTimeout(300000);
+      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 300000 });
 
       // Wait for fonts to load
       await new Promise(resolve => setTimeout(resolve, 2000));

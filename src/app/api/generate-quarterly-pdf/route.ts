@@ -23,6 +23,9 @@ const dbConfig = {
 
 const pool = mysql.createPool(dbConfig);
 
+// Increase timeout for PDF generation
+export const maxDuration = 300; // 5 minutes
+
 // Directory for storing PDF files
 const UPLOADS_DIR = join(process.cwd(), 'uploads');
 
@@ -276,8 +279,8 @@ export async function POST(request: NextRequest) {
     
     try {
       const page = await browser.newPage();
-      page.setDefaultTimeout(90000);
-      await page.setContent(html, { waitUntil: 'load', timeout: 90000 });
+      page.setDefaultTimeout(300000);
+      await page.setContent(html, { waitUntil: 'load', timeout: 300000 });
       await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for fonts
       
       const pdfBuffer = await page.pdf({

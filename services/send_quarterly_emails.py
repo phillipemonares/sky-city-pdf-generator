@@ -10,10 +10,11 @@ import mysql.connector
 from mysql.connector import Error
 import requests
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from dotenv import load_dotenv
 import json
+import uuid
 
 # Load environment variables from .env file
 load_dotenv()
@@ -220,6 +221,107 @@ def normalize_account(account: str) -> str:
     return decrypted.strip().replace(" ", "")
 
 
+def classify_error_type(error_message: str) -> str:
+    """Classify error type based on error message."""
+    if not error_message:
+        return 'unknown'
+    
+    error_lower = error_message.lower()
+    
+    if 'timeout' in error_lower:
+        return 'timeout'
+    elif 'connection' in error_lower:
+        return 'connection_error'
+    elif 'http' in error_lower or 'api' in error_lower:
+        return 'api_error'
+    elif 'validation' in error_lower or 'required' in error_lower:
+        return 'validation_error'
+    else:
+        return 'unknown'
+
+
+def log_failed_email(connection, batch_id: str, account: str, email: str, 
+                     error_message: str, batch_type: str = 'quarterly'):
+    """
+    Log a failed email send to the database for later retry or investigation.
+    
+    Args:
+        connection: MySQL database connection
+        batch_id: The batch ID being processed
+        account: The account number (will be encrypted before storage)
+        email: The email address (will be encrypted before storage)
+        error_message: The error message
+        batch_type: Type of batch ('quarterly', 'no_play', 'play')
+    """
+    try:
+        cursor = connection.cursor()
+        
+        # Generate UUID for the log entry
+        log_id = str(uuid.uuid4())
+        
+        # Encrypt sensitive data
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        key = get_encryption_key()
+        
+        # Store encrypted or plaintext based on encryption availability
+        stored_account = account
+        stored_email = email
+        
+        if key:
+            # Use deterministic encryption for account (for querying)
+            try:
+                aesgcm = AESGCM(key)
+                iv = os.urandom(12)
+                encrypted_account = aesgcm.encrypt(iv, account.encode('utf-8'), None)
+                auth_tag = encrypted_account[-16:]
+                ciphertext = encrypted_account[:-16]
+                stored_account = f"DENC:{iv.hex()}:{auth_tag.hex()}:{ciphertext.hex()}"
+                
+                # Use standard encryption for email
+                iv = os.urandom(12)
+                encrypted_email = aesgcm.encrypt(iv, email.encode('utf-8'), None)
+                auth_tag = encrypted_email[-16:]
+                ciphertext = encrypted_email[:-16]
+                stored_email = f"ENC:{iv.hex()}:{auth_tag.hex()}:{ciphertext.hex()}"
+            except Exception as e:
+                print(f"Warning: Failed to encrypt data for logging: {e}")
+        
+        # Classify error type
+        error_type = classify_error_type(error_message)
+        
+        # Calculate retry_after (wait 1 hour before retry)
+        retry_after = datetime.now() + timedelta(hours=1)
+        
+        # Insert into database
+        query = """
+            INSERT INTO failed_email_logs 
+            (id, batch_id, batch_type, account_number, email, error_message, 
+             error_type, attempt_count, status, retry_after, last_attempt_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        cursor.execute(query, (
+            log_id,
+            batch_id,
+            batch_type,
+            stored_account,
+            stored_email,
+            error_message[:1000],  # Truncate to prevent overflow
+            error_type,
+            1,  # attempt_count
+            'pending_retry',
+            retry_after,
+            datetime.now()
+        ))
+        
+        connection.commit()
+        cursor.close()
+        
+    except Exception as e:
+        print(f"Warning: Failed to log error to database: {e}")
+        # Don't let logging failures stop the script
+
+
 def extract_email_from_cashless_data(data: dict) -> Optional[str]:
     """Extract email from quarterly user statement data (from cashless statement)."""
     if not data:
@@ -268,7 +370,7 @@ def send_quarterly_email(account: str, start_date: str, end_date: str, email: st
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        response = requests.post(url, json=payload, headers=headers, timeout=300)
         
         if response.status_code == 200:
             result = response.json()
@@ -500,6 +602,9 @@ def send_emails_from_batch(batch_id: str = None, token: str = None,
                     'email': email,
                     'error': error_msg
                 })
+                
+                # Log failed email to database for retry
+                log_failed_email(connection, batch_id, account, email, error_msg, 'quarterly')
         
         # Summary
         print("-" * 80)

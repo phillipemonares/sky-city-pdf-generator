@@ -12,7 +12,7 @@ if (process.env.SENDGRID_API_KEY) {
 }
 
 // Increase timeout for email sending (PDF generation + email sending can take time)
-export const maxDuration = 120; // 2 minutes
+export const maxDuration = 300; // 5 minutes
 
 /**
  * Get batch ID by account number and date range

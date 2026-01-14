@@ -212,7 +212,7 @@ def generate_pdf_for_member(account: str, start_date: str, end_date: str, token:
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        response = requests.post(url, json=payload, headers=headers, timeout=300)
         
         if response.status_code == 200:
             result = response.json()
@@ -338,6 +338,15 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
         quarter = batch['quarter']
         year = batch['year']
         
+        # Count existing PDFs if skip_existing is enabled
+        existing_pdf_count = 0
+        if skip_existing:
+            print("\nChecking for existing PDFs...")
+            for account_record in accounts:
+                account = normalize_account(account_record.get('account_number', ''))
+                if account and pdf_exists(account, quarter, year, uploads_dir):
+                    existing_pdf_count += 1
+        
         # Display summary
         print("\n" + "=" * 80)
         print("EXPORT SUMMARY")
@@ -351,6 +360,8 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
             print(f"Starting from row: {start_from_index}")
         if skip_existing:
             print(f"Skip existing PDFs: Enabled")
+            print(f"Existing PDFs found: {existing_pdf_count}")
+            print(f"PDFs to generate: {len(accounts) - existing_pdf_count}")
         print(f"API URL: {API_BASE_URL}{API_ENDPOINT}")
         print("=" * 80)
         
