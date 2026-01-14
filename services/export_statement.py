@@ -387,8 +387,7 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
             print("Note: Checking local 'uploads' directory. If PDFs are on the server, ensure you're running this script on the server or use --uploads-dir to specify the server path.")
             
             # Build a set of all existing PDF account numbers for faster lookup
-            # This is much faster than checking each account individually
-            existing_pdfs_set = set()
+            # Only check the current quarter folder (not all quarters)
             quarter_folder_name = f"q{quarter}-{year}"
             quarter_path = Path(uploads_dir) / quarter_folder_name
             
@@ -407,26 +406,11 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
                     if len(parts) >= 4:  # Statement, Q{quarter}, {year}, {account}
                         account_from_file = parts[-1]
                         existing_pdfs_set.add(account_from_file)
+                        existing_pdf_details[account_from_file] = quarter_folder_name
+            else:
+                print(f"Warning: {quarter_folder_name} folder does not exist yet.")
             
-            # Also check other quarter folders if needed
-            uploads_path = Path(uploads_dir)
-            if uploads_path.exists():
-                for quarter_folder in uploads_path.iterdir():
-                    if not quarter_folder.is_dir():
-                        continue
-                    folder_name = quarter_folder.name
-                    if re.match(r'^q[1-4]-\d{4}$', folder_name) and folder_name != quarter_folder_name:
-                        # Scan this folder too
-                        pdf_files = list(quarter_folder.glob("Statement_Q*.pdf"))
-                        for pdf_file in pdf_files:
-                            filename = pdf_file.stem
-                            parts = filename.split('_')
-                            if len(parts) >= 4:
-                                account_from_file = parts[-1]
-                                existing_pdfs_set.add(account_from_file)
-                                existing_pdf_details[account_from_file] = folder_name
-            
-            print(f"Total unique accounts with existing PDFs: {len(existing_pdfs_set)}")
+            print(f"Total unique accounts with existing PDFs in {quarter_folder_name}: {len(existing_pdfs_set)}")
             
             # Now check each account against the set
             for account_record in accounts:
@@ -437,11 +421,6 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
                     
                     if sanitized_account in existing_pdfs_set:
                         existing_pdf_count += 1
-                        if sanitized_account in existing_pdf_details:
-                            # Already tracked from other quarter scan
-                            pass
-                        else:
-                            existing_pdf_details[sanitized_account] = quarter_folder_name
         
         # Display summary
         print("\n" + "=" * 80)
@@ -459,14 +438,9 @@ def export_statements_from_batch(batch_id: str = None, token: str = None,
             print(f"Existing PDFs found: {existing_pdf_count}")
             print(f"PDFs to generate: {len(accounts) - existing_pdf_count}")
             if existing_pdf_count > 0:
-                # Show breakdown by quarter folder
-                quarter_breakdown = {}
-                for folder in existing_pdf_details.values():
-                    quarter_breakdown[folder] = quarter_breakdown.get(folder, 0) + 1
-                if quarter_breakdown:
-                    print(f"\nExisting PDFs by quarter:")
-                    for folder, count in sorted(quarter_breakdown.items()):
-                        print(f"  {folder}: {count}")
+                # Show the quarter folder where PDFs were found
+                quarter_folder_name = f"q{quarter}-{year}"
+                print(f"\nExisting PDFs found in: {quarter_folder_name}")
         print(f"API URL: {API_BASE_URL}{API_ENDPOINT}")
         print("=" * 80)
         
